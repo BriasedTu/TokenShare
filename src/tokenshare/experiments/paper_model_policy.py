@@ -6,8 +6,9 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from tokenshare.executors.ai_api_config import (
     AIAPIExecutorConfig,
@@ -89,7 +90,12 @@ PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS = (
     "deepseek_v3_pro_siliconflow",
 )
 _V3_PRICING_SOURCE_URL = "https://siliconflow.cn/pricing"
-_V3_PRICING_ACCESSED_AT = "2026-07-29"
+_V3_PRICING_ACCESSED_AT = "2026-08-15"
+EXP5_PRICING_FRESHNESS_AS_OF = "2026-08-15"
+EXP5_PRICING_MAX_AGE_DAYS = 7
+EXP5_PRICING_FRESHNESS_AUTHORITY_SCHEMA_VERSION = (
+    "tokenshare.exp5_pricing_freshness_authority.v2"
+)
 PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS = {
     "glm_5_2_siliconflow": {
         "provider_family": "siliconflow",
@@ -156,7 +162,8 @@ PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS = {
         "api_key_env": "SILICONFLOW_API_KEY",
         "pricing": {
             "currency": "CNY",
-            "input_per_million_tokens": 2.0,
+            "cached_input_per_million_tokens": 0.2,
+            "uncached_input_per_million_tokens": 2.0,
             "output_per_million_tokens": 8.0,
             "source_url": _V3_PRICING_SOURCE_URL,
             "accessed_at": _V3_PRICING_ACCESSED_AT,
@@ -181,7 +188,6 @@ def exp5_provider_specific_reasoning_controls(
     request_controls: Mapping[str, object],
 ) -> JsonObject:
     """按同一预注册字段集投影 Exp5 provider-specific reasoning 参数。"""
-
     return {
         field_name: request_controls[field_name]
         for field_name in EXP5_PROVIDER_SPECIFIC_REASONING_CONTROL_FIELDS
@@ -362,7 +368,16 @@ def build_model_endpoint_cohort_preflight(
     provider_configs: dict[str, AIAPIExecutorConfig],
     require_smoke_evidence: bool = True,
     smoke_evidence_bundle: Mapping[str, Any] | None = None,
+    api_key_presence_resolver: Callable[[str], bool] | None = None,
+    pricing_freshness_as_of: str | None = None,
 ) -> JsonObject:
+    if api_key_presence_resolver is not None and not callable(
+        api_key_presence_resolver
+    ):
+        raise TypeError("api_key_presence_resolver must be callable")
+    key_is_available = api_key_presence_resolver or (
+        lambda name: bool(os.environ.get(name, ""))
+    )
     cohort_id = str(cohort.get("cohort_id") or "")
     cohort_digest = str(cohort.get("model_cohort_digest") or digest_json(cohort))
     members_by_id = _cohort_members_by_id(cohort)
@@ -427,6 +442,7 @@ def build_model_endpoint_cohort_preflight(
         selected_entry: AIAPIProviderEntry | None = None
         endpoint_identity: PaperModelEndpointIdentity | None = None
         pricing_snapshot: JsonObject | None = None
+        pricing_freshness: JsonObject | None = None
         blocked_reasons: list[str] = []
         if str(member.get("provider_family") or "") != provider_family:
             blocked_reasons.append("cohort_provider_family_mismatch")
@@ -481,7 +497,7 @@ def build_model_endpoint_cohort_preflight(
                     and selected_entry.api_key_env != expected_api_key_env
                 ):
                     blocked_reasons.append("api_key_env_mismatch")
-                if not os.environ.get(selected_entry.api_key_env, ""):
+                if not key_is_available(selected_entry.api_key_env):
                     blocked_reasons.append("missing_api_key_env")
                 if (
                     expected_overrides is not None
@@ -499,6 +515,14 @@ def build_model_endpoint_cohort_preflight(
                             expected=expected_pricing,
                         )
                     )
+        if cohort_id == PAPER_MODEL_ENDPOINT_COHORT_V3_ID:
+            pricing_freshness, freshness_reasons = (
+                _exp5_pricing_freshness_evidence(
+                    pricing_snapshot=pricing_snapshot,
+                    pricing_freshness_as_of=pricing_freshness_as_of,
+                )
+            )
+            blocked_reasons.extend(freshness_reasons)
 
         request_controls: JsonObject | None = None
         if (
@@ -614,6 +638,7 @@ def build_model_endpoint_cohort_preflight(
             "request_controls_digest": request_controls_digest,
             "pricing_snapshot": pricing_snapshot,
             "pricing_snapshot_digest": pricing_snapshot_digest,
+            "pricing_freshness": pricing_freshness,
             "smoke_evidence_ref": spec.get("smoke_evidence_ref"),
             "external_benchmark": {
                 "source": member.get("external_benchmark_source"),
@@ -654,6 +679,27 @@ def build_model_endpoint_cohort_preflight(
             "cross_member_request_controls_mismatch"
         )
         request_controls_snapshot = None
+
+    pricing_authority = None
+    if (
+        cohort_id == PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+        and _strict_iso_calendar_date(pricing_freshness_as_of) is not None
+        and set(member_plans) == set(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+        and all(
+            isinstance(plan.get("pricing_snapshot"), Mapping)
+            and isinstance(plan.get("source_provider_config_digest"), str)
+            and not any(
+                str(reason).startswith("pricing_")
+                for reason in plan.get("blocked_reasons", ())
+            )
+            for plan in member_plans.values()
+        )
+    ):
+        pricing_authority = build_exp5_pricing_freshness_authority(
+            member_plans=member_plans,
+            pricing_freshness_as_of=pricing_freshness_as_of,
+            provider_configs=provider_configs,
+        )
 
     blocked = bool(
         cohort_level_reasons
@@ -698,6 +744,7 @@ def build_model_endpoint_cohort_preflight(
             if isinstance(smoke_evidence_bundle, Mapping)
             else None
         ),
+        "pricing_freshness_authority": pricing_authority,
     }
 
 
@@ -782,6 +829,159 @@ def _pricing_snapshot_blocked_reasons(
     ):
         reasons.append("pricing_snapshot_rate_mismatch")
     return list(dict.fromkeys(reasons))
+
+
+def _exp5_pricing_freshness_evidence(
+    *,
+    pricing_snapshot: JsonObject | None,
+    pricing_freshness_as_of: str | None,
+) -> tuple[JsonObject, list[str]]:
+    accessed_at = (
+        pricing_snapshot.get("accessed_at")
+        if isinstance(pricing_snapshot, Mapping)
+        else None
+    )
+    evidence: JsonObject = {
+        "accessed_at": accessed_at,
+        "pricing_freshness_as_of": pricing_freshness_as_of,
+        "age_days": None,
+        "max_age_days": EXP5_PRICING_MAX_AGE_DAYS,
+        "status": "blocked",
+    }
+    if pricing_freshness_as_of is None:
+        return evidence, ["pricing_freshness_as_of_missing"]
+    as_of = _strict_iso_calendar_date(pricing_freshness_as_of)
+    if as_of is None:
+        return evidence, ["pricing_freshness_as_of_invalid"]
+    if accessed_at is None:
+        return evidence, ["pricing_snapshot_accessed_at_missing"]
+    accessed = _strict_iso_calendar_date(accessed_at)
+    if accessed is None:
+        return evidence, ["pricing_snapshot_accessed_at_invalid"]
+    age_days = (as_of - accessed).days
+    evidence["age_days"] = age_days
+    if age_days < 0:
+        return evidence, ["pricing_snapshot_accessed_at_future"]
+    if age_days > EXP5_PRICING_MAX_AGE_DAYS:
+        return evidence, ["pricing_snapshot_stale"]
+    evidence["status"] = "fresh"
+    return evidence, []
+
+
+def _strict_iso_calendar_date(value: object) -> date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.isoformat() == value else None
+
+
+def validate_exp5_pricing_freshness_evidence(
+    value: Mapping[str, Any],
+    *,
+    provider_configs: Mapping[str, AIAPIExecutorConfig] | None = None,
+) -> JsonObject:
+    """验证签发时冻结的 Exp5 pricing authority 及其当前配置绑定。"""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("Experiment 5 pricing freshness preflight is missing")
+    authority = value.get("pricing_freshness_authority")
+    if (
+        value.get("cohort_id") != PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+        or not isinstance(authority, Mapping)
+    ):
+        raise ValueError("Experiment 5 pricing freshness authority drift")
+    member_plans = value.get("member_plans")
+    if not isinstance(member_plans, Mapping) or set(member_plans) != set(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    ):
+        raise ValueError("Experiment 5 pricing freshness member set drift")
+    expected_authority = build_exp5_pricing_freshness_authority(
+        member_plans=member_plans,
+        pricing_freshness_as_of=authority.get("pricing_freshness_as_of"),
+        provider_configs=provider_configs,
+    )
+    if dict(authority) != expected_authority:
+        raise ValueError("Experiment 5 pricing freshness authority drift")
+    for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS:
+        plan = member_plans[member_id]
+        expected_freshness, freshness_reasons = _exp5_pricing_freshness_evidence(
+            pricing_snapshot=dict(plan["pricing_snapshot"]),
+            pricing_freshness_as_of=authority["pricing_freshness_as_of"],
+        )
+        if freshness_reasons or plan.get("pricing_freshness") != expected_freshness:
+            raise ValueError("Experiment 5 pricing freshness evidence drift")
+    return dict(value)
+
+
+def build_exp5_pricing_freshness_authority(
+    *,
+    member_plans: Mapping[str, Mapping[str, Any]],
+    pricing_freshness_as_of: object,
+    provider_configs: Mapping[str, AIAPIExecutorConfig] | None = None,
+) -> JsonObject:
+    """从本次 approved member plans 构造可持久化的 unit-price authority。"""
+
+    as_of = _strict_iso_calendar_date(pricing_freshness_as_of)
+    if as_of is None or set(member_plans) != set(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    ):
+        raise ValueError("Experiment 5 pricing freshness authority is invalid")
+    config_digests: dict[str, str] = {}
+    pricing_digests: dict[str, str] = {}
+    configs = tuple(provider_configs.values()) if provider_configs is not None else ()
+    for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS:
+        plan = member_plans.get(member_id)
+        if not isinstance(plan, Mapping):
+            raise ValueError("Experiment 5 pricing freshness member plan drift")
+        pricing_snapshot = plan.get("pricing_snapshot")
+        source_config_digest = plan.get("source_provider_config_digest")
+        selected_entry_id = plan.get("selected_entry_id")
+        if (
+            not isinstance(pricing_snapshot, Mapping)
+            or not isinstance(source_config_digest, str)
+            or not isinstance(selected_entry_id, str)
+        ):
+            raise ValueError("Experiment 5 pricing freshness snapshot is missing")
+        pricing_body = dict(pricing_snapshot)
+        expected_pricing = dict(
+            PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS[member_id]["pricing"]
+        )
+        if _pricing_snapshot_blocked_reasons(
+            actual=pricing_body,
+            expected=expected_pricing,
+        ):
+            raise ValueError("Experiment 5 pricing freshness snapshot drift")
+        pricing_digest = digest_json(pricing_body)
+        if plan.get("pricing_snapshot_digest") != pricing_digest:
+            raise ValueError("Experiment 5 pricing freshness snapshot digest drift")
+        if provider_configs is not None:
+            config_matches = tuple(
+                config
+                for config in configs
+                if getattr(config, "config_digest", None) == source_config_digest
+            )
+            if len(config_matches) != 1:
+                raise ValueError("Experiment 5 pricing source config drift")
+            entry_matches = tuple(
+                entry
+                for entry in config_matches[0].entries
+                if entry.entry_id == selected_entry_id
+            )
+            if len(entry_matches) != 1 or dict(entry_matches[0].pricing) != pricing_body:
+                raise ValueError("Experiment 5 pricing current config drift")
+        config_digests[member_id] = source_config_digest
+        pricing_digests[member_id] = pricing_digest
+    body: JsonObject = {
+        "schema_version": EXP5_PRICING_FRESHNESS_AUTHORITY_SCHEMA_VERSION,
+        "pricing_freshness_as_of": as_of.isoformat(),
+        "max_age_days": EXP5_PRICING_MAX_AGE_DAYS,
+        "source_provider_config_digest_by_member": config_digests,
+        "pricing_snapshot_digest_by_member": pricing_digests,
+    }
+    return {**body, "authority_digest": digest_json(body)}
 
 
 def _normalized_exp5_request_controls(

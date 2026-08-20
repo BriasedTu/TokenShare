@@ -14,8 +14,10 @@ import uuid
 from tokenshare.executors.response_bank import CurrentTraceWrapper
 from tokenshare.executors.trace_backed import TraceSourceBinding
 from tokenshare.experiments.paper_formal_evidence import (
+    _CANONICAL_LINEAGE_DIGEST_FACTORY_TOKEN,
     FormalEvidenceStore,
     LineageSourceIndex,
+    _merge_lineage_source_records,
     build_canonical_lineage_inputs,
     export_lineage_source_index,
     lineage_input_identity_digest,
@@ -24,7 +26,10 @@ from tokenshare.experiments.paper_direct_results import (
     PaperDirectRootResult,
     _DIRECT_RESULT_FACTORY_TOKEN,
 )
-from tokenshare.experiments.paper_exp1_metrics import Exp1HydratedDirectRow
+from tokenshare.experiments.paper_exp1_metrics import (
+    EXP1_EVIDENCE_CLASSES,
+    Exp1HydratedDirectRow,
+)
 from tokenshare.experiments.paper_exp2_metrics import (
     Exp2OnlineHydratedRoot,
     Exp2TraceHydratedRoot,
@@ -82,6 +87,71 @@ class FormalMetricsResult:
         }
 
 
+def _export_metric_lineage_source_index(
+    *,
+    output_root: str | Path,
+    canonical_lineage_inputs: Sequence[Any],
+    input_identity_digest: str,
+    evidence_roots_by_experiment: Mapping[str, str | Path] | None,
+) -> LineageSourceIndex:
+    """按 persisted suite 分区校验 lineage，再合并成同一输入身份索引。"""
+
+    inputs = tuple(canonical_lineage_inputs)
+    if evidence_roots_by_experiment is None:
+        return export_lineage_source_index(
+            FormalEvidenceStore(output_root),
+            inputs,
+            input_identity_digest=input_identity_digest,
+        )
+    if not isinstance(evidence_roots_by_experiment, Mapping):
+        raise TypeError("lineage evidence roots must be a mapping")
+    grouped: dict[str, list[Any]] = {}
+    for lineage_input in inputs:
+        direct = getattr(lineage_input, "direct_result", None)
+        experiment_id = getattr(direct, "experiment_id", None)
+        if not isinstance(experiment_id, str) or not experiment_id:
+            raise ValueError("lineage input experiment identity is missing")
+        grouped.setdefault(experiment_id, []).append(lineage_input)
+    if set(evidence_roots_by_experiment) != set(grouped):
+        raise ValueError("lineage evidence root inventory mismatch")
+    root_ids = tuple(
+        getattr(getattr(value, "direct_result", None), "preregistered_root_run_id", None)
+        for value in inputs
+    )
+    if (
+        any(not isinstance(root_id, str) or not root_id for root_id in root_ids)
+        or len(set(root_ids)) != len(root_ids)
+    ):
+        raise ValueError("duplicate lineage root or missing root identity")
+    inputs_by_resolved_root: dict[Path, list[Any]] = {}
+    for experiment_id in sorted(grouped):
+        values = tuple(grouped[experiment_id])
+        if not values or any(
+            getattr(getattr(value, "direct_result", None), "experiment_id", None)
+            != experiment_id
+            for value in values
+        ):
+            raise ValueError("lineage experiment bucket identity mismatch")
+        root = evidence_roots_by_experiment[experiment_id]
+        if not isinstance(root, (str, Path)):
+            raise TypeError("lineage evidence root path is invalid")
+        inputs_by_resolved_root.setdefault(Path(root).resolve(strict=False), []).extend(
+            values
+        )
+    records = []
+    for root in sorted(inputs_by_resolved_root, key=lambda value: str(value)):
+        partition = export_lineage_source_index(
+            FormalEvidenceStore(root),
+            tuple(inputs_by_resolved_root[root]),
+            input_identity_digest=input_identity_digest,
+        )
+        records.extend(partition.records)
+    return LineageSourceIndex.create(
+        records=_merge_lineage_source_records(records),
+        input_identity_digest=input_identity_digest,
+    )
+
+
 def publish_paper_formal_metric_drafts(
     output_root: str | Path,
     canonical_direct_rows: Mapping[str, object],
@@ -95,6 +165,7 @@ def publish_paper_formal_metric_drafts(
     trace_source_bindings_by_root: Mapping[str, Sequence[TraceSourceBinding]] | None = None,
     eligibility_facts_by_root: Mapping[str, PaperEvidenceEligibilityFacts] | None = None,
     metric_projection_rows: Mapping[str, object] | None = None,
+    lineage_evidence_roots_by_experiment: Mapping[str, str | Path] | None = None,
 ) -> FormalMetricsResult:
     """Delegate canonical persisted inputs and publish only intermediate drafts."""
 
@@ -119,11 +190,14 @@ def publish_paper_formal_metric_drafts(
         current_trace_wrappers_by_root=current_trace_wrappers_by_root,
         trace_source_bindings_by_root=trace_source_bindings_by_root,
         eligibility_facts_by_root=eligibility_facts_by_root,
+        _precomputed_input_identity_digest=input_identity_digest,
+        _digest_factory_token=_CANONICAL_LINEAGE_DIGEST_FACTORY_TOKEN,
     )
-    source_index = export_lineage_source_index(
-        FormalEvidenceStore(output_root),
-        canonical_lineage_inputs,
+    source_index = _export_metric_lineage_source_index(
+        output_root=output_root,
+        canonical_lineage_inputs=canonical_lineage_inputs,
         input_identity_digest=input_identity_digest,
+        evidence_roots_by_experiment=lineage_evidence_roots_by_experiment,
     )
     with capture_metric_computation_traces() as computation_traces:
         drafts = tuple(
@@ -196,6 +270,7 @@ def recompute_paper_formal_metrics(
     trace_source_bindings_by_root: Mapping[str, Sequence[TraceSourceBinding]] | None = None,
     eligibility_facts_by_root: Mapping[str, PaperEvidenceEligibilityFacts] | None = None,
     metric_projection_rows: Mapping[str, object] | None = None,
+    lineage_evidence_roots_by_experiment: Mapping[str, str | Path] | None = None,
 ) -> FormalMetricsResult:
     """Package-compatible name for the canonical-row delegation boundary."""
 
@@ -211,6 +286,9 @@ def recompute_paper_formal_metrics(
         trace_source_bindings_by_root=trace_source_bindings_by_root,
         eligibility_facts_by_root=eligibility_facts_by_root,
         metric_projection_rows=metric_projection_rows,
+        lineage_evidence_roots_by_experiment=(
+            lineage_evidence_roots_by_experiment
+        ),
     )
 
 
@@ -326,10 +404,12 @@ def _metric_experiment_id(
 ) -> str:
     if input_key == "exp1_feasibility":
         if direct.experiment_id == "experiment_1":
+            if direct.evidence_class not in EXP1_EVIDENCE_CLASSES:
+                raise ValueError("Exp1 metric identity route mismatch")
             return direct.experiment_id
         if (
             direct.experiment_id != "exp1_real_ai_feasibility"
-            or direct.evidence_class != "online_real_provider"
+            or direct.evidence_class not in EXP1_EVIDENCE_CLASSES
         ):
             raise ValueError("Exp1 metric identity route mismatch")
         return "experiment_1"
@@ -398,27 +478,28 @@ def _publish_drafts(
     _write_json(manifest_path, body)
     refs.append(_output_ref(root, manifest_path, body, "draft_manifest"))
     source_path = root / "metrics" / "paper_lineage_source_index.v1.jsonl"
-    source_payload = [record.to_dict() for record in source_index.records]
-    _atomic_write_jsonl(source_path, source_payload)
+    source_digest = _atomic_write_jsonl_records(source_path, source_index.records)
     refs.append(
         _output_ref(
             root,
             source_path,
-            {"records": source_payload},
+            None,
             "lineage_source_index",
+            content_digest=source_digest,
         )
     )
     observations_path = root / "metrics" / "paper_metric_observations.v1.jsonl"
-    observation_payload = [
-        observation.to_dict() for observation in observation_publication.observations
-    ]
-    _atomic_write_jsonl(observations_path, observation_payload)
+    observation_digest = _atomic_write_jsonl_records(
+        observations_path,
+        observation_publication.observations,
+    )
     refs.append(
         _output_ref(
             root,
             observations_path,
-            {"records": observation_payload},
+            None,
             "metric_observations",
+            content_digest=observation_digest,
         )
     )
     observation_manifest = {
@@ -449,13 +530,17 @@ def _publish_drafts(
 def _output_ref(
     root: Path,
     path: Path,
-    payload: Mapping[str, Any],
+    payload: Mapping[str, Any] | None,
     table_id: str,
+    *,
+    content_digest: str | None = None,
 ) -> dict[str, Any]:
+    if (payload is None) == (content_digest is None):
+        raise ValueError("metric output ref requires exactly one digest source")
     return {
         "table_id": table_id,
         "path": path.relative_to(root).as_posix(),
-        "content_digest": _digest(payload),
+        "content_digest": _digest(payload) if payload is not None else content_digest,
     }
 
 
@@ -483,6 +568,40 @@ def _atomic_write_jsonl(path: Path, payloads: list[Mapping[str, Any]]) -> None:
         for payload in payloads
     ).encode("utf-8")
     _atomic_write_bytes(path, content)
+
+
+def _atomic_write_jsonl_records(path: Path, records: Sequence[Any]) -> str:
+    """逐条写出 JSONL，并并行计算与 ``_digest({'records': ...})`` 相同的摘要。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    digest = hashlib.sha256()
+    digest.update(b'{"records":[')
+    try:
+        with temporary.open("xb") as handle:
+            for index, record in enumerate(records):
+                payload = record if isinstance(record, Mapping) else record.to_dict()
+                if not isinstance(payload, Mapping):
+                    raise TypeError("metric JSONL record must serialize to a mapping")
+                encoded = json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                handle.write(encoded)
+                handle.write(b"\n")
+                if index:
+                    digest.update(b",")
+                digest.update(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        digest.update(b"]}")
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return "sha256:" + digest.hexdigest()
 
 
 def _atomic_write_bytes(path: Path, content: bytes) -> None:

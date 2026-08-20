@@ -409,22 +409,35 @@ def _observation_body(item: PaperMetricObservation) -> dict[str, Any]:
 def _validate_observation_evidence(metric: Any, item: PaperMetricObservation) -> None:
     if item.evidence_class not in metric.evidence_classes:
         raise ValueError("observation evidence class is not allowed by contract")
-    if item.required_current_provider_roles != metric.required_current_provider_roles:
+    required_current_provider_roles, required_source_bank_roles = (
+        metric.required_roles_for(item.evidence_class)
+    )
+    if item.required_current_provider_roles != required_current_provider_roles:
         raise ValueError("required current provider roles contract mismatch")
-    if item.required_source_bank_roles != metric.required_source_bank_roles:
+    if item.required_source_bank_roles != required_source_bank_roles:
         raise ValueError("required source bank roles contract mismatch")
 
     if item.evidence_class == "online_real_provider":
         if item.source_bank_object_locators:
             raise ValueError("online observation contains source bank locators")
-        current = _covered_roles_or_blocked(item, _covered_provider_roles)
+        current = _covered_compact_or_inline_roles(
+            item,
+            required_current_provider_roles,
+            _covered_provider_roles,
+            item.covered_current_provider_roles,
+        )
         source: tuple[str, ...] = ()
         expected_not_applicable = ("source_bank_object_locators",)
     elif item.evidence_class == "real_model_trace_protocol_run":
         if item.current_provider_object_refs:
             raise ValueError("trace observation contains current provider object refs")
         current = ()
-        source = _covered_roles_or_blocked(item, _covered_source_roles)
+        source = _covered_compact_or_inline_roles(
+            item,
+            required_source_bank_roles,
+            _covered_source_roles,
+            item.covered_source_bank_roles,
+        )
         expected_not_applicable = ("current_provider_object_refs",)
     else:
         current = ()
@@ -453,6 +466,40 @@ def _covered_roles_or_blocked(
         ):
             return ()
         raise
+
+
+def _covered_compact_or_inline_roles(
+    item: PaperMetricObservation,
+    required_roles: tuple[str, ...],
+    inline_validator: Any,
+    covered_roles: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Compact observation 用 digest-bound source-record refs 承载 closure。"""
+
+    missing_lineage_blocker = (
+        item.publish_blocked
+        and item.numeric_value is None
+        and isinstance(item.null_reason, str)
+        and (
+            item.null_reason.startswith("missing_required_lineage:")
+            or item.null_reason.startswith("missing_declared_root_lineage")
+            or item.null_reason.startswith("missing_exact_root_source_facts")
+            or item.null_reason.startswith("root_source_lineage_")
+        )
+    )
+    if not item.lineage_source_record_refs:
+        if not covered_roles and missing_lineage_blocker:
+            return ()
+        return _covered_roles_or_blocked(item, inline_validator)
+    if not required_roles:
+        if covered_roles:
+            raise ValueError("covered lineage roles exist without contract roles")
+        return ()
+    if covered_roles == required_roles:
+        return required_roles
+    if not covered_roles and missing_lineage_blocker:
+        return ()
+    raise ValueError("compact observation covered lineage roles mismatch")
 
 
 def _covered_provider_roles(item: PaperMetricObservation) -> tuple[str, ...]:

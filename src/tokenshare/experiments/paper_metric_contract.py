@@ -19,7 +19,7 @@ PAPER_METRIC_CONTRACT_SCHEMA_VERSION = "tokenshare.paper_metric_contract.v1"
 PAPER_METRIC_CONTRACT_ID = "epd027_paper_metric_contract.v1"
 PAPER_METRIC_CONTRACT_VERSION = 1
 PAPER_METRIC_CONTRACT_DIGEST = (
-    "sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e"
+    "sha256:fc0f92fc36c3a9166c6c091c6826776b136411ef6fb5010ccb393eb4d1455183"
 )
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -63,6 +63,7 @@ FORMULA_OPERATIONS = frozenset(
 NULL_TRIGGERS = frozenset(
     {
         "incomplete_pair",
+        "inconsistent_worker_time_evidence",
         "infra_invalid",
         "insufficient_values",
         "membership_excluded",
@@ -508,11 +509,19 @@ class MetricContractControls:
 
 
 @dataclass(frozen=True, kw_only=True)
+class EvidenceRoleRoute:
+    evidence_class: str
+    required_current_provider_roles: tuple[str, ...]
+    required_source_bank_roles: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
 class MetricTableDefinition:
     table_id: str
     experiment_id: str
     output_path: str
     evidence_classes: tuple[str, ...]
+    evidence_role_routes: tuple[EvidenceRoleRoute, ...]
     row_scope: str
     row_kinds: tuple[str, ...]
     numeric_output_fields: tuple[str, ...]
@@ -546,6 +555,7 @@ class MetricDefinition:
     evidence_classes: tuple[str, ...]
     required_current_provider_roles: tuple[str, ...]
     required_source_bank_roles: tuple[str, ...]
+    evidence_role_routes: tuple[EvidenceRoleRoute, ...]
     row_scope: str
     row_kind: str
     numerator: OperandRef | None
@@ -562,6 +572,22 @@ class MetricDefinition:
     consumer: ConsumerFlow
     table: str
     deprecated_aliases: tuple[str, ...]
+
+    def required_roles_for(
+        self,
+        evidence_class: str,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        matches = tuple(
+            route
+            for route in self.evidence_role_routes
+            if route.evidence_class == evidence_class
+        )
+        if len(matches) != 1:
+            raise ValueError("unsupported metric evidence class")
+        return (
+            matches[0].required_current_provider_roles,
+            matches[0].required_source_bank_roles,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1030,27 +1056,79 @@ def _load_controls(value: Mapping[str, Any], pipeline: Any) -> MetricContractCon
     return controls
 
 
+def _load_evidence_role_routes(
+    value: Any,
+    field_name: str,
+) -> tuple[EvidenceRoleRoute, ...]:
+    routes: list[EvidenceRoleRoute] = []
+    for index, item in enumerate(_array(value, field_name)):
+        row = _mapping(item, f"{field_name}[{index}]")
+        _require_exact_keys(
+            row,
+            {
+                "evidence_class",
+                "required_current_provider_roles",
+                "required_source_bank_roles",
+            },
+            f"{field_name}[{index}]",
+        )
+        routes.append(
+            EvidenceRoleRoute(
+                evidence_class=_non_empty_string(
+                    row.get("evidence_class"),
+                    f"{field_name}[{index}].evidence_class",
+                ),
+                required_current_provider_roles=_string_tuple(
+                    row.get("required_current_provider_roles"),
+                    f"{field_name}[{index}].required_current_provider_roles",
+                ),
+                required_source_bank_roles=_string_tuple(
+                    row.get("required_source_bank_roles"),
+                    f"{field_name}[{index}].required_source_bank_roles",
+                ),
+            )
+        )
+    result = tuple(routes)
+    if len({route.evidence_class for route in result}) != len(result):
+        raise ValueError(f"duplicate evidence role route: {field_name}")
+    return result
+
+
 def _load_tables(value: Any) -> tuple[MetricTableDefinition, ...]:
     items = _array(value, "tables")
     tables: list[MetricTableDefinition] = []
     for index, item in enumerate(items):
         row = _mapping(item, f"tables[{index}]")
+        expected_keys = {
+            "table_id",
+            "experiment_id",
+            "output_path",
+            "evidence_classes",
+            "row_scope",
+            "row_kinds",
+            "numeric_output_fields",
+        }
+        if "evidence_role_routes" in row:
+            expected_keys.add("evidence_role_routes")
         _require_exact_keys(
             row,
-            {
-                "table_id",
-                "experiment_id",
-                "output_path",
-                "evidence_classes",
-                "row_scope",
-                "row_kinds",
-                "numeric_output_fields",
-            },
+            expected_keys,
             f"tables[{index}]",
         )
         table_id = _non_empty_string(row.get("table_id"), "table_id")
         declared_numeric_fields = _string_tuple(
             row.get("numeric_output_fields"), "numeric_output_fields"
+        )
+        evidence_classes = _string_tuple(
+            row.get("evidence_classes"), "evidence_classes"
+        )
+        evidence_role_routes = (
+            _load_evidence_role_routes(
+                row.get("evidence_role_routes"),
+                f"tables[{index}].evidence_role_routes",
+            )
+            if "evidence_role_routes" in row
+            else ()
         )
         table = MetricTableDefinition(
             table_id=table_id,
@@ -1058,19 +1136,37 @@ def _load_tables(value: Any) -> tuple[MetricTableDefinition, ...]:
                 row.get("experiment_id"), "experiment_id"
             ),
             output_path=_non_empty_string(row.get("output_path"), "output_path"),
-            evidence_classes=_string_tuple(
-                row.get("evidence_classes"), "evidence_classes"
-            ),
+            evidence_classes=evidence_classes,
+            evidence_role_routes=evidence_role_routes,
             row_scope=_non_empty_string(row.get("row_scope"), "row_scope"),
             row_kinds=_string_tuple(row.get("row_kinds"), "row_kinds"),
             numeric_output_fields=declared_numeric_fields,
         )
         if not table.row_kinds:
             raise ValueError(f"table row kinds must not be empty: {table.table_id}")
-        if len(table.evidence_classes) != 1 or table.evidence_classes[0] not in (
-            _EVIDENCE_CLASSES
+        if (
+            not table.evidence_classes
+            or len(set(table.evidence_classes)) != len(table.evidence_classes)
+            or not set(table.evidence_classes) <= _EVIDENCE_CLASSES
         ):
             raise ValueError(f"unsupported evidence class for table: {table.table_id}")
+        if table.evidence_role_routes:
+            if (
+                table.table_id != "exp1_feasibility"
+                or table.evidence_classes
+                != ("online_real_provider", "real_model_trace_protocol_run")
+                or tuple(route.evidence_class for route in table.evidence_role_routes)
+                != table.evidence_classes
+                or table.evidence_role_routes[0].required_current_provider_roles
+                != _ONLINE_REAL_PROVIDER_ROLES
+                or table.evidence_role_routes[0].required_source_bank_roles
+                or table.evidence_role_routes[1].required_current_provider_roles
+                or table.evidence_role_routes[1].required_source_bank_roles
+                != _REAL_MODEL_TRACE_SOURCE_ROLES
+            ):
+                raise ValueError(f"evidence role route matrix drift: {table.table_id}")
+        elif len(table.evidence_classes) != 1:
+            raise ValueError(f"missing evidence role routes: {table.table_id}")
         if not table.output_path.startswith("metrics/"):
             raise ValueError(f"paper metric output path drift: {table.table_id}")
         tables.append(table)
@@ -1477,20 +1573,39 @@ def _load_metrics(
                 raise ValueError(f"unknown required invariant: {invariant_id}")
             if invariant.table != table_id or not invariant.required_for_publication:
                 raise ValueError(f"invalid publication invariant: {table_id}.{invariant_id}")
+        evidence_classes = _string_tuple(
+            row.get("evidence_classes"), "evidence_classes"
+        )
+        required_current_provider_roles = _string_tuple(
+            row.get("required_current_provider_roles"),
+            "required_current_provider_roles",
+        )
+        required_source_bank_roles = _string_tuple(
+            row.get("required_source_bank_roles"), "required_source_bank_roles"
+        )
+        evidence_role_routes = (
+            table.evidence_role_routes
+            if table.evidence_role_routes
+            else (
+                EvidenceRoleRoute(
+                    evidence_class=evidence_classes[0],
+                    required_current_provider_roles=(
+                        required_current_provider_roles
+                    ),
+                    required_source_bank_roles=required_source_bank_roles,
+                ),
+            )
+            if len(evidence_classes) == 1
+            else ()
+        )
         metric = MetricDefinition(
             metric_id=metric_id,
             formula_id=formula_id,
             formula=formula,
-            evidence_classes=_string_tuple(
-                row.get("evidence_classes"), "evidence_classes"
-            ),
-            required_current_provider_roles=_string_tuple(
-                row.get("required_current_provider_roles"),
-                "required_current_provider_roles",
-            ),
-            required_source_bank_roles=_string_tuple(
-                row.get("required_source_bank_roles"), "required_source_bank_roles"
-            ),
+            evidence_classes=evidence_classes,
+            required_current_provider_roles=required_current_provider_roles,
+            required_source_bank_roles=required_source_bank_roles,
+            evidence_role_routes=evidence_role_routes,
             row_scope=_non_empty_string(row.get("row_scope"), "row_scope"),
             row_kind=_non_empty_string(row.get("row_kind"), "row_kind"),
             numerator=_load_nullable_operand_ref(row.get("numerator"), "numerator"),
@@ -1577,7 +1692,16 @@ def _validate_metric_shape(
         raise ValueError(
             f"metric evidence class differs from table: {table.table_id}.{metric.metric_id}"
         )
-    if metric.evidence_classes == ("online_real_provider",):
+    if table.evidence_role_routes:
+        if (
+            metric.required_current_provider_roles
+            or metric.required_source_bank_roles
+            or metric.evidence_role_routes != table.evidence_role_routes
+        ):
+            raise ValueError(
+                f"mixed evidence role matrix drift: {table.table_id}.{metric.metric_id}"
+            )
+    elif metric.evidence_classes == ("online_real_provider",):
         expected_current_roles = (
             ()
             if metric.source_membership_id == "exp5_planned_ai_unit"
@@ -1598,6 +1722,10 @@ def _validate_metric_shape(
             raise ValueError(
                 f"trace source role matrix drift: {table.table_id}.{metric.metric_id}"
             )
+    else:
+        raise ValueError(
+            f"unsupported metric evidence class route: {table.table_id}.{metric.metric_id}"
+        )
     if metric.row_scope != table.row_scope:
         raise ValueError(
             f"metric row scope differs from table: {table.table_id}.{metric.metric_id}"
@@ -2168,6 +2296,21 @@ def _recompute_metric_uncaptured(
                 audit_denominator_member_ids=audit_denominator,
                 member_decisions=tuple(decisions),
             )
+        if (
+            not included
+            and excluded
+            and metric.formula.op != "count"
+            and any(rule.trigger == "membership_excluded" for rule in metric.null_rules)
+        ):
+            return _apply_null_rule(
+                metric,
+                "membership_excluded",
+                "membership_excluded",
+                exclusion_reason="membership_excluded",
+                excluded_member_ids=tuple(excluded),
+                audit_denominator_member_ids=audit_denominator,
+                member_decisions=tuple(decisions),
+            )
     else:
         decisions.extend(
             MemberDecision(
@@ -2206,7 +2349,12 @@ def _recompute_metric_uncaptured(
             detail = "incomplete_pair"
         trigger = (
             detail
-            if detail in {"zero_denominator", "incomplete_pair"}
+            if detail
+            in {
+                "zero_denominator",
+                "incomplete_pair",
+                "inconsistent_worker_time_evidence",
+            }
             else "missing_required_evidence"
         )
         return _apply_null_rule(
@@ -2586,9 +2734,12 @@ def _execute_formula(metric: MetricDefinition, operands: tuple[Any, ...]) -> Dec
     if op == "worker_utilization":
         busy_times, configured_workers, elapsed = operands
         denominator = configured_workers * elapsed
+        busy_time = sum(busy_times, Decimal(0))
         if denominator == 0:
+            if busy_time > 0:
+                raise _MissingEvidence("inconsistent_worker_time_evidence")
             raise _MissingEvidence("zero_denominator")
-        return sum(busy_times, Decimal(0)) / denominator
+        return busy_time / denominator
     if op in {
         "signed_mean_percentage_point_delta",
         "signed_max_percentage_point_delta",
@@ -2651,6 +2802,17 @@ def _validate_required_roles(
     bundle: MetricObservationBundle,
     included_member_ids: tuple[str, ...],
 ) -> str | None:
+    evidence_class = bundle.row_facts.get("evidence_class")
+    if evidence_class is None and len(metric.evidence_classes) == 1:
+        evidence_class = metric.evidence_classes[0]
+    if (
+        not isinstance(evidence_class, str)
+        or evidence_class not in metric.evidence_classes
+    ):
+        raise ValueError("metric bundle evidence class is unsupported")
+    required_current_provider_roles, required_source_bank_roles = (
+        metric.required_roles_for(evidence_class)
+    )
     online_member_kinds = {
         "actual_provider_attempt", "actual_first_provider_attempt",
         "exp2_online_first_provider_attempt",
@@ -2662,7 +2824,7 @@ def _validate_required_roles(
         "trace_consumption",
         "exp3_discarded_trace_consumption",
     }
-    if metric.required_current_provider_roles:
+    if required_current_provider_roles:
         for member_id in included_member_ids:
             facts = bundle.member_facts_by_id[member_id]
             if facts.get("member_kind") not in online_member_kinds:
@@ -2670,9 +2832,12 @@ def _validate_required_roles(
             roles = facts.get("current_provider_roles")
             if roles is None:
                 return f"missing_current_provider_roles:{member_id}"
-            if not isinstance(roles, (tuple, list)) or tuple(roles) != metric.required_current_provider_roles:
+            if (
+                not isinstance(roles, (tuple, list))
+                or tuple(roles) != required_current_provider_roles
+            ):
                 return f"invalid_current_provider_roles:{member_id}"
-    if metric.required_source_bank_roles:
+    if required_source_bank_roles:
         for member_id in included_member_ids:
             facts = bundle.member_facts_by_id[member_id]
             if facts.get("member_kind") not in trace_member_kinds:
@@ -2680,7 +2845,10 @@ def _validate_required_roles(
             roles = facts.get("source_bank_roles")
             if roles is None:
                 return f"missing_source_bank_roles:{member_id}"
-            if not isinstance(roles, (tuple, list)) or tuple(roles) != metric.required_source_bank_roles:
+            if (
+                not isinstance(roles, (tuple, list))
+                or tuple(roles) != required_source_bank_roles
+            ):
                 return f"invalid_source_bank_roles:{member_id}"
     return None
 
@@ -2759,6 +2927,7 @@ __all__ = [
     "ApplicabilitySpec",
     "ConsumerFlow",
     "DEFAULT_PAPER_METRIC_CONTRACT_PATH",
+    "EvidenceRoleRoute",
     "FormulaSpec",
     "InvariantEvaluation",
     "InvariantSpec",

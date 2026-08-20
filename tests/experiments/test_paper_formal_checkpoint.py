@@ -695,6 +695,66 @@ def test_sqlite_compaction_writes_selection_ordered_terminal_snapshot(
     assert not list(tmp_path.glob(".tokenshare-v3-compact-*"))
 
 
+def test_sqlite_compaction_classifies_failed_terminal_root_as_completed_with_failures(
+    tmp_path: Path,
+) -> None:
+    """checkpoint 已重分类的 Exp4 实验失败不能在 snapshot 回升为 blocked。"""
+
+    run_root = tmp_path / "run"
+    root, root_manifest = _write_generation(
+        run_root,
+        generation_id="root-failed",
+        generation_kind="delta",
+        delta_role="root_outcome",
+        selection_ordinal=0,
+        anchor_task_id="case-0",
+    )
+    _write_jsonl(
+        root / "per_task_results.jsonl",
+        [
+            {
+                "task_id": "case-0",
+                "root_status": "failed",
+                "outcome_status": "failed_experimental",
+                "ablation_mode": "NO_REQUEUE",
+                "ablation_applicable": True,
+                "ablation_runtime_flags": {"stuck_after_rejection": True},
+            }
+        ],
+    )
+    root_run_manifest = json.loads(
+        (root / "run_manifest.json").read_text(encoding="utf-8")
+    )
+    root_run_manifest["completed_task_ids"] = []
+    root_run_manifest["status"] = "completed_with_failures"
+    _write_json(root / "run_manifest.json", root_run_manifest)
+    _rebuild_manifest(root, root_manifest)
+    tail, tail_manifest = _write_generation(
+        run_root,
+        generation_id="tail",
+        generation_kind="delta",
+        delta_role="condition_tail_events",
+        selection_ordinal=None,
+        anchor_task_id="case-0",
+        parent=root_manifest,
+    )
+    head = validate_v3_generation_manifest(tail, tail_manifest)
+
+    result = compact_v3_delta_chain_to_snapshot(
+        run_root,
+        head,
+        target_root=run_root / ".generations" / "snapshot",
+        generation_id="snapshot",
+        expected_root_count=1,
+        temp_parent=tmp_path,
+    )
+
+    assert result["status"] == "completed_with_failures"
+    assert _read_jsonl(
+        run_root / ".generations" / "snapshot" / "per_task_results.jsonl"
+    )[0]["root_status"] == "failed"
+
+
 def test_v3_chain_scopes_artifact_identity_by_task(
     tmp_path: Path,
 ) -> None:

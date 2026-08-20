@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,11 @@ from tokenshare.executors.ai_api_transport import (
     UrlLibSiliconFlowTransport,
 )
 from tokenshare.executors.registry import ExecutorRegistry
+from tokenshare.executors.contracts import (
+    EnvironmentRef,
+    ExecutionRequest,
+    ExecutionSubmission,
+)
 from tokenshare.experiments.factorization_paper_adapter import (
     ScriptedFactorizationRangeTransport,
     _failed_protocol_attempts_from_events,
@@ -52,6 +58,7 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
 )
 from tokenshare.plugins.factorization.split_strategy import partition_candidate_ranges
+from tokenshare.plugins.contracts import OutputContract
 from tokenshare.local_runtime import (
     NoOpRuntimeHooks,
     ProtocolRunCoordinator,
@@ -61,12 +68,314 @@ from tokenshare.local_runtime import (
     WorkerTerminationPolicy,
     build_experiment_ablation_gate_applied_observation,
 )
+from tokenshare.local_runtime.contracts import PreparedTraceDelivery
 from tokenshare.experiments.paper_formal_callbacks import run_scheduled_cases
 from tokenshare.storage.events import EventLedger, EventType
 
 
 FACTOR_CATALOG = "benchmarks/paper/factorization_catalog.v1.jsonl"
 LEAN_CATALOG = "benchmarks/paper/lean_catalog.v1.jsonl"
+
+
+@pytest.mark.parametrize(
+    "runtime_drift",
+    (None, "request_envelope", "attribution_ref", "attribution_count_missing"),
+    ids=(
+        "valid",
+        "request-envelope-drift",
+        "attribution-ref-drift",
+        "attribution-count-missing",
+    ),
+)
+def test_trace_range_calls_restore_accepted_failed_submission_missing_from_stage(
+    tmp_path: Path,
+    runtime_drift: str | None,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    submitted_at = "2026-08-17T00:00:00Z"
+    environment_ref = EnvironmentRef(
+        environment_id="trace-runtime",
+        environment_digest="sha256:" + "1" * 64,
+        runtime="python",
+        tool_versions={},
+        resource_limits={},
+        fixture_profile_digest="sha256:" + "2" * 64,
+        seed=1,
+        clock_policy="fixed",
+        created_at=submitted_at,
+    )
+    parser_input_digest = "sha256:" + "9" * 64
+    parser_input_ref = store.save_json(
+        {
+            "schema_version": "tokenshare.trace_parser_input.v1",
+            "media_type": "application/json",
+            "content_digest": parser_input_digest,
+            "source_bank_object_locators": [
+                {
+                    "bank_root_id": "bank-1",
+                    "manifest_digest": "sha256:" + "5" * 64,
+                    "entry_id": "exp1-entry-2",
+                    "object_role": "provenance",
+                    "object_digest": "sha256:" + "6" * 64,
+                }
+            ],
+        },
+        artifact_id="parser-input-attempt-2",
+        artifact_type="TraceParserInput",
+        artifact_schema_id="tokenshare.trace_parser_input",
+        artifact_schema_version="v1",
+        source={"kind": "response_bank"},
+        metadata={"attempt_id": "attempt-2"},
+        created_at=submitted_at,
+    )
+    request = ExecutionRequest(
+        request_id="request-2",
+        task_id="task-1",
+        unit_id="unit-1",
+        attempt_id="attempt-2",
+        lease_id="lease-2",
+        fencing_token="fencing-2",
+        plugin={"plugin_id": "factorization", "plugin_version": "1"},
+        executor={"executor_id": "trace_backed", "executor_version": "1"},
+        registry_snapshot_id="registry-1",
+        allocation_decision={},
+        capability_snapshot={},
+        task_unit_snapshot={},
+        input_artifact_refs={},
+        output_contract=OutputContract(
+            output_contract_id="factor-output",
+            required_outputs=[],
+            output_schema_refs={},
+            raw_output_policy={},
+        ),
+        hard_requirements={},
+        soft_hints={
+            "trace_inference_request_digest": "sha256:" + "4" * 64,
+            "trace_source_entry_id": "exp1-entry-2",
+        },
+        environment_ref=environment_ref,
+        execution_instruction_ref=None,
+        prompt_package_ref=None,
+        limits={},
+        created_at=submitted_at,
+        attempt_ordinal=1,
+        source_binding_digest="sha256:" + "3" * 64,
+    )
+    delivery = PreparedTraceDelivery.create(
+        current_run_id="run-1",
+        task_id=request.task_id,
+        unit_id=request.unit_id,
+        attempt_id=request.attempt_id,
+        attempt_ordinal=request.attempt_ordinal,
+        binding_digest=request.source_binding_digest,
+        inference_request_digest="sha256:" + "4" * 64,
+        bank_root_id="bank-1",
+        manifest_digest="sha256:" + "5" * 64,
+        entry_id="exp1-entry-2",
+        source_terminal_kind="provider_failure",
+        source_bank_object_locators=(
+            {
+                "bank_root_id": "bank-1",
+                "manifest_digest": "sha256:" + "5" * 64,
+                "entry_id": "exp1-entry-2",
+                "object_role": "provenance",
+                "object_digest": "sha256:" + "6" * 64,
+            },
+        ),
+        logical_start_ms=0,
+        source_latency_ms=1,
+        parser_input_media_type="application/json",
+        parser_input_digest=parser_input_digest,
+        child_worker_id="worker-1",
+        child_completion_sequence=1,
+    )
+    delivery_ref = store.save_json(
+        delivery.to_dict(),
+        artifact_id="delivery-attempt-2",
+        artifact_type="CurrentTraceWrapper",
+        artifact_schema_id="tokenshare.current_trace_wrapper",
+        artifact_schema_version="v1",
+        source={"kind": "protocol_runtime"},
+        metadata={"attempt_id": "attempt-2"},
+        created_at=submitted_at,
+    )
+    parser_result_ref = store.save_json(
+        {"failure_kind": "no_response", "message": "no response"},
+        artifact_id="parser-result-attempt-2",
+        artifact_type="TraceProviderFailure",
+        artifact_schema_id="tokenshare.trace_provider_failure",
+        artifact_schema_version="v1",
+        source={"kind": "protocol_runtime"},
+        metadata={"attempt_id": "attempt-2"},
+        created_at=submitted_at,
+    )
+    provenance_ref = store.save_json(
+        {"current_provider_call_count": 0},
+        artifact_id="provenance-attempt-2",
+        artifact_type="CurrentTraceProvenance",
+        artifact_schema_id="tokenshare.current_trace_provenance",
+        artifact_schema_version="v1",
+        source={"kind": "protocol_runtime"},
+        metadata={"attempt_id": "attempt-2"},
+        created_at=submitted_at,
+    )
+    attribution_ref = store.save_json(
+        (
+            {}
+            if runtime_drift == "attribution_count_missing"
+            else {"current_provider_call_count": 0}
+        ),
+        artifact_id="attribution-attempt-2",
+        artifact_type="TraceAttribution",
+        artifact_schema_id="tokenshare.trace_attribution",
+        artifact_schema_version="v1",
+        source={"kind": "protocol_runtime"},
+        metadata={"attempt_id": "attempt-2"},
+        created_at=submitted_at,
+    )
+    failed_submission = ExecutionSubmission(
+        submission_id="submission-attempt-2",
+        request_id="request-2",
+        task_id="task-1",
+        unit_id="unit-1",
+        attempt_id="attempt-2",
+        lease_id="lease-2",
+        fencing_token="fencing-2",
+        executor_id="trace_backed",
+        executor_version="1",
+        result_kind="failed",
+        raw_output_ref=delivery_ref,
+        parsed_output_ref=parser_result_ref,
+        candidate_output_refs={},
+        parse_failure_ref=None,
+        log_ref=None,
+        environment_ref=environment_ref,
+        environment_summary={"runtime": "trace_backed"},
+        provenance_ref=provenance_ref,
+        usage_summary={
+            "provider_attempt_count": 0,
+            "current_provider_call_count": 0,
+        },
+        error={"kind": "no_response"},
+        submitted_at=submitted_at,
+    )
+    submission_ref = store.save_json(
+        failed_submission.to_dict(),
+        artifact_id="failed-submission-attempt-2",
+        artifact_type="ExecutionSubmission",
+        artifact_schema_id="phase3.execution_submission",
+        artifact_schema_version="v1",
+        source={"kind": "protocol_runtime"},
+        metadata={"attempt_id": "attempt-2"},
+        created_at=submitted_at,
+    )
+    request_ref = store.save_json(
+        request.to_dict(),
+        artifact_id="request-attempt-2",
+        artifact_type="ExecutionRequest",
+        artifact_schema_id="phase3.execution_request",
+        artifact_schema_version="v2",
+        source={"kind": "protocol_runtime"},
+        metadata={"attempt_id": "attempt-2"},
+        created_at=submitted_at,
+    )
+    ledger = EventLedger(tmp_path / "events.jsonl")
+    ledger.append(
+        event_type=EventType.EXECUTION_REQUEST_RECORDED,
+        object_type=(
+            "wrong_request_type"
+            if runtime_drift == "request_envelope"
+            else "ExecutionRequest"
+        ),
+        object_id=request.request_id,
+        task_id=request.task_id,
+        payload={
+            "attempt_id": request.attempt_id,
+            "request_id": request.request_id,
+            "task_id": request.task_id,
+            "unit_id": request.unit_id,
+            "lease_id": request.lease_id,
+            "request_ref": request_ref.to_dict(),
+            "request_digest": request_ref.content_hash,
+        },
+        idempotency_key="request-attempt-2",
+        occurred_at=submitted_at,
+    )
+    ledger.append(
+        event_type=EventType.EXECUTION_SUBMISSION_RECORDED,
+        object_type="ExecutionSubmission",
+        object_id=failed_submission.submission_id,
+        task_id=failed_submission.task_id,
+        payload={
+            "attempt_id": failed_submission.attempt_id,
+            "request_id": failed_submission.request_id,
+            "task_id": failed_submission.task_id,
+            "unit_id": failed_submission.unit_id,
+            "lease_id": failed_submission.lease_id,
+            "submission_id": failed_submission.submission_id,
+            "result_kind": failed_submission.result_kind,
+            "submission_ref": submission_ref.to_dict(),
+            "submission_digest": submission_ref.content_hash,
+            "acceptance_status": "accepted",
+        },
+        idempotency_key="accepted-failed-submission-attempt-2",
+        occurred_at=submitted_at,
+    )
+    ledger.append(
+        event_type=EventType.TRACE_DELIVERY_COMMITTED,
+        object_type="TraceConsumption",
+        object_id="attempt-2",
+        task_id=failed_submission.task_id,
+        payload={
+            "attempt_id": failed_submission.attempt_id,
+            "binding_digest": delivery.binding_digest,
+            "current_fencing_token": request.fencing_token,
+            "status": "delivered",
+            "current_wrapper_ref": delivery_ref.to_dict(),
+            "parser_input_ref": parser_input_ref.to_dict(),
+            "parser_result_ref": parser_result_ref.to_dict(),
+            "current_provenance_ref": provenance_ref.to_dict(),
+            "verifier_checker_refs": [],
+            "canonical_ref": None,
+            "trace_attribution_refs": [
+                {
+                    **attribution_ref.to_dict(),
+                    **(
+                        {"content_hash": "sha256:" + "f" * 64}
+                        if runtime_drift == "attribution_ref"
+                        else {}
+                    ),
+                }
+            ],
+        },
+        idempotency_key="trace-delivery-attempt-2",
+        occurred_at=submitted_at,
+    )
+
+    def restore_calls():
+        return factorization_paper_adapter_module._trace_range_calls_from_events(
+            requests={},
+            deliveries={},
+            staged_submissions={},
+            runtime_events=ledger.read_all(),
+            request_refs_by_id={"request-2": request_ref},
+            store=store,
+        )
+
+    if runtime_drift is not None:
+        with pytest.raises(ValueError, match="trace"):
+            restore_calls()
+        return
+    calls = restore_calls()
+
+    assert len(calls) == 1
+    assert calls[0].submission.result_kind == "failed"
+    assert calls[0].submission.error == {"kind": "no_response"}
+    assert calls[0].submission.usage_summary == {
+        "provider_attempt_count": 0,
+        "entry_id": "exp1-entry-2",
+        "current_provider_call_count": 0,
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -119,6 +428,178 @@ def _use_tracked_lean_catalog_identity(monkeypatch: pytest.MonkeyPatch) -> None:
         "_file_digest",
         worktree_file_digest,
     )
+
+
+def test_factorization_attempt_producer_persists_strict_current_provider_count(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    request_ref = store.save_json(
+        {"request": "body"},
+        artifact_id="factor-provider-count-request",
+        artifact_type="ExecutionRequest",
+        artifact_schema_id="test.execution_request",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-11T00:00:00Z",
+    )
+
+    def produce(
+        name: str,
+        *,
+        submission_count=1,
+        persisted_count=1,
+        provenance_count=1,
+        provider_attempts=({"latency_ms": 1},),
+        trace: bool = False,
+        trace_current_calls=0,
+    ):
+        usage_summary = {
+            "provider_family": "siliconflow",
+            "model": "test-model",
+            "entry_id": "test-entry",
+        }
+        persisted_usage = dict(usage_summary)
+        if submission_count != "missing":
+            usage_summary["provider_attempt_count"] = submission_count
+        if persisted_count != "missing":
+            persisted_usage["provider_attempt_count"] = persisted_count
+        if trace:
+            usage_summary.update(
+                current_provider_call_count=trace_current_calls,
+                source_usage_class="trace_attribution",
+            )
+            persisted_usage.update(
+                current_provider_call_count=trace_current_calls,
+                source_usage_class="trace_attribution",
+            )
+        usage_ref = store.save_json(
+            persisted_usage,
+            artifact_id=f"factor-provider-count-usage-{name}",
+            artifact_type="AIUsageSummary",
+            artifact_schema_id="tokenshare.paper_ai_usage",
+            artifact_schema_version="v1",
+            source={"kind": "test"},
+            metadata={},
+            created_at="2026-08-11T00:00:00Z",
+        )
+        provenance_ref = (
+            None
+            if trace
+            else store.save_json(
+                {
+                    "attempts": list(provider_attempts),
+                    **(
+                        {"provider_attempt_count": provenance_count}
+                        if provenance_count != "missing"
+                        else {}
+                    ),
+                },
+                artifact_id=f"factor-provider-count-provenance-{name}",
+                artifact_type="AIExecutionProvenance",
+                artifact_schema_id="test.ai_provenance",
+                artifact_schema_version="v1",
+                source={"kind": "test"},
+                metadata={},
+                created_at="2026-08-11T00:00:00Z",
+            )
+        )
+        submission = SimpleNamespace(
+            usage_summary=usage_summary,
+            provenance_ref=provenance_ref,
+            raw_output_ref=request_ref,
+            parsed_output_ref=None,
+            parse_failure_ref=None,
+            error=None,
+        )
+        request = SimpleNamespace(
+            task_id="factor-task",
+            unit_id="factor-unit",
+            attempt_id=f"factor-attempt-{name}",
+        )
+        return factorization_paper_adapter_module._paper_attempt_result(
+            store=store,
+            condition=_condition("sha256:" + "1" * 64),
+            case_id="factor-case",
+            index=0,
+            request=request,
+            request_ref=request_ref,
+            submission=submission,
+            usage_ref=usage_ref,
+            attempt_status=PaperAttemptStatus.SUCCEEDED,
+            planned_ai_unit_id="range_0",
+        )
+
+    assert produce("transport-success").provider_attempt_count == 1
+    assert produce(
+        "provider-failure",
+        provider_attempts=({"result_kind": "provider_error"},),
+    ).provider_attempt_count == 1
+    assert produce(
+        "pretransport-secret-missing",
+        submission_count=0,
+        persisted_count=0,
+        provenance_count=0,
+        provider_attempts=({"result_kind": "secret_missing"},),
+    ).provider_attempt_count == 0
+    assert produce(
+        "pretransport-config-error",
+        submission_count=0,
+        persisted_count=0,
+        provenance_count=0,
+        provider_attempts=({"result_kind": "config_error"},),
+    ).provider_attempt_count == 0
+    assert produce(
+        "trace",
+        submission_count=0,
+        persisted_count=0,
+        provider_attempts=(),
+        trace=True,
+    ).provider_attempt_count == 0
+    for name, kwargs in (
+        ("missing", {"submission_count": "missing", "persisted_count": "missing"}),
+        ("invalid", {"submission_count": True, "persisted_count": True}),
+        ("usage-conflict", {"submission_count": 1, "persisted_count": 0}),
+        ("provenance-missing", {"provenance_count": "missing"}),
+        ("provenance-bool", {"provenance_count": True}),
+        ("provenance-negative", {"provenance_count": -1}),
+        ("provenance-string", {"provenance_count": "1"}),
+        ("provenance-conflict", {"provenance_count": 0}),
+        ("inventory-invalid", {"provider_attempts": (None,)}),
+        (
+            "trace-bool-calls",
+            {
+                "submission_count": 0,
+                "persisted_count": 0,
+                "provider_attempts": (),
+                "trace": True,
+                "trace_current_calls": False,
+            },
+        ),
+        (
+            "trace-negative-calls",
+            {
+                "submission_count": 0,
+                "persisted_count": 0,
+                "provider_attempts": (),
+                "trace": True,
+                "trace_current_calls": -1,
+            },
+        ),
+        (
+            "trace-string-calls",
+            {
+                "submission_count": 0,
+                "persisted_count": 0,
+                "provider_attempts": (),
+                "trace": True,
+                "trace_current_calls": "0",
+            },
+        ),
+    ):
+        with pytest.raises(ValueError, match="provider attempt count evidence"):
+            produce(name, **kwargs)
 
 
 def test_factorization_catalog_fixture_is_bound_to_current_worktree() -> None:
@@ -282,6 +763,9 @@ def test_factorization_v2_easy_semiprime_completes_parser_verifier_canonical_and
     assert result.merge_summary["result_kind"] == "prime_factorization_result"
     assert all(item["verification"]["accepted"] for item in result.range_results)
     assert all(item["canonical_output_ref"] for item in result.range_results)
+    assert result.run_evidence["protocol_runtime"]["event_ledger_path"] == (
+        f"events/{result.task_result.task_id}.jsonl"
+    )
 
 
 def test_factorization_v2_hard_prime_control_merges_complete_no_factor_ranges(
@@ -599,6 +1083,9 @@ def test_factorization_paper_adapter_runs_range_children_through_ai_api_executor
     assert result.final_prime_factors == case["oracle_prime_factors"]
     assert result.merge_summary["result_kind"] == "prime_factorization_result"
     assert len(result.attempt_results) == result.split_summary["range_child_count"]
+    assert sum(
+        attempt.provider_attempt_count for attempt in result.attempt_results
+    ) == result.task_result.provider_attempt_count
     assert len(result.range_results) == result.split_summary["range_child_count"]
     assert all(item["verification"]["accepted"] is True for item in result.range_results)
     assert all(item["canonical_output_ref"] for item in result.range_results)
@@ -840,6 +1327,35 @@ def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
             for observation in runtime["hook_observations"]
         )
         assert result.task_result.accepted_validity is False
+        native = result.run_evidence["paper_direct_native_artifacts"]
+        verdict_ref = ArtifactRef.from_dict(native["independent_verdict_ref"])
+        final_ref = ArtifactRef.from_dict(
+            next(
+                event["payload"]["merge_output_refs"]["prime_factorization_result"]
+                for event in result.event_records
+                if event["event_type"] == "MERGE_RECORDED"
+            )
+        )
+        report = json.loads(
+            ArtifactStore(result.output_root).read_bytes(verdict_ref).decode("utf-8")
+        )
+        assert verdict_ref.artifact_id != final_ref.artifact_id
+        assert report["schema_version"] == (
+            "tokenshare.paper_factorization_domain_verifier_report.v1"
+        )
+        assert report["case_id"] == case["case_id"]
+        assert report["execution_id"] == result.run_evidence["protocol_runtime"][
+            "run_id"
+        ]
+        assert report["task_id"] == result.run_evidence["protocol_runtime"]["task_id"]
+        assert report["root_unit_id"] == result.run_evidence["protocol_runtime"][
+            "root_unit_id"
+        ]
+        assert report["final_result_ref"] == final_ref.to_dict()
+        assert report["environment_ref"]["environment_digest"].startswith("sha256:")
+        assert report["status"] == "rejected"
+        assert report["correct"] is False
+        assert report["report_digest"].startswith("sha256:")
     elif mode == "NO_PARSER_POLICY":
         assert all(
             item.raw_output_ref is not None
@@ -908,6 +1424,13 @@ def test_factorization_paper_adapter_reports_provider_failure_stage(tmp_path) ->
         attempt.attempt_status == PaperAttemptStatus.PROVIDER_ERROR
         for attempt in result.attempt_results
     )
+    assert all(
+        attempt.provider_attempt_count == 1 for attempt in result.attempt_results
+    )
+    assert all(
+        attempt.to_dict()["provider_attempt_count"] == 1
+        for attempt in result.attempt_results
+    )
 
 
 def test_factorization_paper_adapter_rejects_custom_transport_marked_real(
@@ -944,6 +1467,27 @@ def test_factorization_real_transport_guard_accepts_provider_router_wrapper() ->
         transport=Wrapper(),
         ai_api_config=_real_transport_config(),
     )
+
+
+def test_factorization_real_transport_guard_accepts_scheduled_exp5_wrapper() -> None:
+    real_transport = UrlLibSiliconFlowTransport()
+
+    class ScheduledExp5Wrapper:
+        def tokenshare_real_transport_for_provider(self, provider_family: str):
+            assert provider_family == "siliconflow"
+            return real_transport
+
+        def tokenshare_transport_for_provider(self, provider_family: str):
+            assert provider_family == "siliconflow"
+            return self
+
+    wrapper = ScheduledExp5Wrapper()
+    factorization_paper_adapter_module._validate_real_transport_mode(
+        real_transport=True,
+        transport=wrapper,
+        ai_api_config=_real_transport_config(),
+    )
+    assert wrapper.tokenshare_transport_for_provider("siliconflow") is wrapper
 
 
 def test_factorization_paper_adapter_accepts_openai_real_transport_through_executor(
@@ -1241,6 +1785,63 @@ def test_factorization_fixed_entry_503_does_not_failover_to_sibling_model(
         )
         assert provenance["selection_record"]["eligible_entry_ids"] == ["gpt-entry"]
         assert provenance["selection_record"]["attempt_entry_ids"] == ["gpt-entry"]
+
+
+def test_exp5_factorization_online_callback_provider_failure_has_no_protocol_retry(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+        max_provider_attempts=1,
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=catalog.catalog_digest,
+        domain="factorization",
+        difficulty="easy",
+        approved_config=approved_config,
+    )
+    transport = _RecordingProviderErrorTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "exp5-callback-provider-failure",
+        transport=transport,
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+        post_raw_output_hook=lambda **_context: None,
+    )
+
+    expected_ai_units = case["split_params"]["requested_child_count"]
+    store = ArtifactStore(Path(result.output_root))
+    ai_requests = [
+        json.loads(
+            store.read_bytes(
+                ArtifactRef.from_dict(event["payload"]["request_ref"])
+            ).decode("utf-8")
+        )
+        for event in result.event_records
+        if event["event_type"] == "EXECUTION_REQUEST_RECORDED"
+        and event["payload"].get("request_ref") is not None
+    ]
+    ai_requests = [
+        request
+        for request in ai_requests
+        if request.get("soft_hints", {}).get("planned_ai_unit_id") is not None
+    ]
+    assert len(transport.calls) == expected_ai_units
+    assert len(ai_requests) == expected_ai_units
+    assert {request["attempt_ordinal"] for request in ai_requests} == {0}
 
 
 def test_factorization_resolved_model_mismatch_records_audit_and_stops_later_units(
@@ -2217,6 +2818,317 @@ def test_factorization_rate_faults_use_protocol_recovery_lifecycle(
     )
 
 
+def test_factorization_trace_false_positive_runs_raw_and_parsed_hooks_before_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_paper_formal_runner import (
+        _trace_context_from_adapter_result,
+    )
+    from tokenshare.experiments import paper_formal_runner
+
+    case = generate_factorization_paper_cases()[0]
+    base_condition = _v2_condition(case)
+    source_transport = ScriptedFactorizationRangeTransport()
+    source = run_factorization_paper_case(
+        case=case,
+        condition=base_condition,
+        output_root=tmp_path / "source",
+        transport=source_transport,
+        real_transport=False,
+    )
+    target_ai_unit_id = next(
+        str(attempt.planned_ai_unit_id)
+        for attempt in source.attempt_results
+        if attempt.planned_ai_unit_id is not None
+    )
+    trace_context = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "bank",
+        adapter_result=source,
+        replacement_count=2,
+    )
+    condition = replace(
+        base_condition,
+        experiment_id="exp3_real_ai_fault_recovery",
+        condition_id="exp3_factorization_trace_false_positive_r0",
+        fault_type="false_positive",
+        fault_rate=1.0,
+    )
+    runtime_records: list[dict] = []
+    fault_hook = paper_formal_runner._Exp3RuntimeHookBridge(
+        condition=condition,
+        case_id=str(case["case_id"]),
+        fault_type="false_positive",
+        selected_unit_ids=(f'{case["case_id"]}:{target_ai_unit_id}',),
+        reserve_unit_ids=(),
+        runtime_records=runtime_records,
+    )
+    verifier_observations: list[dict] = []
+    original_verify = FactorizationRuntimeAdapter.verify_submission
+
+    def verify_after_fault(self, submission, *, unit):
+        if unit.unit_type == "factor_search_range":
+            candidate_ref = submission.candidate_output_refs["range_result"]
+            candidate = json.loads(
+                self._require_store().read_bytes(candidate_ref).decode("utf-8")
+            )
+            verifier_observations.append(
+                {
+                    "attempt_id": submission.attempt_id,
+                    "fault_record_count": len(runtime_records),
+                    "fault_type": (
+                        candidate.get("paper_fault_mutation", {}).get("fault_type")
+                    ),
+                }
+            )
+        return original_verify(self, submission, unit=unit)
+
+    monkeypatch.setattr(
+        FactorizationRuntimeAdapter,
+        "verify_submission",
+        verify_after_fault,
+    )
+    trace_transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "trace",
+        transport=trace_transport,
+        real_transport=False,
+        post_raw_output_hook=fault_hook,
+        trace_context=trace_context,
+    )
+
+    assert trace_transport.calls == []
+    assert result.task_result.provider_attempt_count == 0
+    assert all(
+        attempt.provider_attempt_count == 0 for attempt in result.attempt_results
+    )
+    assert result.task_result.root_status is PaperTaskStatus.COMPLETED
+    assert len(runtime_records) == 1
+    assert runtime_records[0]["hook_stage"] == (
+        "after_parsed_candidate_before_submission_and_verification"
+    )
+    assert runtime_records[0]["original_provenance_ref"]
+    assert runtime_records[0]["pre_fault_usage_ref"]
+    assert any(
+        observation["fault_record_count"] == 1
+        and observation["fault_type"] == "false_positive"
+        for observation in verifier_observations
+    )
+    target_statuses = {
+        attempt.attempt_status
+        for attempt in result.attempt_results
+        if attempt.planned_ai_unit_id == target_ai_unit_id
+    }
+    assert PaperAttemptStatus.VERIFICATION_REJECTED in target_statuses
+    assert PaperAttemptStatus.SUCCEEDED in target_statuses
+
+
+def test_factorization_trace_worker_death_p75_uses_frozen_second_unit_and_recovers(
+    tmp_path: Path,
+) -> None:
+    from tests.experiments.test_paper_formal_runner import (
+        _trace_context_from_adapter_result,
+    )
+
+    def p75_target_is_not_pruned(case: dict) -> bool:
+        requested = int(case["split_params"]["requested_child_count"])
+        partition = partition_candidate_ranges(
+            target_n=case["target_n"],
+            requested_child_count=requested,
+            max_children_per_unit=requested,
+            min_divisor=case["candidate_start"],
+            max_divisor=case["candidate_end"],
+        )
+        anchor = (len(partition.ranges) * 75 + 99) // 100 - 1
+        factor = min(int(item["prime"]) for item in case["oracle_prime_factors"])
+        factor_index = next(
+            item.child_index
+            for item in partition.ranges
+            if int(item.range_start) <= factor <= int(item.range_end)
+        )
+        return factor_index >= anchor
+
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "easy" and p75_target_is_not_pruned(case)
+    )
+    base_condition = _v2_condition(case)
+    source = run_factorization_paper_case(
+        case=case,
+        condition=base_condition,
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+    )
+    planned = tuple(
+        dict.fromkeys(
+            str(attempt.planned_ai_unit_id)
+            for attempt in source.attempt_results
+            if attempt.planned_ai_unit_id is not None
+        )
+    )
+    assert planned == ("range_0", "range_1")
+    trace_context = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "bank",
+        adapter_result=source,
+        replacement_count=2,
+    )
+    condition = replace(
+        base_condition,
+        experiment_id="exp3_real_ai_fault_recovery",
+        condition_id="exp3_factorization_trace_worker_death_p75_r0",
+        fault_type="worker_death",
+    )
+    trace_transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "trace",
+        transport=trace_transport,
+        real_transport=False,
+        trace_context=trace_context,
+        worker_termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=("range_1",),
+            termination_count_target=1,
+            kill_point="progress_75",
+            total_planned_ai_unit_count=2,
+        ),
+    )
+
+    assert trace_transport.calls == []
+    assert result.task_result.provider_attempt_count == 0
+    assert result.task_result.root_status is PaperTaskStatus.COMPLETED
+    dead_attempts = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.attempt_status is PaperAttemptStatus.WORKER_DIED
+    ]
+    assert len(dead_attempts) == 1
+    assert dead_attempts[0].planned_ai_unit_id == "range_1"
+    assert len(result.fault_records) == 1
+    assert result.fault_records[0]["kill_progress_target_ratio"] == pytest.approx(
+        0.75
+    )
+    assert result.fault_records[0]["kill_progress_actual_ratio"] >= 0.75
+
+
+def test_factorization_trace_worker_death_requeues_frozen_target_before_later_success_merge(
+    tmp_path: Path,
+) -> None:
+    """正式 p50 target 不能被稍晚完成的正确 sibling 提前剪枝。"""
+
+    from tests.experiments.test_paper_formal_runner import (
+        _trace_context_from_adapter_result,
+    )
+
+    def formal_hard_p50_later_success(case: dict) -> bool:
+        requested = int(case["split_params"]["requested_child_count"])
+        partition = partition_candidate_ranges(
+            target_n=case["target_n"],
+            requested_child_count=requested,
+            max_children_per_unit=requested,
+            min_divisor=case["candidate_start"],
+            max_divisor=case["candidate_end"],
+        )
+        if len(partition.ranges) != requested:
+            return False
+        anchor = (len(partition.ranges) * 50 + 99) // 100 - 1
+        factor = min(int(item["prime"]) for item in case["oracle_prime_factors"])
+        success_index = next(
+            item.child_index
+            for item in partition.ranges
+            if int(item.range_start) <= factor <= int(item.range_end)
+        )
+        return success_index > anchor
+
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "hard" and formal_hard_p50_later_success(case)
+    )
+    requested = int(case["split_params"]["requested_child_count"])
+    anchor = (requested * 50 + 99) // 100 - 1
+    target_ai_unit_id = f"range_{anchor}"
+    base_condition = _v2_condition(case)
+    source = run_factorization_paper_case(
+        case=case,
+        condition=base_condition,
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+    )
+    trace_context = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "bank",
+        adapter_result=source,
+        replacement_count=2,
+    )
+    condition = replace(
+        base_condition,
+        experiment_id="exp3_real_ai_fault_recovery",
+        condition_id="exp3_factorization_trace_worker_death_hard_p50_r0",
+        fault_type="worker_death",
+    )
+    trace_transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "trace",
+        transport=trace_transport,
+        real_transport=False,
+        trace_context=trace_context,
+        worker_termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=(target_ai_unit_id,),
+            termination_count_target=1,
+            kill_point="progress_50",
+            total_planned_ai_unit_count=requested,
+        ),
+    )
+
+    assert trace_transport.calls == []
+    assert result.task_result.provider_attempt_count == 0
+    assert result.task_result.root_status is PaperTaskStatus.COMPLETED
+    target_attempts = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.planned_ai_unit_id == target_ai_unit_id
+    ]
+    assert [attempt.attempt_status for attempt in target_attempts] == [
+        PaperAttemptStatus.WORKER_DIED,
+        PaperAttemptStatus.SUCCEEDED,
+    ]
+    recovery_seq = next(
+        int(event["event_seq"])
+        for event in result.event_records
+        if event["event_type"] == EventType.RECOVERY_ACTION_RECORDED.value
+        and event["payload"]["recovery_action"]["unit_id"]
+        == target_attempts[0].unit_id
+        and event["payload"]["recovery_action"]["retry_allowed"] is True
+    )
+    replacement_trace_seq = max(
+        int(event["event_seq"])
+        for event in result.event_records
+        if event["event_type"] == EventType.TRACE_DELIVERY_COMMITTED.value
+        and event["object_id"] == target_attempts[1].attempt_id
+    )
+    merge_or_prune_seqs = [
+        int(event["event_seq"])
+        for event in result.event_records
+        if event["event_type"]
+        in {
+            EventType.MERGE_TASK_LINK_RECORDED.value,
+            EventType.MERGE_RECORDED.value,
+            EventType.SUBTREE_PRUNED.value,
+        }
+    ]
+    assert recovery_seq < replacement_trace_seq < min(merge_or_prune_seqs)
+
+
 def _v2_case_with_large_no_factor_range() -> tuple[dict, int, int]:
     for case in generate_factorization_paper_cases():
         partition = _v2_partition(case)
@@ -2651,6 +3563,93 @@ def test_factorization_full_task_artifacts_include_stable_attempt_evidence(
         }.issubset(task_key_set)
 
 
+def test_factorization_coordinator_restores_captured_model_record_by_attempt_id(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    original_project = factorization_paper_adapter_module.project_paper_protocol_run
+
+    def project_without_model_records(**kwargs):
+        projection = original_project(**kwargs)
+        return replace(
+            projection,
+            attempt_results=tuple(
+                replace(item, model_execution_record_ref=None)
+                for item in projection.attempt_results
+            ),
+            task_result=replace(projection.task_result, artifact_refs=[]),
+        )
+
+    monkeypatch.setattr(
+        factorization_paper_adapter_module,
+        "project_paper_protocol_run",
+        project_without_model_records,
+    )
+    case = generate_factorization_paper_cases()[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_formal_exp5_condition(
+            catalog_digest=f"sha256:{'4' * 64}",
+            domain="factorization",
+            difficulty=str(case["difficulty"]),
+            approved_config=approved_config,
+        ),
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+    )
+
+    task_record_refs = {
+        (item["artifact_id"], item["content_hash"])
+        for item in result.task_result.artifact_refs
+        if item.get("artifact_type") == "PaperModelExecutionRecord"
+    }
+    assert result.attempt_results
+    for attempt in result.attempt_results:
+        assert attempt.provider_attempt_count == 1
+        assert attempt.model_execution_record_ref is not None
+        record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
+        assert record["attempt_id"] == attempt.attempt_id
+        assert (
+            attempt.model_execution_record_ref["artifact_id"],
+            attempt.model_execution_record_ref["content_hash"],
+        ) in task_record_refs
+
+
+def test_factorization_fixed_identity_process_result_rejects_duplicate_attempt_id() -> None:
+    executor_type = factorization_paper_adapter_module._FixedIdentityRangeExecutor
+    executor = executor_type.__new__(executor_type)
+    executor._calls_lock = Lock()
+    executor.secret_collector = (
+        factorization_paper_adapter_module._TransientSecretCollector()
+    )
+    captured = factorization_paper_adapter_module._CapturedRangeCall(
+        request=SimpleNamespace(attempt_id="attempt-a"),
+        submission=SimpleNamespace(),
+        request_ref=SimpleNamespace(),
+        usage_ref=SimpleNamespace(),
+        model_execution_record=None,
+        model_execution_record_ref=None,
+        model_execution_record_required=False,
+    )
+    executor.calls = [captured, captured]
+
+    with pytest.raises(ValueError, match="exactly one captured request"):
+        executor.export_process_result(captured.request, captured.submission)
+
+    executor.calls = [captured]
+    with pytest.raises(ValueError, match="duplicated captured request"):
+        executor.ingest_process_result(captured)
+
+
 def test_fixed_identity_is_request_policy_and_mismatch_is_fatal_submission(
     tmp_path,
     monkeypatch,
@@ -2789,9 +3788,17 @@ def test_fixed_identity_request_mismatch_is_fatal_without_provider_call(
         attempt.error_kind: attempt.attempt_status
         for attempt in result.attempt_results
     } == expected_status_by_error_kind
+    mismatch_attempt = next(
+        attempt
+        for attempt in result.attempt_results
+        if attempt.error_kind == "executor_requirement_mismatch"
+    )
+    provenance = _read_artifact(result.output_root, mismatch_attempt.provenance_ref)
+    assert provenance["provider_attempt_count"] == 0
+    assert provenance["attempts"] == []
+    assert provenance["final_result_kind"] == "fatal_executor_error"
     assert all(
-        attempt.provenance_ref is None
-        and attempt.model_execution_record_ref is None
+        attempt.model_execution_record_ref is None
         and attempt.paper_eligible is False
         for attempt in result.attempt_results
     )
@@ -2816,7 +3823,7 @@ def test_fixed_identity_request_mismatch_is_fatal_without_provider_call(
         )
         assert submission["result_kind"] == "fatal_executor_error"
         assert submission["candidate_output_refs"] == {}
-        assert submission["provenance_ref"] is None
+        assert submission["provenance_ref"] == mismatch_attempt.provenance_ref
 
 
 def test_trace_success_and_provider_failure_stage_current_wrapper_with_complete_role_locators(
@@ -2952,3 +3959,189 @@ def test_trace_success_and_provider_failure_stage_current_wrapper_with_complete_
         "request_body", "provider_failure", "provenance", "usage", "latency",
         "pricing", "acquisition_attempt", "model_record",
     }
+
+
+def test_factorization_trace_replays_four_ordinary_attempts_then_fault_redelivery(
+    tmp_path: Path,
+) -> None:
+    """生产 ProtocolEngine 必须按 binding 容量消费完整 Exp1 attempt 序列。"""
+
+    from tests.executors.test_trace_backed import _bank
+    from tokenshare.executors.trace_backed import (
+        freeze_projected_trace_source_binding,
+    )
+    from tokenshare.experiments import paper_formal_runner
+    from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
+
+    case = next(
+        item
+        for item in generate_factorization_paper_cases()
+        if item["factor_position_quantile"] != "no_factor"
+    )
+    requested = int(case["split_params"]["requested_child_count"])
+    partition = partition_candidate_ranges(
+        target_n=case["target_n"],
+        requested_child_count=requested,
+        max_children_per_unit=requested,
+        min_divisor=case["candidate_start"],
+        max_divisor=case["candidate_end"],
+    )
+    factor = min(int(item["prime"]) for item in case["oracle_prime_factors"])
+    child_index = next(
+        item.child_index
+        for item in partition.ranges
+        if int(item.range_start) <= factor <= int(item.range_end)
+    )
+    planned_ai_unit_id = f"range_{child_index}"
+    base_condition = _v2_condition(case)
+    source = run_factorization_paper_case(
+        case=case,
+        condition=base_condition,
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        selected_ai_unit_id=planned_ai_unit_id,
+    )
+    wrong_source = run_factorization_paper_case(
+        case=case,
+        condition=base_condition,
+        output_root=tmp_path / "wrong-source",
+        transport=ScriptedFactorizationRangeTransport(
+            force_false_negative_child_indices={child_index}
+        ),
+        real_transport=False,
+        selected_ai_unit_id=planned_ai_unit_id,
+    )
+    source_attempt = next(
+        attempt
+        for attempt in source.attempt_results
+        if attempt.planned_ai_unit_id == planned_ai_unit_id
+    )
+    wrong_source_attempt = next(
+        attempt
+        for attempt in wrong_source.attempt_results
+        if attempt.planned_ai_unit_id == planned_ai_unit_id
+    )
+    assert source_attempt.parsed_output_ref is not None
+    assert wrong_source_attempt.parsed_output_ref is not None
+    terminal_candidate = _read_artifact(
+        source.output_root,
+        source_attempt.parsed_output_ref,
+    )
+    wrong_candidate = _read_artifact(
+        wrong_source.output_root,
+        wrong_source_attempt.parsed_output_ref,
+    )
+    resolver = _bank(
+        tmp_path / "exp1-bank",
+        terminal_kinds=("success", "success", "success", "success"),
+        contents=(
+            json.dumps(wrong_candidate, sort_keys=True),
+            json.dumps(wrong_candidate, sort_keys=True),
+            json.dumps(wrong_candidate, sort_keys=True),
+            json.dumps(terminal_candidate, sort_keys=True),
+        ),
+        planned_ai_unit_id=planned_ai_unit_id,
+    )
+    binding = freeze_projected_trace_source_binding(
+        resolver,
+        current_planned_ai_unit_id=planned_ai_unit_id,
+        current_sample_slot_index=0,
+        source_entry_ids_by_current_attempt=(
+            "entry-0",
+            "entry-1",
+            "entry-2",
+            "entry-3",
+            "entry-3",
+        ),
+        delivery_kinds_by_current_attempt=(
+            "ordinary_attempt",
+            "ordinary_attempt",
+            "ordinary_attempt",
+            "ordinary_attempt",
+            "fault_redelivery",
+        ),
+        redelivery_reasons_by_current_attempt=(
+            None,
+            None,
+            None,
+            None,
+            "false_positive_requeue",
+        ),
+    )
+    trace_context = PaperTraceRuntimeContext(
+        resolver=resolver,
+        bindings=(binding,),
+        inventory_rows=resolver.index.inventory_rows,
+    )
+    condition = replace(
+        base_condition,
+        experiment_id="exp3_real_ai_fault_recovery",
+        condition_id="exp3_factorization_four_source_attempts_redelivery_r0",
+        fault_type="false_positive",
+        fault_rate=1.0,
+    )
+    runtime_records: list[dict] = []
+    fault_hook = paper_formal_runner._Exp3RuntimeHookBridge(
+        condition=condition,
+        case_id=str(case["case_id"]),
+        fault_type="false_positive",
+        selected_unit_ids=(f'{case["case_id"]}:{planned_ai_unit_id}',),
+        reserve_unit_ids=(),
+        runtime_records=runtime_records,
+    )
+
+    class ProviderBomb:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post_chat_completion(self, **_kwargs):
+            self.calls += 1
+            raise AssertionError("trace replay must not call provider transport")
+
+    provider_bomb = ProviderBomb()
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "trace",
+        transport=provider_bomb,
+        real_transport=False,
+        selected_ai_unit_id=planned_ai_unit_id,
+        post_raw_output_hook=fault_hook,
+        trace_context=trace_context,
+    )
+
+    target_attempts = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.planned_ai_unit_id == planned_ai_unit_id
+    ]
+    assert provider_bomb.calls == 0
+    assert result.task_result.provider_attempt_count == 0
+    persisted_requests = [
+        _read_artifact(result.output_root, attempt.request_ref)
+        for attempt in target_attempts
+    ]
+    assert [
+        request["soft_hints"]["trace_source_entry_id"]
+        for request in persisted_requests
+    ] == [
+        "entry-0",
+        "entry-1",
+        "entry-2",
+        "entry-3",
+        "entry-3",
+    ]
+    assert [
+        request["soft_hints"]["trace_delivery_kind"]
+        for request in persisted_requests
+    ] == [
+        "ordinary_attempt",
+        "ordinary_attempt",
+        "ordinary_attempt",
+        "ordinary_attempt",
+        "fault_redelivery",
+    ]
+    assert all(attempt.provider_attempt_count == 0 for attempt in target_attempts)
+    assert len(runtime_records) == 1
+    assert result.task_result.root_status is PaperTaskStatus.PARTIAL

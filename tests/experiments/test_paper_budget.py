@@ -321,6 +321,36 @@ def test_formal_disk_estimate_records_calibrated_components() -> None:
     )
 
 
+def test_budget_freezes_disk_token_ceiling_separately_from_provider_controls() -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+    provider_controls = {
+        "max_provider_attempts": 1,
+        "max_tokens": 300_000,
+        "timeout_seconds": 600,
+    }
+
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=_sample_conditions(catalog.catalog_digest),
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=304_096,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=True,
+        request_limits=provider_controls,
+    )
+
+    commitments = budget.quota_preflight["budget_commitments"]
+    assert commitments["request_limits"] == provider_controls
+    assert commitments["disk_estimate_authority"] == {
+        "schema_version": "tokenshare.paper_disk_estimate_authority.v1",
+        "token_upper_bound_per_provider_attempt": 304_096,
+    }
+    assert budget.disk_estimate["inputs"]["max_tokens"] == 304_096
+
+
 def test_disk_forecast_formula_only_can_fit_439_85_gib_capacity() -> None:
     estimate = paper_budget._paper_disk_estimate(
         planned_conditions=1_246,

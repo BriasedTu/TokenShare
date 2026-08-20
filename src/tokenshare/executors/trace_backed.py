@@ -29,6 +29,10 @@ APPROVED_REAL_SOURCE_EVIDENCE_CLASS = "approved_real_api_acquisition"
 SYNTHETIC_SOURCE_EVIDENCE_CLASSES = frozenset(
     {"synthetic_regression", "scripted_regression", "deterministic_regression"}
 )
+TRACE_ATTEMPT_DELIVERY_KINDS = frozenset(
+    {"ordinary_attempt", "fault_redelivery"}
+)
+MISSING_SOURCE_PROTOCOL_OPERATIONAL_DELAY_MS = 1
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -70,19 +74,86 @@ class TraceReplacementBinding:
 
 
 @dataclass(frozen=True, kw_only=True)
+class TraceAttemptDeliveryBinding:
+    """current protocol delivery 到 immutable Exp1 attempt 的严格映射。"""
+
+    current_attempt_ordinal: int
+    source_entry_id: str
+    source_attempt_index: int
+    source_replacement_slot: int
+    delivery_kind: str
+    redelivery_reason: str | None
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("current_attempt_ordinal", self.current_attempt_ordinal),
+            ("source_attempt_index", self.source_attempt_index),
+            ("source_replacement_slot", self.source_replacement_slot),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        _require_non_empty("source_entry_id", self.source_entry_id)
+        if self.source_attempt_index != self.source_replacement_slot:
+            raise ValueError("trace delivery source attempt identity drifted")
+        if self.delivery_kind not in TRACE_ATTEMPT_DELIVERY_KINDS:
+            raise ValueError("unsupported trace attempt delivery kind")
+        if self.delivery_kind == "ordinary_attempt":
+            if self.redelivery_reason is not None:
+                raise ValueError("ordinary trace attempt cannot have redelivery reason")
+        else:
+            _require_non_empty("redelivery_reason", self.redelivery_reason)
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "current_attempt_ordinal": self.current_attempt_ordinal,
+            "source_entry_id": self.source_entry_id,
+            "source_attempt_index": self.source_attempt_index,
+            "source_replacement_slot": self.source_replacement_slot,
+            "delivery_kind": self.delivery_kind,
+            "redelivery_reason": self.redelivery_reason,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, object]
+    ) -> "TraceAttemptDeliveryBinding":
+        expected = {
+            "current_attempt_ordinal",
+            "source_entry_id",
+            "source_attempt_index",
+            "source_replacement_slot",
+            "delivery_kind",
+            "redelivery_reason",
+        }
+        if set(value) != expected:
+            raise ValueError("trace attempt delivery binding fields mismatch")
+        return cls(
+            current_attempt_ordinal=value["current_attempt_ordinal"],
+            source_entry_id=value["source_entry_id"],
+            source_attempt_index=value["source_attempt_index"],
+            source_replacement_slot=value["source_replacement_slot"],
+            delivery_kind=value["delivery_kind"],
+            redelivery_reason=value["redelivery_reason"],
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
 class TraceSourceBinding:
     planned_ai_unit_id: str
     sample_slot_index: int
     bank_root_id: str
     manifest_digest: str
     replacements: tuple[TraceReplacementBinding, ...]
+    attempt_deliveries: tuple[TraceAttemptDeliveryBinding, ...]
     source_evidence_class: str
     paper_eligibility_disposition: str
     binding_digest: str
-    schema_version: str = "tokenshare.trace_source_binding.v1"
+    schema_version: str = "tokenshare.trace_source_binding.v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "tokenshare.trace_source_binding.v1":
+        if self.schema_version != "tokenshare.trace_source_binding.v2":
             raise ValueError("unsupported trace source binding schema")
         _require_non_empty("planned_ai_unit_id", self.planned_ai_unit_id)
         _require_non_empty("bank_root_id", self.bank_root_id)
@@ -100,6 +171,52 @@ class TraceSourceBinding:
         ordinals = tuple(item.replacement_slot for item in canonical)
         if len(set(ordinals)) != len(ordinals):
             raise ValueError("trace replacement slots must be unique")
+        deliveries = tuple(
+            sorted(
+                self.attempt_deliveries,
+                key=lambda item: item.current_attempt_ordinal,
+            )
+        )
+        if not deliveries or deliveries != self.attempt_deliveries:
+            raise ValueError("trace attempt deliveries must be canonical")
+        if tuple(item.current_attempt_ordinal for item in deliveries) != tuple(
+            range(len(deliveries))
+        ):
+            raise ValueError("trace attempt delivery ordinals must be contiguous")
+        if len(deliveries) != len(canonical):
+            raise ValueError("trace replacements and attempt deliveries diverged")
+        if any(
+            delivery.current_attempt_ordinal != replacement.replacement_slot
+            or delivery.source_entry_id != replacement.entry_id
+            for delivery, replacement in zip(deliveries, canonical)
+        ):
+            raise ValueError("trace replacement/delivery identity drifted")
+        first_redelivery = next(
+            (
+                index
+                for index, item in enumerate(deliveries)
+                if item.delivery_kind == "fault_redelivery"
+            ),
+            len(deliveries),
+        )
+        if first_redelivery == 0 or any(
+            item.delivery_kind != "fault_redelivery"
+            for item in deliveries[first_redelivery:]
+        ):
+            raise ValueError(
+                "trace deliveries require an ordinary prefix and redelivery suffix"
+            )
+        terminal_ordinary = deliveries[first_redelivery - 1]
+        if any(
+            item.source_entry_id != terminal_ordinary.source_entry_id
+            or item.source_attempt_index != terminal_ordinary.source_attempt_index
+            or item.source_replacement_slot
+            != terminal_ordinary.source_replacement_slot
+            for item in deliveries[first_redelivery:]
+        ):
+            raise ValueError(
+                "fault redelivery must reuse the terminal ordinary source attempt"
+            )
         expected_disposition = _paper_disposition(self.source_evidence_class)
         if self.paper_eligibility_disposition != expected_disposition:
             raise ValueError("trace source paper eligibility disposition mismatch")
@@ -116,16 +233,36 @@ class TraceSourceBinding:
         bank_root_id: str,
         manifest_digest: str,
         replacements: Sequence[TraceReplacementBinding],
+        attempt_deliveries: Sequence[TraceAttemptDeliveryBinding] | None = None,
         source_evidence_class: str,
     ) -> "TraceSourceBinding":
         canonical = tuple(sorted(replacements, key=lambda item: item.replacement_slot))
+        canonical_deliveries = tuple(
+            TraceAttemptDeliveryBinding(
+                current_attempt_ordinal=item.replacement_slot,
+                source_entry_id=item.entry_id,
+                source_attempt_index=item.replacement_slot,
+                source_replacement_slot=item.replacement_slot,
+                delivery_kind="ordinary_attempt",
+                redelivery_reason=None,
+            )
+            for item in canonical
+        ) if attempt_deliveries is None else tuple(
+            sorted(
+                attempt_deliveries,
+                key=lambda item: item.current_attempt_ordinal,
+            )
+        )
         body = {
-            "schema_version": "tokenshare.trace_source_binding.v1",
+            "schema_version": "tokenshare.trace_source_binding.v2",
             "planned_ai_unit_id": planned_ai_unit_id,
             "sample_slot_index": sample_slot_index,
             "bank_root_id": bank_root_id,
             "manifest_digest": manifest_digest,
             "replacements": [item.to_dict() for item in canonical],
+            "attempt_deliveries": [
+                item.to_dict() for item in canonical_deliveries
+            ],
             "source_evidence_class": source_evidence_class,
             "paper_eligibility_disposition": _paper_disposition(source_evidence_class),
         }
@@ -135,6 +272,7 @@ class TraceSourceBinding:
             bank_root_id=bank_root_id,
             manifest_digest=manifest_digest,
             replacements=canonical,
+            attempt_deliveries=canonical_deliveries,
             source_evidence_class=source_evidence_class,
             paper_eligibility_disposition=body["paper_eligibility_disposition"],
             binding_digest=canonical_digest(body),
@@ -155,6 +293,26 @@ class TraceSourceBinding:
             )
         return matches[0]
 
+    def delivery(self, attempt_ordinal: int) -> TraceAttemptDeliveryBinding:
+        matches = [
+            item
+            for item in self.attempt_deliveries
+            if item.current_attempt_ordinal == attempt_ordinal
+        ]
+        if len(matches) != 1:
+            raise KeyError(
+                f"no preregistered trace delivery for persisted ordinal {attempt_ordinal}"
+            )
+        return matches[0]
+
+    @property
+    def terminal_ordinary_ordinal(self) -> int:
+        return max(
+            item.current_attempt_ordinal
+            for item in self.attempt_deliveries
+            if item.delivery_kind == "ordinary_attempt"
+        )
+
     def _digest_body(self) -> JsonObject:
         return {
             "schema_version": self.schema_version,
@@ -163,6 +321,9 @@ class TraceSourceBinding:
             "bank_root_id": self.bank_root_id,
             "manifest_digest": self.manifest_digest,
             "replacements": [item.to_dict() for item in self.replacements],
+            "attempt_deliveries": [
+                item.to_dict() for item in self.attempt_deliveries
+            ],
             "source_evidence_class": self.source_evidence_class,
             "paper_eligibility_disposition": self.paper_eligibility_disposition,
         }
@@ -179,6 +340,7 @@ class TraceSourceBinding:
             "bank_root_id",
             "manifest_digest",
             "replacements",
+            "attempt_deliveries",
             "source_evidence_class",
             "paper_eligibility_disposition",
             "binding_digest",
@@ -194,6 +356,10 @@ class TraceSourceBinding:
             replacements=tuple(
                 TraceReplacementBinding.from_dict(item)
                 for item in value["replacements"]
+            ),
+            attempt_deliveries=tuple(
+                TraceAttemptDeliveryBinding.from_dict(item)
+                for item in value["attempt_deliveries"]
             ),
             source_evidence_class=value["source_evidence_class"],
             paper_eligibility_disposition=value["paper_eligibility_disposition"],
@@ -245,6 +411,83 @@ def freeze_trace_source_binding(
     )
 
 
+def freeze_projected_trace_source_binding(
+    resolver: ResponseBankResolver,
+    *,
+    current_planned_ai_unit_id: str,
+    current_sample_slot_index: int,
+    source_entry_ids_by_current_attempt: Sequence[str],
+    delivery_kinds_by_current_attempt: Sequence[str] | None = None,
+    redelivery_reasons_by_current_attempt: Sequence[str | None] | None = None,
+    source_evidence_class: str = APPROVED_REAL_SOURCE_EVIDENCE_CLASS,
+) -> TraceSourceBinding:
+    """把 current attempt ordinal 显式绑定到既有 Exp1 source entry。
+
+    多个 current ordinals 可以引用同一个 source entry；这代表协议重投，
+    不是新的 provider attempt。source entry 仍由 resolver 做 digest/locator 校验。
+    """
+
+    if not isinstance(resolver, ResponseBankResolver):
+        raise TypeError("resolver must be a ResponseBankResolver")
+    _require_non_empty("current_planned_ai_unit_id", current_planned_ai_unit_id)
+    if (
+        isinstance(current_sample_slot_index, bool)
+        or not isinstance(current_sample_slot_index, int)
+        or current_sample_slot_index < 0
+    ):
+        raise ValueError("current_sample_slot_index must be non-negative")
+    if not source_entry_ids_by_current_attempt:
+        raise ValueError("projected trace source entries must be non-empty")
+    delivery_kinds = (
+        tuple("ordinary_attempt" for _ in source_entry_ids_by_current_attempt)
+        if delivery_kinds_by_current_attempt is None
+        else tuple(delivery_kinds_by_current_attempt)
+    )
+    redelivery_reasons = (
+        tuple(None for _ in source_entry_ids_by_current_attempt)
+        if redelivery_reasons_by_current_attempt is None
+        else tuple(redelivery_reasons_by_current_attempt)
+    )
+    if (
+        len(delivery_kinds) != len(source_entry_ids_by_current_attempt)
+        or len(redelivery_reasons) != len(source_entry_ids_by_current_attempt)
+    ):
+        raise ValueError("projected trace delivery plan length mismatch")
+    entries = tuple(
+        resolver.entry(source_entry_id)
+        for source_entry_id in source_entry_ids_by_current_attempt
+    )
+    replacements = tuple(
+        TraceReplacementBinding(
+            replacement_slot=current_ordinal,
+            entry_id=entry.entry_id,
+            inference_request_digest=entry.inference_request_digest,
+        )
+        for current_ordinal, entry in enumerate(entries)
+    )
+    attempt_deliveries = tuple(
+        TraceAttemptDeliveryBinding(
+            current_attempt_ordinal=current_ordinal,
+            source_entry_id=entry.entry_id,
+            source_attempt_index=entry.replacement_slot,
+            source_replacement_slot=entry.replacement_slot,
+            delivery_kind=delivery_kinds[current_ordinal],
+            redelivery_reason=redelivery_reasons[current_ordinal],
+        )
+        for current_ordinal, entry in enumerate(entries)
+    )
+    manifest = resolver.index.manifest
+    return TraceSourceBinding.create(
+        planned_ai_unit_id=current_planned_ai_unit_id,
+        sample_slot_index=current_sample_slot_index,
+        bank_root_id=manifest.bank_root_id,
+        manifest_digest=manifest.manifest_digest,
+        replacements=replacements,
+        attempt_deliveries=attempt_deliveries,
+        source_evidence_class=source_evidence_class,
+    )
+
+
 def bind_trace_execution_request(
     request: ExecutionRequest,
     binding: TraceSourceBinding,
@@ -256,6 +499,7 @@ def bind_trace_execution_request(
     if not isinstance(binding, TraceSourceBinding):
         raise TypeError("binding must be a TraceSourceBinding")
     replacement = binding.replacement(request.attempt_ordinal)
+    delivery = binding.delivery(request.attempt_ordinal)
     hints = dict(request.soft_hints or {})
     for key, expected in {
         "planned_ai_unit_id": binding.planned_ai_unit_id,
@@ -269,6 +513,11 @@ def bind_trace_execution_request(
             "replacement_slot": request.attempt_ordinal,
             "trace_source_binding_digest": binding.binding_digest,
             "trace_inference_request_digest": replacement.inference_request_digest,
+            "trace_delivery_kind": delivery.delivery_kind,
+            "trace_source_entry_id": delivery.source_entry_id,
+            "trace_source_attempt_index": delivery.source_attempt_index,
+            "trace_source_replacement_slot": delivery.source_replacement_slot,
+            "trace_redelivery_reason": delivery.redelivery_reason,
         }
     )
     return replace(
@@ -322,6 +571,15 @@ class TraceBackedExecutor:
             entry,
             chunk_size=self._stream_chunk_size,
         )
+        evidence_roles = {
+            role: _json_object(objects[role], role=role)
+            for role in ("provider_failure", "provenance", "latency")
+            if role in objects
+        }
+        _validate_response_bank_evidence_role_bundle(
+            terminal_kind=entry.terminal_kind,
+            roles=evidence_roles,
+        )
         if entry.terminal_kind == "success":
             terminal = _json_object(objects["raw_output"], role="raw_output")
             content_text = terminal.get("content_text")
@@ -331,11 +589,19 @@ class TraceBackedExecutor:
         else:
             parser_input = objects["provider_failure"]
         latency = _json_object(objects["latency"], role="latency")
-        source_latency_ms = latency.get("latency_ms", latency.get("milliseconds"))
-        if isinstance(source_latency_ms, bool) or not isinstance(source_latency_ms, int):
-            raise ValueError("response bank latency requires integer latency_ms")
-        if source_latency_ms < 0:
-            raise ValueError("response bank latency must be non-negative")
+        source_api_latency_ms, source_api_latency_missing = (
+            _parse_source_api_latency(latency)
+        )
+        attempt_delivery = binding.delivery(request.attempt_ordinal)
+        source_api_latency_missing_count = int(
+            source_api_latency_missing
+            and attempt_delivery.delivery_kind == "ordinary_attempt"
+        )
+        protocol_operational_delay_ms = (
+            source_api_latency_ms
+            if source_api_latency_ms is not None
+            else MISSING_SOURCE_PROTOCOL_OPERATIONAL_DELAY_MS
+        )
         return PreparedTraceDelivery.create(
             current_run_id=self._current_run_id,
             task_id=request.task_id,
@@ -352,7 +618,11 @@ class TraceBackedExecutor:
                 locator.to_dict() for locator in entry.object_locators
             ),
             logical_start_ms=logical_start_ms,
-            source_latency_ms=source_latency_ms,
+            source_api_latency_ms=source_api_latency_ms,
+            source_api_latency_missing=source_api_latency_missing,
+            source_api_latency_missing_count=source_api_latency_missing_count,
+            source_api_latency_ref=_source_api_latency_ref(binding, entry),
+            protocol_operational_delay_ms=protocol_operational_delay_ms,
             parser_input_media_type="application/json",
             parser_input_digest=_digest_bytes(parser_input),
             child_worker_id="trace-child-unassigned",
@@ -429,7 +699,6 @@ class TraceBackedParentStager:
             delivery.binding_digest != binding.binding_digest
             or delivery.entry_id != entry.entry_id
             or delivery.inference_request_digest != entry.inference_request_digest
-            or delivery.attempt_ordinal != entry.replacement_slot
             or delivery.source_terminal_kind != entry.terminal_kind
         ):
             raise ValueError("prepared delivery does not match frozen trace entry")
@@ -451,11 +720,35 @@ class TraceBackedParentStager:
         parsed_objects = MappingProxyType(
             {role: _json_object(data, role=role) for role, data in raw_objects.items()}
         )
-        latency_body = parsed_objects["latency"]
-        staged_latency_ms = latency_body.get(
-            "latency_ms", latency_body.get("milliseconds")
+        _validate_response_bank_evidence_role_bundle(
+            terminal_kind=entry.terminal_kind,
+            roles=parsed_objects,
         )
-        if staged_latency_ms != delivery.source_latency_ms:
+        latency_body = parsed_objects["latency"]
+        staged_source_api_latency_ms, staged_source_api_latency_missing = (
+            _parse_source_api_latency(latency_body)
+        )
+        attempt_delivery = binding.delivery(delivery.attempt_ordinal)
+        expected_missing_count = int(
+            staged_source_api_latency_missing
+            and attempt_delivery.delivery_kind == "ordinary_attempt"
+        )
+        expected_operational_delay_ms = (
+            staged_source_api_latency_ms
+            if staged_source_api_latency_ms is not None
+            else MISSING_SOURCE_PROTOCOL_OPERATIONAL_DELAY_MS
+        )
+        if (
+            staged_source_api_latency_ms != delivery.source_api_latency_ms
+            or staged_source_api_latency_missing
+            != delivery.source_api_latency_missing
+            or expected_missing_count
+            != delivery.source_api_latency_missing_count
+            or _source_api_latency_ref(binding, entry)
+            != delivery.source_api_latency_ref
+            or expected_operational_delay_ms
+            != delivery.protocol_operational_delay_ms
+        ):
             raise ValueError("prepared delivery latency does not match source object")
         digest_key = delivery.delivery_digest.removeprefix("sha256:")
         staged_source = {
@@ -465,12 +758,14 @@ class TraceBackedParentStager:
 
         provenance_ref = context.artifact_store.save_json(
             {
-                "schema_version": "tokenshare.current_trace_provenance.v1",
+                "schema_version": "tokenshare.current_trace_provenance.v2",
                 "current_run_id": delivery.current_run_id,
                 "current_task_id": delivery.task_id,
                 "current_unit_id": delivery.unit_id,
                 "current_attempt_id": delivery.attempt_id,
                 "attempt_ordinal": delivery.attempt_ordinal,
+                "source_sample_slot_index": entry.sample_slot_index,
+                "source_replacement_slot": entry.replacement_slot,
                 "binding_digest": binding.binding_digest,
                 "bank_root_id": binding.bank_root_id,
                 "manifest_digest": binding.manifest_digest,
@@ -479,7 +774,15 @@ class TraceBackedParentStager:
                 "source_evidence_class": binding.source_evidence_class,
                 "paper_eligibility_disposition": binding.paper_eligibility_disposition,
                 "logical_start_ms": delivery.logical_start_ms,
-                "source_latency_ms": delivery.source_latency_ms,
+                "source_api_latency_ms": delivery.source_api_latency_ms,
+                "source_api_latency_missing": delivery.source_api_latency_missing,
+                "source_api_latency_missing_count": (
+                    delivery.source_api_latency_missing_count
+                ),
+                "source_api_latency_ref": delivery.source_api_latency_ref,
+                "protocol_operational_delay_ms": (
+                    delivery.protocol_operational_delay_ms
+                ),
                 "logical_finish_ms": delivery.logical_finish_ms,
                 "current_provider_call_count": 0,
                 "current_provider_spend": 0,
@@ -487,20 +790,33 @@ class TraceBackedParentStager:
             artifact_id=f"trace_current_provenance_{digest_key}",
             artifact_type="CurrentTraceProvenance",
             artifact_schema_id="tokenshare.current_trace_provenance",
-            artifact_schema_version="v1",
+            artifact_schema_version="v2",
             source=staged_source,
             metadata={"attempt_id": delivery.attempt_id},
             created_at=context.created_at,
         )
         attribution_ref = context.artifact_store.save_json(
             {
-                "schema_version": "tokenshare.trace_attribution.v1",
+                "schema_version": "tokenshare.trace_attribution.v2",
                 "delivery_digest": delivery.delivery_digest,
                 "source_usage_class": "trace_attribution",
                 "source_terminal_kind": entry.terminal_kind,
                 "source_evidence_class": binding.source_evidence_class,
+                "source_entry_id": entry.entry_id,
+                "source_sample_slot_index": entry.sample_slot_index,
+                "source_replacement_slot": entry.replacement_slot,
+                "current_attempt_ordinal": delivery.attempt_ordinal,
                 "source_usage": parsed_objects["usage"],
                 "source_latency": parsed_objects["latency"],
+                "source_api_latency_ms": delivery.source_api_latency_ms,
+                "source_api_latency_missing": delivery.source_api_latency_missing,
+                "source_api_latency_missing_count": (
+                    delivery.source_api_latency_missing_count
+                ),
+                "source_api_latency_ref": delivery.source_api_latency_ref,
+                "protocol_operational_delay_ms": (
+                    delivery.protocol_operational_delay_ms
+                ),
                 "source_pricing": parsed_objects["pricing"],
                 "source_acquisition_attempt": parsed_objects["acquisition_attempt"],
                 "source_model_record": parsed_objects["model_record"],
@@ -514,7 +830,7 @@ class TraceBackedParentStager:
             artifact_id=f"trace_attribution_{digest_key}",
             artifact_type="TraceAttribution",
             artifact_schema_id="tokenshare.trace_attribution",
-            artifact_schema_version="v1",
+            artifact_schema_version="v2",
             source=staged_source,
             metadata={"attempt_id": delivery.attempt_id},
             created_at=context.created_at,
@@ -613,6 +929,7 @@ def _resolve_request_entry(
     except (KeyError, TypeError) as exc:
         raise ValueError("execution request has no registered source binding") from exc
     replacement = binding.replacement(request.attempt_ordinal)
+    delivery = binding.delivery(request.attempt_ordinal)
     hints = dict(request.soft_hints or {})
     expected_hints = {
         "planned_ai_unit_id": binding.planned_ai_unit_id,
@@ -620,13 +937,20 @@ def _resolve_request_entry(
         "replacement_slot": request.attempt_ordinal,
         "trace_source_binding_digest": binding.binding_digest,
         "trace_inference_request_digest": replacement.inference_request_digest,
+        "trace_delivery_kind": delivery.delivery_kind,
+        "trace_source_entry_id": delivery.source_entry_id,
+        "trace_source_attempt_index": delivery.source_attempt_index,
+        "trace_source_replacement_slot": delivery.source_replacement_slot,
+        "trace_redelivery_reason": delivery.redelivery_reason,
     }
     if any(hints.get(key) != value for key, value in expected_hints.items()):
         raise ValueError("execution request trace hints do not match frozen binding")
     entry = resolver.entry(replacement.entry_id)
     if (
-        entry.replacement_slot != request.attempt_ordinal
-        or entry.inference_request_digest != replacement.inference_request_digest
+        entry.inference_request_digest != replacement.inference_request_digest
+        or entry.entry_id != delivery.source_entry_id
+        or entry.replacement_slot != delivery.source_attempt_index
+        or entry.replacement_slot != delivery.source_replacement_slot
     ):
         raise ValueError("response bank entry does not match persisted attempt ordinal")
     return binding, entry
@@ -652,6 +976,429 @@ def _json_object(data: bytes, *, role: str) -> JsonObject:
     if not isinstance(value, dict):
         raise ValueError(f"response bank {role} must be a JSON object")
     return value
+
+
+_V2_PROVIDER_FAILURE_SCHEMA = "tokenshare.response_bank_provider_failure.v2"
+_V2_PROVENANCE_SCHEMA = "tokenshare.response_bank_provenance.v2"
+_V2_LATENCY_SCHEMA = "tokenshare.response_bank_latency.v2"
+_V2_EVIDENCE_KINDS = frozenset(
+    {"hard_deadline_child", "supervised_stopped_attempt"}
+)
+
+
+def _validate_response_bank_evidence_role_bundle(
+    *,
+    terminal_kind: str,
+    roles: Mapping[str, Mapping[str, object]],
+) -> None:
+    """严格校验新增 v2 终态证据；旧 v1 回放继续走原字段语义。"""
+
+    provenance = roles.get("provenance")
+    latency = roles.get("latency")
+    failure = roles.get("provider_failure")
+    if provenance is None or latency is None:
+        raise ValueError("response bank terminal evidence roles are incomplete")
+    schemas = {
+        provenance.get("schema_version"),
+        latency.get("schema_version"),
+        None if failure is None else failure.get("schema_version"),
+    }
+    if not schemas.intersection(
+        {_V2_PROVIDER_FAILURE_SCHEMA, _V2_PROVENANCE_SCHEMA, _V2_LATENCY_SCHEMA}
+    ):
+        return
+    if (
+        provenance.get("schema_version") != _V2_PROVENANCE_SCHEMA
+        or latency.get("schema_version") != _V2_LATENCY_SCHEMA
+        or terminal_kind == "provider_failure"
+        and (
+            failure is None
+            or failure.get("schema_version") != _V2_PROVIDER_FAILURE_SCHEMA
+        )
+    ):
+        raise ValueError("response bank v2 role schemas must advance atomically")
+
+    evidence_kind = provenance.get("evidence_kind")
+    if evidence_kind not in _V2_EVIDENCE_KINDS:
+        raise ValueError("response bank v2 evidence kind is unsupported")
+    if latency.get("evidence_kind") != evidence_kind or (
+        failure is not None and failure.get("evidence_kind") != evidence_kind
+    ):
+        raise ValueError("response bank v2 evidence kinds drifted")
+    _validate_v2_provenance(provenance, evidence_kind=str(evidence_kind))
+    _validate_v2_latency(latency, evidence_kind=str(evidence_kind))
+    if failure is not None:
+        _validate_v2_provider_failure(failure, evidence_kind=str(evidence_kind))
+
+    if evidence_kind == "supervised_stopped_attempt":
+        if terminal_kind != "provider_failure" or failure is None:
+            raise ValueError("supervised v2 evidence requires provider failure")
+        _validate_supervised_v2_cross_role(
+            failure=failure,
+            provenance=provenance,
+            latency=latency,
+        )
+    else:
+        _validate_hard_deadline_v2_cross_role(
+            terminal_kind=terminal_kind,
+            failure=failure,
+            provenance=provenance,
+            latency=latency,
+        )
+
+
+def _validate_v2_provenance(
+    provenance: Mapping[str, object], *, evidence_kind: str
+) -> None:
+    common = {
+        "schema_version",
+        "evidence_kind",
+        "provider_family",
+        "entry_id",
+        "provider_config_digest",
+        "inference_request_digest",
+        "normalized_absolute_endpoint",
+        "transport_call_count",
+        "secret_persisted",
+    }
+    variant = (
+        {
+            "closure_provider_call_count",
+            "closure_authority_digest",
+            "stop_evidence_digest",
+        }
+        if evidence_kind == "supervised_stopped_attempt"
+        else {
+            "hard_deadline_evidence_digest",
+            "network_start_acknowledged",
+            "result_observed_before_deadline",
+            "late_result_rejected",
+            "post_reap_late_result_absent",
+            "child_reaped",
+            "parent_only_evidence_consumer",
+            "ephemeral_files_secret_free",
+        }
+    )
+    paid = {"receipt_digest"}
+    internal = {"authorization_kind", "authorization_digest"}
+    if set(provenance) == common | variant | paid:
+        _require_sha256("receipt_digest", provenance["receipt_digest"])
+    elif set(provenance) == common | variant | internal:
+        _require_non_empty("authorization_kind", provenance["authorization_kind"])
+        _require_sha256("authorization_digest", provenance["authorization_digest"])
+    else:
+        raise ValueError("response bank provenance v2 fields drifted")
+    for name in ("provider_family", "entry_id", "normalized_absolute_endpoint"):
+        _require_non_empty(name, provenance[name])
+    for name in ("provider_config_digest", "inference_request_digest"):
+        _require_sha256(name, provenance[name])
+    if type(provenance["transport_call_count"]) is not int or (
+        provenance["transport_call_count"] != 1
+    ):
+        raise ValueError("response bank provenance v2 transport count drifted")
+    if provenance["secret_persisted"] is not False:
+        raise ValueError("response bank provenance v2 cannot persist a secret")
+    if evidence_kind == "supervised_stopped_attempt":
+        if type(provenance["closure_provider_call_count"]) is not int or (
+            provenance["closure_provider_call_count"] != 0
+        ):
+            raise ValueError("supervised v2 closure provider count drifted")
+        _require_sha256(
+            "closure_authority_digest", provenance["closure_authority_digest"]
+        )
+        _require_sha256("stop_evidence_digest", provenance["stop_evidence_digest"])
+    else:
+        _require_sha256(
+            "hard_deadline_evidence_digest",
+            provenance["hard_deadline_evidence_digest"],
+        )
+        for name in (
+            "network_start_acknowledged",
+            "result_observed_before_deadline",
+            "late_result_rejected",
+            "post_reap_late_result_absent",
+            "child_reaped",
+            "parent_only_evidence_consumer",
+            "ephemeral_files_secret_free",
+        ):
+            if type(provenance[name]) is not bool:
+                raise ValueError("hard-deadline provenance v2 boolean drifted")
+
+
+def _validate_v2_provider_failure(
+    failure: Mapping[str, object], *, evidence_kind: str
+) -> None:
+    common = {
+        "schema_version",
+        "evidence_kind",
+        "failure_kind",
+        "http_status",
+        "message",
+        "raw_response_json",
+        "transport_call_count",
+    }
+    variant = (
+        {
+            "closure_provider_call_count",
+            "closure_authority_digest",
+            "stop_evidence_digest",
+        }
+        if evidence_kind == "supervised_stopped_attempt"
+        else {"hard_deadline_evidence"}
+    )
+    if set(failure) != common | variant:
+        raise ValueError("response bank provider failure v2 fields drifted")
+    _require_non_empty("failure_kind", failure["failure_kind"])
+    _require_non_empty("message", failure["message"])
+    status = failure["http_status"]
+    if status is not None and (type(status) is not int or status < 100):
+        raise ValueError("response bank provider failure v2 status drifted")
+    if failure["raw_response_json"] is not None:
+        raise ValueError("response bank provider failure v2 raw body drifted")
+    if type(failure["transport_call_count"]) is not int or (
+        failure["transport_call_count"] != 1
+    ):
+        raise ValueError("response bank provider failure v2 call count drifted")
+    if evidence_kind == "supervised_stopped_attempt":
+        if type(failure["closure_provider_call_count"]) is not int or (
+            failure["closure_provider_call_count"] != 0
+        ):
+            raise ValueError("supervised v2 closure provider count drifted")
+        _require_sha256(
+            "closure_authority_digest", failure["closure_authority_digest"]
+        )
+        _require_sha256("stop_evidence_digest", failure["stop_evidence_digest"])
+    elif not isinstance(failure["hard_deadline_evidence"], Mapping):
+        raise ValueError("hard-deadline v2 proof must be an object")
+
+
+def _validate_v2_latency(
+    latency: Mapping[str, object], *, evidence_kind: str
+) -> None:
+    common = {
+        "schema_version",
+        "evidence_kind",
+        "latency_ms",
+        "latency_missing",
+        "timing_source",
+    }
+    variant = (
+        {
+            "observed_inflight_lower_bound_ms",
+            "unchanged_observation_window_ms",
+            "stop_evidence_digest",
+        }
+        if evidence_kind == "supervised_stopped_attempt"
+        else {"hard_deadline_evidence_digest", "observed_wall_clock_ms"}
+    )
+    if set(latency) != common | variant:
+        raise ValueError("response bank latency v2 fields drifted")
+    value = latency["latency_ms"]
+    if value is not None and (type(value) is not int or value < 0):
+        raise ValueError("response bank latency v2 value drifted")
+    if type(latency["latency_missing"]) is not bool or (
+        latency["latency_missing"] is not (value is None)
+    ):
+        raise ValueError("response bank latency v2 missingness drifted")
+    _require_non_empty("timing_source", latency["timing_source"])
+    if evidence_kind == "supervised_stopped_attempt":
+        for name, minimum in (
+            ("observed_inflight_lower_bound_ms", 720_000),
+            ("unchanged_observation_window_ms", 120_000),
+        ):
+            if type(latency[name]) is not int or latency[name] < minimum:
+                raise ValueError("supervised v2 observation threshold drifted")
+        _require_sha256("stop_evidence_digest", latency["stop_evidence_digest"])
+    else:
+        _require_sha256(
+            "hard_deadline_evidence_digest",
+            latency["hard_deadline_evidence_digest"],
+        )
+        if (
+            type(latency["observed_wall_clock_ms"]) is not int
+            or latency["observed_wall_clock_ms"] < 0
+        ):
+            raise ValueError("hard-deadline v2 wall clock drifted")
+
+
+def _validate_supervised_v2_cross_role(
+    *,
+    failure: Mapping[str, object],
+    provenance: Mapping[str, object],
+    latency: Mapping[str, object],
+) -> None:
+    if (
+        failure["failure_kind"] != "no_response"
+        or failure["http_status"] is not None
+        or latency["latency_ms"] is not None
+        or latency["latency_missing"] is not True
+        or latency["timing_source"] != "supervised_no_terminal_response"
+    ):
+        raise ValueError("supervised v2 terminal semantics drifted")
+    for name in ("closure_authority_digest", "stop_evidence_digest"):
+        values = {failure[name], provenance[name]}
+        if name == "stop_evidence_digest":
+            values.add(latency[name])
+        if len(values) != 1:
+            raise ValueError("supervised v2 cross-role digest drifted")
+
+
+def _validate_hard_deadline_v2_cross_role(
+    *,
+    terminal_kind: str,
+    failure: Mapping[str, object] | None,
+    provenance: Mapping[str, object],
+    latency: Mapping[str, object],
+) -> None:
+    if provenance["network_start_acknowledged"] is not True:
+        raise ValueError("hard-deadline v2 lacks network start acknowledgement")
+    for name in (
+        "post_reap_late_result_absent",
+        "child_reaped",
+        "parent_only_evidence_consumer",
+        "ephemeral_files_secret_free",
+    ):
+        if provenance[name] is not True:
+            raise ValueError("hard-deadline v2 is not quiescent")
+    digest = provenance["hard_deadline_evidence_digest"]
+    if latency["hard_deadline_evidence_digest"] != digest:
+        raise ValueError("hard-deadline v2 cross-role digest drifted")
+    if failure is not None:
+        proof = failure["hard_deadline_evidence"]
+        assert isinstance(proof, Mapping)
+        _validate_hard_deadline_v1_proof(proof)
+        if canonical_digest(dict(proof)) != digest:
+            raise ValueError("hard-deadline v2 proof digest drifted")
+        if latency["observed_wall_clock_ms"] != proof["observed_wall_clock_ms"]:
+            raise ValueError("hard-deadline v2 wall clock drifted")
+        for name in (
+            "network_start_acknowledged",
+            "result_observed_before_deadline",
+            "late_result_rejected",
+            "post_reap_late_result_absent",
+            "child_reaped",
+            "parent_only_evidence_consumer",
+            "ephemeral_files_secret_free",
+        ):
+            if provenance[name] != proof[name]:
+                raise ValueError("hard-deadline v2 proof projection drifted")
+    observed = provenance["result_observed_before_deadline"]
+    if terminal_kind == "success" and observed is not True:
+        raise ValueError("hard-deadline v2 success was not observed on time")
+    if observed is False and (
+        failure is None
+        or failure["failure_kind"] != "no_response"
+        or latency["latency_ms"] is not None
+        or latency["latency_missing"] is not True
+        or latency["timing_source"] != "unknown_no_response"
+    ):
+        raise ValueError("hard-deadline v2 no-response semantics drifted")
+
+
+def _validate_hard_deadline_v1_proof(proof: Mapping[str, object]) -> None:
+    expected = {
+        "schema_version",
+        "deadline_enforced",
+        "hard_total_seconds",
+        "observed_wall_clock_ms",
+        "child_pid",
+        "child_exit_code",
+        "terminate_attempted",
+        "kill_attempted",
+        "child_reaped",
+        "network_start_acknowledged",
+        "result_observed_before_deadline",
+        "child_completed_before_parent_deadline",
+        "result_commit_count",
+        "accepted_result_commit_count",
+        "late_result_rejected",
+        "post_reap_late_result_absent",
+        "parent_only_evidence_consumer",
+        "ephemeral_files_secret_free",
+        "request_file_sha256",
+    }
+    if set(proof) != expected or proof["schema_version"] != (
+        "tokenshare.ai_api_hard_deadline_quiescence.v1"
+    ):
+        raise ValueError("hard-deadline v2 proof schema drifted")
+    bool_names = (
+        "deadline_enforced",
+        "terminate_attempted",
+        "kill_attempted",
+        "child_reaped",
+        "network_start_acknowledged",
+        "result_observed_before_deadline",
+        "child_completed_before_parent_deadline",
+        "late_result_rejected",
+        "post_reap_late_result_absent",
+        "parent_only_evidence_consumer",
+        "ephemeral_files_secret_free",
+    )
+    if any(type(proof[name]) is not bool for name in bool_names):
+        raise ValueError("hard-deadline v2 proof boolean drifted")
+    for name in (
+        "observed_wall_clock_ms",
+        "child_pid",
+        "result_commit_count",
+        "accepted_result_commit_count",
+    ):
+        if type(proof[name]) is not int or proof[name] < 0:
+            raise ValueError("hard-deadline v2 proof integer drifted")
+    if type(proof["child_exit_code"]) is not int:
+        raise ValueError("hard-deadline v2 child exit drifted")
+    hard_total = proof["hard_total_seconds"]
+    if type(hard_total) not in {int, float} or not (0 < hard_total < float("inf")):
+        raise ValueError("hard-deadline v2 total deadline drifted")
+    if (
+        proof["deadline_enforced"] is not True
+        or proof["child_reaped"] is not True
+        or proof["post_reap_late_result_absent"] is not True
+        or proof["parent_only_evidence_consumer"] is not True
+        or proof["ephemeral_files_secret_free"] is not True
+    ):
+        raise ValueError("hard-deadline v2 proof is not quiescent")
+    _require_sha256("request_file_sha256", proof["request_file_sha256"])
+
+
+def _parse_source_api_latency(
+    latency: Mapping[str, object],
+) -> tuple[int | None, bool]:
+    source_api_latency_ms = latency.get(
+        "latency_ms", latency.get("milliseconds")
+    )
+    missing_marker = latency.get("latency_missing")
+    if source_api_latency_ms is None:
+        if missing_marker is not None and missing_marker is not True:
+            raise ValueError(
+                "response bank missing latency requires latency_missing=true"
+            )
+        if (
+            missing_marker is None
+            and latency.get("schema_version")
+            != "tokenshare.response_bank_latency.v1"
+        ):
+            raise ValueError(
+                "response bank missing latency requires canonical latency schema"
+            )
+        return None, True
+    if (
+        isinstance(source_api_latency_ms, bool)
+        or not isinstance(source_api_latency_ms, int)
+        or source_api_latency_ms < 0
+    ):
+        raise ValueError(
+            "response bank latency requires non-negative integer latency_ms"
+        )
+    if missing_marker not in {None, False}:
+        raise ValueError("observed response bank latency cannot be marked missing")
+    return source_api_latency_ms, False
+
+
+def _source_api_latency_ref(
+    binding: TraceSourceBinding,
+    entry: ResponseBankEntry,
+) -> str:
+    return f"response-bank:{binding.bank_root_id}:{entry.entry_id}:latency"
 
 
 def _paper_disposition(source_evidence_class: str) -> str:

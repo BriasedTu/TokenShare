@@ -17,8 +17,11 @@ from tests.phase7_fixtures import (
 )
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import load_ai_api_config
+from tokenshare.executors.ai_api_request_identity import PreparedOutboundRequestFactory
 
 from tokenshare.experiments.paper_formal_callbacks import (
+    DeferredPaperExp5LedgerRootCallbackFactory,
+    PaperExp5LedgerRootCallbackFactory,
     PaperOnlineRootCallbackFactory,
     PaperOnlineProviderEvidenceCallback,
     produce_exp3_online_recovery_evidence,
@@ -29,6 +32,16 @@ from tokenshare.experiments.paper_formal_callbacks import (
     run_exp5_identity_strategy,
     run_scheduled_cases,
 )
+from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_formal_plan import (
+    FormalExecutionCoverage,
+    FormalPreparedRequestInventory,
+    FormalPreparedRequestRecord,
+)
+from tokenshare.experiments.paper_models import PaperExperimentCondition, digest_json
+from tokenshare.experiments.paper_formal_runner import (
+    _condition_with_frozen_case_metadata,
+)
 from tokenshare.experiments.paper_online_checks import (
     EXP3_RECOVERY_CHAIN_ROLES,
     freeze_paper_online_checks_plan,
@@ -38,7 +51,7 @@ from tokenshare.experiments.paper_budget_ledger import (
     PaperBudgetLedger,
     ReservationRequest,
 )
-from tokenshare.experiments.paper_resource_accounting import FrozenPricing
+from tokenshare.experiments.paper_resource_accounting import FrozenPricing, ProviderUsage
 from tokenshare.executors.response_bank import (
     ResponseBankInventoryRow,
     inventory_entry_id,
@@ -198,6 +211,1109 @@ def _callback_budget(
     )
 
 
+def _callback_budget_with_exact_costs(
+    tmp_path: Path,
+    *,
+    cost_upper_bounds: tuple[Decimal, ...],
+) -> tuple[PaperBudgetLedger, tuple[ReservationRequest, ...]]:
+    rows: list[ResponseBankInventoryRow] = []
+    for index, _cost_upper_bound in enumerate(cost_upper_bounds):
+        slot = semantic_slot_key(
+            case_record_digest="case-digest",
+            planned_ai_unit_id=f"unit-{index}",
+            sample_slot_index=0,
+            replacement_slot=0,
+            provider_config_digest="provider-config-digest",
+            prompt_profile_digest="prompt-profile-digest",
+            prompt_admission_profile_digest="admission-digest",
+            plugin_version="plugin.v1",
+        )
+        provisional = ResponseBankInventoryRow(
+            inventory_entry_id="",
+            semantic_slot_key=slot,
+            case_record_digest="case-digest",
+            planned_ai_unit_id=f"unit-{index}",
+            sample_slot_index=0,
+            replacement_slot=0,
+            provider_config_digest="provider-config-digest",
+            prompt_profile_digest="prompt-profile-digest",
+            prompt_admission_profile_digest="admission-digest",
+            plugin_version="plugin.v1",
+            entry_id="sf_qwen",
+            body_digest=f"body-digest-{index}",
+            inference_request_digest=f"request-digest-{index}",
+        )
+        rows.append(
+            dataclass_replace(
+                provisional,
+                inventory_entry_id=inventory_entry_id(provisional),
+            )
+        )
+    inventory_rows = tuple(rows)
+    digest = response_bank_inventory_digest(inventory_rows)
+    ledger = PaperBudgetLedger(
+        tmp_path / "online-budget.sqlite3",
+        limits=PaperBudgetLimits(
+            calls=10,
+            tokens=10_000,
+            cny=Decimal("100"),
+            deepseek_cumulative_cny=Decimal("100"),
+        ),
+    )
+    ledger.preregister_inventory(inventory_digest=digest, rows=inventory_rows)
+    return ledger, tuple(
+        ReservationRequest(
+            inventory_digest=digest,
+            inventory_entry_id=row.inventory_entry_id,
+            semantic_slot_key=row.semantic_slot_key,
+            inference_request_digest=row.inference_request_digest,
+            prompt_admission_profile_digest=row.prompt_admission_profile_digest,
+            token_upper_bound=1,
+            cost_upper_bound=cost_upper_bound,
+            provider_family="siliconflow",
+            frozen_pricing=FrozenPricing(
+                currency="CNY",
+                input_per_million_tokens=(
+                    cost_upper_bound * Decimal(1_000_000)
+                ),
+                output_per_million_tokens=Decimal("0"),
+            ),
+        )
+        for row, cost_upper_bound in zip(
+            inventory_rows,
+            cost_upper_bounds,
+            strict=True,
+        )
+    )
+
+
+def _synthetic_exp5_formal_authority(
+    *,
+    domain: str = "factorization",
+    prepared_case_id: str | None = None,
+    distinct_config_layers: bool = False,
+    case_record: dict[str, Any] | None = None,
+) -> tuple[object, object, object, object]:
+    config_body = _single_entry_config()
+    config_body["entries"][0]["pricing"]["input_per_million_tokens"] = 1.0
+    config_body["entries"][0]["pricing"]["output_per_million_tokens"] = 2.0
+    prepared_config = load_ai_api_config(config_body)
+    source_config = prepared_config
+    if distinct_config_layers:
+        source_body = make_config_dict()
+        source_body["entries"][0]["pricing"]["input_per_million_tokens"] = 1.0
+        source_body["entries"][0]["pricing"]["output_per_million_tokens"] = 2.0
+        source_config = load_ai_api_config(source_body)
+    if case_record is None:
+        case_record = {
+            "case_id": "exp5-case",
+            "domain": domain,
+            "difficulty": "hard",
+            "paper_difficulty": (
+                "hard_frontier" if domain == "lean_proof" else "hard"
+            ),
+        }
+        if domain == "lean_proof":
+            case_record.update(
+                {
+                    "topic_family": "pure_logic",
+                    "topic_family_version": "v1",
+                    "construction_rule_id": (
+                        "hard_frontier.pure_logic.deep_semantic_chain.v2"
+                    ),
+                    "oracle_package_group": (
+                        "lean_lemma_graph_oracle.pure_logic.v1"
+                    ),
+                    "proof_assembly_shape": (
+                        "recursive_lemma_dag_required_slots.v1"
+                    ),
+                }
+            )
+    catalog_case_id = str(case_record["case_id"])
+    entry = prepared_config.entries[0]
+    controls = {
+        "stream": False,
+        "temperature": 0.1,
+        "top_p": 0.9,
+        "max_tokens": 128,
+    }
+    body = {
+        "model": entry.model,
+        "messages": [{"role": "user", "content": "exp5 exact identity"}],
+        **controls,
+    }
+    if prepared_case_id is None:
+        runtime_prefix = {
+            "factorization": "paper_factorization_",
+            "lean_proof": "paper_lean_",
+        }.get(domain, "paper_unknown_")
+        prepared_case_id = f"{runtime_prefix}{catalog_case_id}"
+    prepared = PreparedOutboundRequestFactory.prepare(
+        body_obj=body,
+        base_url=entry.base_url,
+        endpoint=entry.endpoint,
+        provider_config_digest=prepared_config.config_digest,
+        entry_id=entry.entry_id,
+        configured_model=entry.model,
+        effective_controls_digest=digest_json(controls),
+        plugin_id="tokenshare.factorization",
+        plugin_version="1.0.0",
+        prompt_profile_id="factorization.worker.v1",
+        prompt_serialization_schema="tokenshare.factorization_prompt.v1",
+        body_serialization_schema="phase7.siliconflow_chat_body.v1",
+        case_id=prepared_case_id,
+        planned_ai_unit_id="unit-exp5",
+        sample_slot_index=0,
+        replacement_slot=0,
+    )
+    provider_identity = {
+        "schema_version": "phase7.provider_request_identity.v2",
+        "provider_family": source_config.provider_family,
+        "entry_id": entry.entry_id,
+        "configured_model": entry.model,
+        "requested_model": entry.model,
+        "reasoning_controls": {},
+        "effective_request_controls_digest": digest_json(controls),
+    }
+    endpoint_digest = "sha256:" + "9" * 64
+    condition: Any
+    if domain in {"factorization", "lean_proof"}:
+        condition = PaperExperimentCondition(
+            experiment_id="exp5_real_ai_model_endpoint_comparison",
+            condition_id="exp5-condition",
+            domain=domain,
+            difficulty="hard",
+            paper_difficulty=case_record.get("paper_difficulty"),
+            topic_family=case_record.get("topic_family"),
+            topic_family_version=None,
+            construction_rule_id=None,
+            oracle_package_group=None,
+            proof_assembly_shape=None,
+            worker_count=3,
+            fault_type="none",
+            fault_rate=0.0,
+            ablation_mode="FULL",
+            model_policy="fixed_entry",
+            model_cohort_id="test-exp5-cohort",
+            cohort_member_id="test-exp5-member",
+            seed=271828,
+            repeat_id=0,
+            provider_config_id="siliconflow",
+            provider_family=source_config.provider_family,
+            model_entry_id=entry.entry_id,
+            provider_model_id=entry.model,
+            reasoning_profile_id="nonthinking",
+            model_cohort_digest="sha256:" + "8" * 64,
+            source_provider_config_digest=source_config.config_digest,
+            model_endpoint_identity_digest=endpoint_digest,
+            catalog_digest="sha256:" + "7" * 64,
+        )
+    else:
+        condition = SimpleNamespace(
+            experiment_id="exp5_real_ai_model_endpoint_comparison",
+            condition_id="exp5-condition",
+            condition_digest="sha256:" + "1" * 64,
+            domain=domain,
+            seed=271828,
+            repeat_id=0,
+            provider_config_id="siliconflow",
+            provider_family=source_config.provider_family,
+            model_entry_id=entry.entry_id,
+            provider_model_id=entry.model,
+            reasoning_profile_id="nonthinking",
+            source_provider_config_digest=source_config.config_digest,
+            model_endpoint_identity_digest=endpoint_digest,
+        )
+    selection = SimpleNamespace(
+        selection_id="selection-exp5",
+        selection_digest="sha256:" + "2" * 64,
+        ordered_case_ids=(catalog_case_id,),
+        split_profile_id=None,
+    )
+    binding = SimpleNamespace(selection=selection)
+    root = SimpleNamespace(
+        condition=condition,
+        binding=binding,
+        case_id=catalog_case_id,
+        condition_digest=condition.condition_digest,
+        selection_digest=selection.selection_digest,
+        seed=condition.seed,
+        repeat_id=condition.repeat_id,
+        split_profile_id=None,
+        split_profile_digest="sha256:" + "3" * 64,
+        planned_ai_unit_ids=("unit-exp5",),
+        plugin_id=prepared.plugin_id,
+        plugin_version=prepared.plugin_version,
+        endpoint_controls=SimpleNamespace(
+            provider_config_id="siliconflow",
+            model_entry_id=entry.entry_id,
+            provider_family=source_config.provider_family,
+            provider_model_id=entry.model,
+            reasoning_profile_id="nonthinking",
+            model_endpoint_identity_digest=endpoint_digest,
+            max_tokens=128,
+            timeout_seconds=30,
+            max_provider_attempts=3,
+            request_controls_digest=prepared.effective_controls_digest,
+        ),
+        case_record_digest=digest_json(case_record),
+        frozen_case=dict(case_record),
+    )
+    coverage = object.__new__(FormalExecutionCoverage)
+    for name, value in {
+        "conditions": (condition,),
+        "bindings": (binding,),
+        "roots": (root,),
+        "root_case_filter": {condition.condition_id: (root.case_id,)},
+        "source_snapshot": object(),
+        "source_snapshot_digest": "sha256:" + "5" * 64,
+        "condition_count": 1,
+        "root_run_count": 1,
+        "selection_kind": "filtered",
+        "selected_first_attempt_ai_unit_count": 1,
+        "provider_calls_made": 0,
+        "schema_version": "tokenshare.paper_formal_execution_coverage.v1",
+    }.items():
+        object.__setattr__(coverage, name, value)
+    record = FormalPreparedRequestRecord(
+        condition=condition,
+        binding=binding,
+        case_id=root.case_id,
+        case_record_digest=root.case_record_digest,
+        planned_ai_unit_id="unit-exp5",
+        sample_slot_index=0,
+        base_replacement_slot=0,
+        replacement_slot_ids=(0,),
+        replacement_policy_id="formal_attempt_budget.v1",
+        source_provider_config_digest=source_config.config_digest,
+        prepared_execution_config_digest=prepared_config.config_digest,
+        provider_family=source_config.provider_family,
+        provider_config_id="siliconflow",
+        model_entry_id=entry.entry_id,
+        provider_model_id=entry.model,
+        reasoning_profile_id="nonthinking",
+        model_endpoint_identity_digest=endpoint_digest,
+        request_max_tokens=128,
+        request_timeout_seconds=30,
+        request_max_provider_attempts=3,
+        request_controls_digest=prepared.effective_controls_digest,
+        prompt_profile_digest=digest_json(
+            {
+                "body_digest": prepared.body_digest,
+                "prompt_profile_id": prepared.prompt_profile_id,
+                "prompt_serialization_schema": prepared.prompt_serialization_schema,
+            }
+        ),
+        provider_request_identity=provider_identity,
+        prepared_request=prepared,
+    )
+    inventory = FormalPreparedRequestInventory(
+        records=(record,),
+        record_count=1,
+        unique_inference_request_count=1,
+        provider_calls_made=0,
+        source_snapshot_digest=coverage.source_snapshot_digest,
+    )
+    return coverage, inventory, source_config, record
+
+
+def _tracked_hard_lean_case(topic_family: str) -> dict[str, Any]:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v2.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path(
+            "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
+        ),
+    )
+    matches = tuple(
+        dict(case)
+        for case in catalog.lean_lemma_graph_cases
+        if case["paper_difficulty"] == "hard_frontier"
+        and case["topic_family"] == topic_family
+    )
+    assert matches
+    return matches[0]
+
+
+def _frozen_case(coverage: Any) -> dict[str, Any]:
+    return dict(coverage.roots[0].frozen_case)
+
+
+def test_deferred_exp5_ledger_factory_initializes_only_for_first_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import paper_formal_callbacks as callbacks
+
+    calls: list[dict[str, Any]] = []
+
+    class ConcreteFactory:
+        inventory_digest = "sha256:" + "a" * 64
+
+        def __call__(self, **root_context: Any) -> object:
+            calls.append({"root": dict(root_context)})
+            return "typed-hook"
+
+    def build_concrete_factory(**kwargs: Any) -> ConcreteFactory:
+        calls.append({"factory": dict(kwargs)})
+        return ConcreteFactory()
+
+    monkeypatch.setattr(
+        callbacks,
+        "PaperExp5LedgerRootCallbackFactory",
+        build_concrete_factory,
+    )
+    prepared_inventory = object()
+    coverage = object()
+    configs = {"siliconflow": object()}
+    deferred = DeferredPaperExp5LedgerRootCallbackFactory(
+        ledger_path="ledger.sqlite3",
+        full_prepared_inventory=prepared_inventory,
+        coverage=coverage,
+        ai_api_configs=configs,
+    )
+
+    assert calls == []
+    assert deferred(condition="condition", case_id="case") == "typed-hook"
+    assert deferred.inventory_digest == "sha256:" + "a" * 64
+    assert calls == [
+        {
+            "factory": {
+                "ledger_path": "ledger.sqlite3",
+                "full_prepared_inventory": prepared_inventory,
+                "coverage": coverage,
+                "ai_api_configs": configs,
+            }
+        },
+        {"root": {"condition": "condition", "case_id": "case"}},
+    ]
+
+
+def test_exp5_capability_smoke_coverage_has_its_own_typed_selection_kind() -> None:
+    coverage, _inventory, _config, _record = _synthetic_exp5_formal_authority(
+        domain="factorization"
+    )
+    object.__setattr__(coverage, "selection_kind", "exp5_capability_smoke")
+
+    with pytest.raises(TypeError, match="source_snapshot must be a FormalPlanSnapshot"):
+        coverage.__post_init__()
+
+
+@pytest.mark.parametrize("topic_family", ("pure_logic", "function_set", "induction"))
+def test_exp5_ledger_root_accepts_tracked_lean_case_metadata_injection(
+    tmp_path: Path,
+    topic_family: str,
+) -> None:
+    case = _tracked_hard_lean_case(topic_family)
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority(
+        domain="lean_proof",
+        case_record=case,
+    )
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    runtime_condition = _condition_with_frozen_case_metadata(
+        condition=record.condition,
+        case=case,
+    )
+
+    callback = factory(
+        condition=runtime_condition,
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=case,
+        ai_api_config=config,
+        request_limits=dict(config.defaults),
+    )
+
+    assert callable(callback)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "tampered_value"),
+    (
+        ("paper_difficulty", "medium_lemma_dag"),
+        ("topic_family", "function_set"),
+        ("topic_family_version", "v2"),
+        ("construction_rule_id", "tampered"),
+        ("oracle_package_group", "tampered"),
+        ("proof_assembly_shape", "tampered"),
+    ),
+)
+def test_exp5_ledger_root_rejects_each_injected_lean_metadata_drift(
+    tmp_path: Path,
+    field_name: str,
+    tampered_value: str,
+) -> None:
+    case = _tracked_hard_lean_case("pure_logic")
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority(
+        domain="lean_proof",
+        case_record=case,
+    )
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    runtime_condition = _condition_with_frozen_case_metadata(
+        condition=record.condition,
+        case=case,
+    )
+    tampered_condition = dataclass_replace(
+        runtime_condition,
+        **{field_name: tampered_value},
+    )
+
+    with pytest.raises(ValueError, match="root/config/request authority drift"):
+        factory(
+            condition=tampered_condition,
+            selection=record.binding.selection,
+            case_id=record.case_id,
+            case=case,
+            ai_api_config=config,
+            request_limits=dict(config.defaults),
+        )
+
+
+def test_exp5_ledger_root_rejects_frozen_case_digest_drift(
+    tmp_path: Path,
+) -> None:
+    case = _tracked_hard_lean_case("pure_logic")
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority(
+        domain="lean_proof",
+        case_record=case,
+    )
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    runtime_condition = _condition_with_frozen_case_metadata(
+        condition=record.condition,
+        case=case,
+    )
+    tampered_case = {**case, "construction_seed": 999999}
+
+    with pytest.raises(ValueError, match="root/config/request authority drift"):
+        factory(
+            condition=runtime_condition,
+            selection=record.binding.selection,
+            case_id=record.case_id,
+            case=tampered_case,
+            ai_api_config=config,
+            request_limits=dict(config.defaults),
+        )
+
+
+@pytest.mark.parametrize(
+    "drift_kind",
+    ("case_ref", "condition", "endpoint", "selection"),
+)
+def test_exp5_ledger_root_rejects_runtime_authority_drift(
+    tmp_path: Path,
+    drift_kind: str,
+) -> None:
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority()
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    context: dict[str, Any] = {
+        "condition": record.condition,
+        "selection": record.binding.selection,
+        "case_id": record.case_id,
+        "case": _frozen_case(coverage),
+        "ai_api_config": config,
+        "request_limits": dict(config.defaults),
+    }
+    if drift_kind == "case_ref":
+        context["case"] = {**context["case"], "case_id": "other-case"}
+    elif drift_kind == "condition":
+        context["condition"] = dataclass_replace(
+            record.condition,
+            seed=record.condition.seed + 1,
+        )
+    elif drift_kind == "endpoint":
+        context["condition"] = dataclass_replace(
+            record.condition,
+            model_endpoint_identity_digest="sha256:" + "0" * 64,
+        )
+    else:
+        context["selection"] = SimpleNamespace(
+            selection_digest="sha256:" + "0" * 64,
+        )
+
+    with pytest.raises(ValueError, match="root/config/request authority drift"):
+        factory(**context)
+
+
+def test_exp5_ledger_factory_rejects_selected_endpoint_authority_drift(
+    tmp_path: Path,
+) -> None:
+    coverage, inventory, config, _record = _synthetic_exp5_formal_authority()
+    coverage.roots[0].endpoint_controls.model_endpoint_identity_digest = (
+        "sha256:" + "0" * 64
+    )
+
+    with pytest.raises(ValueError, match="prepared/model/provider authority drift"):
+        PaperExp5LedgerRootCallbackFactory(
+            ledger_path=tmp_path / "exp5-budget.sqlite3",
+            full_prepared_inventory=inventory,
+            coverage=coverage,
+            ai_api_configs={"siliconflow": config},
+        )
+
+
+@pytest.mark.parametrize(
+    ("domain", "runtime_task_id"),
+    (
+        ("factorization", "paper_factorization_exp5-case"),
+        ("lean_proof", "paper_lean_exp5-case"),
+    ),
+)
+def test_exp5_ledger_factory_binds_formal_runtime_task_identity(
+    tmp_path: Path,
+    domain: str,
+    runtime_task_id: str,
+) -> None:
+    coverage, inventory, config, _record = _synthetic_exp5_formal_authority(
+        domain=domain,
+        prepared_case_id=runtime_task_id,
+    )
+
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+
+    assert len(factory.inventory_rows) == 1
+
+
+@pytest.mark.parametrize(
+    ("domain", "runtime_task_id"),
+    (
+        ("unknown_domain", "paper_unknown_exp5-case"),
+        ("factorization", "paper_lean_exp5-case"),
+        ("lean_proof", "paper_factorization_exp5-case"),
+    ),
+)
+def test_exp5_ledger_factory_rejects_invalid_formal_runtime_task_identity(
+    tmp_path: Path,
+    domain: str,
+    runtime_task_id: str,
+) -> None:
+    coverage, inventory, config, _record = _synthetic_exp5_formal_authority(
+        domain=domain,
+        prepared_case_id=runtime_task_id,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="prepared/model/provider authority drift",
+    ):
+        PaperExp5LedgerRootCallbackFactory(
+            ledger_path=tmp_path / "exp5-budget.sqlite3",
+            full_prepared_inventory=inventory,
+            coverage=coverage,
+            ai_api_configs={"siliconflow": config},
+        )
+
+
+def test_exp5_ledger_factory_binds_selected_full_inventory_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority()
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    callback = factory(
+        condition=_condition_with_frozen_case_metadata(
+            condition=record.condition,
+            case=_frozen_case(coverage),
+        ),
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=config,
+        request_limits=dict(config.defaults),
+    )
+    prepared = record.prepared_request
+    callback.after_prepared_dispatch(
+        submission_id="exp5-submission",
+        prepared_request=prepared,
+        provider_request_identity={
+            **dict(record.provider_request_identity),
+            "prepared_request": prepared.provenance_dict(),
+        },
+        provider_family=record.provider_family,
+        model=record.provider_model_id,
+        entry_id=record.model_entry_id,
+    )
+
+    assert factory.serialize_roots is False
+    assert len(factory.inventory_rows) == 1
+    reservation = factory.ledger.list_reservations()[0]
+    root_authority = callback.root_hard_limit_authority
+    assert root_authority.condition_id == record.condition.condition_id
+    assert root_authority.condition_digest == record.condition.condition_digest
+    assert root_authority.case_id == record.case_id
+    assert root_authority.selection_digest == record.binding.selection.selection_digest
+    assert (
+        root_authority.model_endpoint_identity_digest
+        == record.model_endpoint_identity_digest
+    )
+    assert root_authority.inventory_digest == factory.inventory_digest
+    assert root_authority.provider_attempt_count == 1
+    assert root_authority.provider_attempt_count == len(coverage.roots[0].planned_ai_unit_ids)
+    assert root_authority.total_tokens == sum(
+        row.token_upper_bound for row in factory.ledger.list_reservations()
+    )
+    assert root_authority.total_cost_estimate == sum(
+        (row.cost_upper_bound for row in factory.ledger.list_reservations()),
+        start=Decimal("0"),
+    )
+    assert root_authority.currency == "CNY"
+    assert reservation.state == "reserved"
+    assert reservation.inventory_digest == factory.inventory_digest
+    audit = factory.audit_usage()
+    expected = {record.condition.condition_id: 1}
+    empty = {record.condition.condition_id: 0}
+    assert audit.expected_provider_calls_by_condition == expected
+    assert audit.current_provider_calls_by_condition == empty
+    assert audit.total_provider_calls_by_condition == empty
+    assert audit.current_terminal_provider_calls_by_condition == empty
+    assert audit.total_terminal_provider_calls_by_condition == empty
+    canonical_slot = (
+        record.condition.condition_id,
+        record.case_id,
+        record.planned_ai_unit_id,
+    )
+    assert audit.prepared_canonical_slots == (canonical_slot,)
+    assert audit.current_terminal_slots == ()
+    assert audit.total_terminal_slots == ()
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "condition_id",
+        "condition_digest",
+        "case_id",
+        "selection_digest",
+        "model_endpoint_identity_digest",
+        "inventory_digest",
+    ),
+)
+def test_exp5_typed_root_hard_limit_authority_rejects_identity_drift(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority()
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    callback = factory(
+        condition=_condition_with_frozen_case_metadata(
+            condition=record.condition,
+            case=_frozen_case(coverage),
+        ),
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=config,
+        request_limits=dict(config.defaults),
+    )
+    drifted = dataclass_replace(
+        callback.root_hard_limit_authority,
+        **{
+            field_name: (
+                "drifted-id"
+                if field_name in {"condition_id", "case_id"}
+                else "sha256:" + "f" * 64
+            )
+        },
+    )
+
+    with pytest.raises(ValueError, match="root hard-limit authority"):
+        callback.bind_root_hard_limit_authority(
+            condition=record.condition,
+            selection=record.binding.selection,
+            case_id=record.case_id,
+            inventory_digest=factory.inventory_digest,
+            authority=drifted,
+        )
+
+
+@pytest.mark.parametrize(
+    ("domain", "runtime_task_id"),
+    (
+        ("factorization", "paper_factorization_exp5-case"),
+        ("lean_proof", "paper_lean_exp5-case"),
+    ),
+)
+def test_exp5_ledger_root_binds_source_config_separately_from_prepared_config(
+    tmp_path: Path,
+    domain: str,
+    runtime_task_id: str,
+) -> None:
+    coverage, inventory, source_config, record = (
+        _synthetic_exp5_formal_authority(
+            domain=domain,
+            prepared_case_id=runtime_task_id,
+            distinct_config_layers=True,
+        )
+    )
+    assert source_config.config_digest == record.source_provider_config_digest
+    assert source_config.config_digest != record.prepared_execution_config_digest
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": source_config},
+    )
+
+    callback = factory(
+        condition=_condition_with_frozen_case_metadata(
+            condition=record.condition,
+            case=_frozen_case(coverage),
+        ),
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=source_config,
+        request_limits=dict(source_config.defaults),
+    )
+
+    assert callable(callback)
+
+
+def test_exp5_ledger_root_rejects_source_config_drift(
+    tmp_path: Path,
+) -> None:
+    coverage, inventory, source_config, record = (
+        _synthetic_exp5_formal_authority(distinct_config_layers=True)
+    )
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": source_config},
+    )
+
+    with pytest.raises(ValueError, match="root/config/request authority drift"):
+        factory(
+            condition=record.condition,
+            selection=record.binding.selection,
+            case_id=record.case_id,
+            case=_frozen_case(coverage),
+            ai_api_config=SimpleNamespace(
+                config_digest=record.prepared_execution_config_digest
+            ),
+            request_limits=dict(source_config.defaults),
+        )
+
+
+def test_exp5_ledger_factory_rejects_prepared_config_drift(
+    tmp_path: Path,
+) -> None:
+    coverage, inventory, source_config, record = (
+        _synthetic_exp5_formal_authority(distinct_config_layers=True)
+    )
+    drifted_record = dataclass_replace(
+        record,
+        prepared_execution_config_digest=source_config.config_digest,
+    )
+    drifted_inventory = dataclass_replace(
+        inventory,
+        records=(drifted_record,),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="prepared/model/provider authority drift",
+    ):
+        PaperExp5LedgerRootCallbackFactory(
+            ledger_path=tmp_path / "exp5-budget.sqlite3",
+            full_prepared_inventory=drifted_inventory,
+            coverage=coverage,
+            ai_api_configs={"siliconflow": source_config},
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "wrong_value"),
+    (
+        ("provider_family", "deepseek"),
+        ("model", "wrong-model"),
+        ("entry_id", "wrong-entry"),
+        ("provider_request_identity", {"schema_version": "wrong"}),
+    ),
+)
+def test_exp5_ledger_factory_rejects_runtime_identity_drift_before_transport(
+    tmp_path: Path,
+    field_name: str,
+    wrong_value: object,
+) -> None:
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority()
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    callback = factory(
+        condition=record.condition,
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=config,
+        request_limits=dict(config.defaults),
+    )
+    prepared = record.prepared_request
+    context = {
+        "submission_id": "exp5-mismatch",
+        "prepared_request": prepared,
+        "provider_request_identity": {
+            **dict(record.provider_request_identity),
+            "prepared_request": prepared.provenance_dict(),
+        },
+        "provider_family": record.provider_family,
+        "model": record.provider_model_id,
+        "entry_id": record.model_entry_id,
+    }
+    context[field_name] = wrong_value
+
+    with pytest.raises(ValueError, match="identity drift before transport"):
+        callback.after_prepared_dispatch(**context)
+
+    assert factory.ledger.list_reservations() == ()
+
+
+@pytest.mark.parametrize("drift_kind", ("body", "config", "request_controls"))
+def test_exp5_ledger_factory_rejects_body_config_and_request_control_drift(
+    tmp_path: Path,
+    drift_kind: str,
+) -> None:
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority()
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    runtime_config: object = config
+    request_limits = dict(config.defaults)
+    if drift_kind == "config":
+        runtime_config = SimpleNamespace(config_digest="sha256:" + "0" * 64)
+    if drift_kind == "request_controls":
+        request_limits["max_tokens"] = int(request_limits["max_tokens"]) + 1
+    if drift_kind != "body":
+        with pytest.raises(ValueError, match="root/config/request authority drift"):
+            factory(
+                condition=record.condition,
+                selection=record.binding.selection,
+                case_id=record.case_id,
+                case=_frozen_case(coverage),
+                ai_api_config=runtime_config,
+                request_limits=request_limits,
+            )
+        assert factory.ledger.list_reservations() == ()
+        return
+
+    callback = factory(
+        condition=record.condition,
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=config,
+        request_limits=request_limits,
+    )
+    prepared = record.prepared_request
+    altered = PreparedOutboundRequestFactory.prepare(
+        body_obj={
+            **dict(prepared.body_obj),
+            "messages": [{"role": "user", "content": "different exact body"}],
+        },
+        base_url=prepared.normalized_absolute_endpoint,
+        endpoint="",
+        provider_config_digest=prepared.provider_config_digest,
+        entry_id=prepared.entry_id,
+        configured_model=prepared.configured_model,
+        effective_controls_digest=prepared.effective_controls_digest,
+        plugin_id=prepared.plugin_id,
+        plugin_version=prepared.plugin_version,
+        prompt_profile_id=prepared.prompt_profile_id,
+        prompt_serialization_schema=prepared.prompt_serialization_schema,
+        body_serialization_schema=prepared.body_serialization_schema,
+        case_id=prepared.case_id,
+        planned_ai_unit_id=prepared.planned_ai_unit_id,
+        sample_slot_index=prepared.sample_slot_index,
+        replacement_slot=prepared.replacement_slot,
+    )
+    with pytest.raises(ValueError, match="identity drift before transport"):
+        callback.after_prepared_dispatch(
+            submission_id="exp5-body-drift",
+            prepared_request=altered,
+            provider_request_identity={
+                **dict(record.provider_request_identity),
+                "prepared_request": altered.provenance_dict(),
+            },
+            provider_family=record.provider_family,
+            model=record.provider_model_id,
+            entry_id=record.model_entry_id,
+        )
+    assert factory.ledger.list_reservations() == ()
+
+
+def test_exp5_ledger_resume_marks_intent_ambiguous_without_current_dispatch(
+    tmp_path: Path,
+) -> None:
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority()
+    ledger_path = tmp_path / "exp5-budget.sqlite3"
+    initial = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=ledger_path,
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    callback = initial(
+        condition=record.condition,
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=config,
+        request_limits=dict(config.defaults),
+    )
+    prepared = record.prepared_request
+    context = {
+        "submission_id": "exp5-intent",
+        "prepared_request": prepared,
+        "provider_request_identity": {
+            **dict(record.provider_request_identity),
+            "prepared_request": prepared.provenance_dict(),
+        },
+        "provider_family": record.provider_family,
+        "model": record.provider_model_id,
+        "entry_id": record.model_entry_id,
+    }
+    callback.after_prepared_dispatch(**context)
+    callback.before_provider_dispatch(**context)
+
+    resumed = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=ledger_path,
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    resumed_callback = resumed(
+        condition=record.condition,
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=config,
+        request_limits=dict(config.defaults),
+    )
+    resume_store = ArtifactStore(tmp_path / "resume-artifacts")
+    with pytest.raises(RuntimeError, match="reconciled ambiguous"):
+        resumed_callback.after_prepared_dispatch(
+            **{
+                **context,
+                "submission_id": "exp5-resume",
+                "artifact_store": resume_store,
+            }
+        )
+
+    audit = resumed.audit_usage()
+    assert audit.current_provider_calls == 0
+    assert audit.total_provider_calls == 1
+    assert audit.ambiguous_count == 1
+    assert audit.current_provider_calls_by_condition == {
+        record.condition.condition_id: 0
+    }
+    assert audit.total_provider_calls_by_condition == {
+        record.condition.condition_id: 1
+    }
+    assert audit.total_terminal_provider_calls_by_condition == {
+        record.condition.condition_id: 0
+    }
+    assert audit.total_spend is None
+    assert audit.total_spend_missing_reason == "exp5_ledger_ambiguous"
+
+
+def test_exp5_ledger_missing_usage_keeps_upper_bound_and_reports_missing(
+    tmp_path: Path,
+) -> None:
+    coverage, inventory, config, record = _synthetic_exp5_formal_authority()
+    factory = PaperExp5LedgerRootCallbackFactory(
+        ledger_path=tmp_path / "exp5-budget.sqlite3",
+        full_prepared_inventory=inventory,
+        coverage=coverage,
+        ai_api_configs={"siliconflow": config},
+    )
+    callback = factory(
+        condition=record.condition,
+        selection=record.binding.selection,
+        case_id=record.case_id,
+        case=_frozen_case(coverage),
+        ai_api_config=config,
+        request_limits=dict(config.defaults),
+    )
+    prepared = record.prepared_request
+    context = {
+        "submission_id": "exp5-missing-usage",
+        "prepared_request": prepared,
+        "provider_request_identity": {
+            **dict(record.provider_request_identity),
+            "prepared_request": prepared.provenance_dict(),
+        },
+        "provider_family": record.provider_family,
+        "model": record.provider_model_id,
+        "entry_id": record.model_entry_id,
+    }
+    callback.after_prepared_dispatch(**context)
+    callback.before_provider_dispatch(**context)
+    row = factory.inventory_rows[0]
+    factory.ledger.publish_terminal(
+        factory.inventory_digest,
+        row.inventory_entry_id,
+        terminal_ref="artifact-exp5-missing-usage",
+        terminal_kind="provider_failure",
+    )
+    settled = factory.ledger.reconcile_terminal(
+        factory.inventory_digest,
+        row.inventory_entry_id,
+        usage=None,
+    )
+
+    audit = factory.audit_usage()
+    assert settled.usage_missing is True
+    assert settled.cost_estimate == settled.cost_upper_bound
+    assert audit.current_provider_calls == 1
+    assert audit.current_spend is None
+    assert audit.current_spend_missing_reason == "exp5_ledger_usage_missing"
+    assert audit.cost_upper_bound_at_risk == settled.cost_upper_bound
+    assert audit.current_terminal_provider_calls_by_condition == {
+        record.condition.condition_id: 1
+    }
+    assert audit.total_terminal_provider_calls_by_condition == {
+        record.condition.condition_id: 1
+    }
+
+
 def test_online_callback_settles_success_and_provider_failure_from_persisted_refs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -265,6 +1381,64 @@ def test_online_callback_settles_success_and_provider_failure_from_persisted_ref
     assert failure_row.usage_missing is True
     assert failure.raw_or_failure_ref.artifact_ref.artifact_type == "AIProviderFailure"
     assert failure.usage_ref.artifact_ref.artifact_type == "AIProviderTerminalUsage"
+
+
+def test_online_callback_rejects_explicit_provider_count_provenance_drift(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    request = make_ai_request(store, request_id="provider-count-drift")
+    raw_ref = store.save_json(
+        {"raw": "candidate"},
+        artifact_id="provider-count-raw",
+        artifact_type="RawModelOutput",
+        artifact_schema_id="test.raw",
+        artifact_schema_version="v1",
+        source={"test": "provider-count"},
+        metadata={},
+        created_at="2026-08-12T00:00:00Z",
+    )
+    provenance_ref = store.save_json(
+        {
+            "attempts": [{"provider_request_identity": {"entry_id": "sf_qwen"}}],
+            "provider_attempt_count": 0,
+        },
+        artifact_id="provider-count-provenance",
+        artifact_type="AIProviderResponseProvenance",
+        artifact_schema_id="phase7.ai_provider_response_provenance",
+        artifact_schema_version="v1",
+        source={"test": "provider-count"},
+        metadata={},
+        created_at="2026-08-12T00:00:00Z",
+    )
+    usage_ref = store.save_json(
+        {"usage_summary": {"provider_attempt_count": 1}},
+        artifact_id="provider-count-usage",
+        artifact_type="AIProviderResponseUsage",
+        artifact_schema_id="phase7.ai_provider_response_usage",
+        artifact_schema_version="v1",
+        source={"test": "provider-count"},
+        metadata={},
+        created_at="2026-08-12T00:00:00Z",
+    )
+    callback = PaperOnlineProviderEvidenceCallback(
+        attempt_ordinal=0,
+        scope_identity={"scope_kind": "exp5_online"},
+    )
+
+    with pytest.raises(ValueError, match="provider attempt count evidence drift"):
+        callback(
+            artifact_store=store,
+            request=request,
+            submission_id="provider-count-drift",
+            submitted_at="2026-08-12T00:00:00Z",
+            raw_output_ref=raw_ref,
+            provenance_ref=provenance_ref,
+            usage_ref=usage_ref,
+            provider_family="siliconflow",
+            model="model",
+            entry_id="sf_qwen",
+        )
 
 
 def test_online_callback_releases_pre_intent_abort_and_reconciles_crash_states(
@@ -371,6 +1545,157 @@ def test_online_callback_releases_pre_intent_abort_and_reconciles_crash_states(
         reservation=terminal_reservation,
         artifact_store=terminal_store,
     ) == "settled"
+
+
+def test_online_callback_exception_accounting_preserves_settled_provider_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "synthetic-key")
+    plan = freeze_paper_online_checks_plan()
+    ledger, reservation = _callback_budget(tmp_path)
+    callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        plan.exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=ledger,
+        reservation_request_resolver=lambda _context: reservation,
+    )
+    store = ArtifactStore(tmp_path / "artifacts")
+    _run_persisted_online_attempt(
+        store,
+        callback=callback,
+        submission_id="exception-after-provider",
+        submitted_at="2026-08-12T00:00:00Z",
+    )
+
+    accounting = callback.reconcile_exception_accounting(
+        artifact_store=store,
+    )
+
+    assert accounting.provider_attempt_count == 1
+    assert accounting.total_tokens == 24
+    assert accounting.total_cost_estimate == 0.0
+    assert accounting.cost_estimate_currency == "CNY"
+    assert accounting.cost_estimate_status == "single_currency_estimate"
+    assert accounting.usage_missing_count == 0
+    assert accounting.ambiguous_count == 0
+    assert ledger.get_reservation(
+        reservation.inventory_digest,
+        reservation.inventory_entry_id,
+    ).state == "settled"
+
+
+def test_online_callback_exception_accounting_releases_preprovider_reservation(
+    tmp_path: Path,
+) -> None:
+    plan = freeze_paper_online_checks_plan()
+    ledger, reservation = _callback_budget(tmp_path)
+    callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        plan.exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=ledger,
+        reservation_request_resolver=lambda _context: reservation,
+    )
+    store = ArtifactStore(tmp_path / "artifacts")
+    callback.after_prepared_dispatch(submission_id="exception-before-provider")
+
+    accounting = callback.reconcile_exception_accounting(
+        artifact_store=store,
+    )
+
+    assert accounting.provider_attempt_count == 0
+    assert accounting.total_tokens == 0
+    assert accounting.total_cost_estimate == 0.0
+    assert accounting.cost_estimate_status == "explicit_zero_preprovider"
+    assert accounting.usage_missing_count == 0
+    assert accounting.ambiguous_count == 0
+    assert ledger.list_reservations() == ()
+
+
+def test_online_callback_exception_accounting_marks_post_intent_without_terminal_ambiguous(
+    tmp_path: Path,
+) -> None:
+    plan = freeze_paper_online_checks_plan()
+    ledger, reservation = _callback_budget(tmp_path)
+    callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        plan.exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=ledger,
+        reservation_request_resolver=lambda _context: reservation,
+    )
+    store = ArtifactStore(tmp_path / "artifacts")
+    context = {"submission_id": "exception-after-intent"}
+    callback.after_prepared_dispatch(**context)
+    callback.before_provider_dispatch(**context)
+
+    accounting = callback.reconcile_exception_accounting(
+        artifact_store=store,
+    )
+
+    assert accounting.provider_attempt_count == 1
+    assert accounting.total_tokens is None
+    assert accounting.total_cost_estimate is None
+    assert accounting.cost_estimate_currency == "CNY"
+    assert accounting.cost_estimate_status == "usage_missing"
+    assert accounting.usage_missing_count == 1
+    assert accounting.ambiguous_count == 1
+    assert ledger.get_reservation(
+        reservation.inventory_digest,
+        reservation.inventory_entry_id,
+    ).state == "ambiguous"
+
+
+def test_online_callback_exception_accounting_preserves_exact_decimal_across_settled_and_ambiguous(
+    tmp_path: Path,
+) -> None:
+    settled_cost = Decimal("0.1000000000000000000000000001")
+    ambiguous_cost = Decimal("0.2000000000000000000000000002")
+    ledger, reservations = _callback_budget_with_exact_costs(
+        tmp_path,
+        cost_upper_bounds=(settled_cost, ambiguous_cost),
+    )
+    reservation_by_submission = dict(
+        zip(("settled", "ambiguous"), reservations, strict=True)
+    )
+    callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        freeze_paper_online_checks_plan().exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=ledger,
+        reservation_request_resolver=lambda context: reservation_by_submission[
+            str(context["submission_id"])
+        ],
+    )
+    for submission_id in reservation_by_submission:
+        callback.after_prepared_dispatch(submission_id=submission_id)
+        callback.before_provider_dispatch(submission_id=submission_id)
+    settled = reservations[0]
+    ledger.publish_terminal(
+        settled.inventory_digest,
+        settled.inventory_entry_id,
+        terminal_ref="settled-terminal",
+        terminal_kind="success",
+    )
+    ledger.reconcile_terminal(
+        settled.inventory_digest,
+        settled.inventory_entry_id,
+        usage=ProviderUsage(input_tokens=1, output_tokens=0),
+    )
+
+    accounting = callback.reconcile_exception_accounting(
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+    )
+
+    exact_root_cost = settled_cost + ambiguous_cost
+    assert accounting.provider_attempt_count == 2
+    assert accounting.total_cost_estimate is None
+    assert accounting.ambiguous_count == 1
+    assert accounting.state_counts == {
+        "released": 0,
+        "ambiguous": 1,
+        "settled": 1,
+    }
+    assert isinstance(accounting.conservative_total_cost_estimate, Decimal)
+    assert accounting.conservative_total_cost_estimate == exact_root_cost
 
 
 def test_online_root_factory_maps_canonical_runner_roots_to_authoritative_refs(
@@ -1009,7 +2334,6 @@ def test_exp5_strategy_rejects_failover_and_requires_persisted_model_records(
 def test_runner_uses_logical_scheduler_for_trace_and_real_clock_for_online(
     tmp_path: Path,
 ) -> None:
-    from tests.experiments.test_factorization_paper_adapter import _v2_condition
     from tests.experiments.test_paper_formal_runner import (
         _trace_context_from_adapter_result,
     )
@@ -1035,13 +2359,15 @@ def test_runner_uses_logical_scheduler_for_trace_and_real_clock_for_online(
     assert online.logical_scheduler is None
 
     case = generate_factorization_paper_cases()[0]
-    condition = _v2_condition(case)
+    condition, source_config = _identity_bound_factor_trace_fixture(case)
     source = run_factorization_paper_case(
         case=case,
         condition=condition,
         output_root=tmp_path / "source",
         transport=ScriptedFactorizationRangeTransport(),
         real_transport=False,
+        ai_api_config=source_config,
+        entry_id="factorization_paper_scripted",
     )
     runtime = _trace_context_from_adapter_result(
         bank_root=tmp_path / "bank",
@@ -1053,8 +2379,8 @@ def test_runner_uses_logical_scheduler_for_trace_and_real_clock_for_online(
         output_root=(tmp_path / "trace").as_posix(),
         transport=ScriptedFactorizationRangeTransport(),
         real_transport=False,
-        ai_api_config=None,
-        entry_id=None,
+        ai_api_config=source_config,
+        entry_id="factorization_paper_scripted",
         max_tokens=512,
         timeout_seconds=30,
         trace_context=runtime,
@@ -1078,7 +2404,6 @@ def test_runner_uses_logical_scheduler_for_trace_and_real_clock_for_online(
 def test_worker_death_parent_commit_and_ordinal_replacement_flow(
     tmp_path: Path,
 ) -> None:
-    from tests.experiments.test_factorization_paper_adapter import _v2_condition
     from tests.experiments.test_paper_formal_runner import (
         _trace_context_from_adapter_result,
     )
@@ -1094,13 +2419,15 @@ def test_worker_death_parent_commit_and_ordinal_replacement_flow(
     from tokenshare.local_runtime import WorkerTerminationPolicy
 
     case = generate_factorization_paper_cases()[0]
-    condition = _v2_condition(case)
+    condition, source_config = _identity_bound_factor_trace_fixture(case)
     source = run_factorization_paper_case(
         case=case,
         condition=condition,
         output_root=tmp_path / "source",
         transport=ScriptedFactorizationRangeTransport(),
         real_transport=False,
+        ai_api_config=source_config,
+        entry_id="factorization_paper_scripted",
     )
     trace_context = _trace_context_from_adapter_result(
         bank_root=tmp_path / "bank",
@@ -1113,8 +2440,8 @@ def test_worker_death_parent_commit_and_ordinal_replacement_flow(
         output_root=(tmp_path / "trace").as_posix(),
         transport=ScriptedFactorizationRangeTransport(),
         real_transport=False,
-        ai_api_config=None,
-        entry_id=None,
+        ai_api_config=source_config,
+        entry_id="factorization_paper_scripted",
         max_tokens=512,
         timeout_seconds=30,
         worker_termination_policy=WorkerTerminationPolicy(
@@ -1146,6 +2473,45 @@ def test_worker_death_parent_commit_and_ordinal_replacement_flow(
     assert dead[0].attempt_id not in committed_attempt_ids
     assert replacement[0].attempt_id in committed_attempt_ids
     assert replacement[0].entry_id == "entry-range_0-1"
+
+
+def _identity_bound_factor_trace_fixture(case: dict):
+    from tests.experiments.test_factorization_paper_adapter import _v2_condition
+    from tokenshare.experiments.factorization_paper_adapter import (
+        _default_scripted_config,
+    )
+    from tokenshare.experiments.paper_model_identity import (
+        build_model_endpoint_identity,
+    )
+
+    source_config = _default_scripted_config("factorization_paper_scripted")
+    identity = build_model_endpoint_identity(
+        model_cohort_id="test_factor_trace_source_cohort",
+        model_cohort_digest="sha256:" + "7" * 64,
+        cohort_member_id="test_factor_trace_source_member",
+        provider_config_id="factorization_paper_scripted",
+        selected_entry_id="factorization_paper_scripted",
+        expected_provider_family="siliconflow",
+        expected_provider_model_id="TokenShare/Scripted-Factorization-Range",
+        expected_reasoning_profile_id="default",
+        source_config=source_config,
+    )
+    return (
+        dataclass_replace(
+            _v2_condition(case),
+            model_cohort_id=identity.model_cohort_id,
+            model_cohort_digest=identity.model_cohort_digest,
+            cohort_member_id=identity.cohort_member_id,
+            provider_config_id=identity.provider_config_id,
+            model_entry_id=identity.selected_entry_id,
+            provider_family=identity.provider_family,
+            provider_model_id=identity.provider_model_id,
+            reasoning_profile_id=identity.reasoning_profile_id,
+            source_provider_config_digest=identity.source_provider_config_digest,
+            model_endpoint_identity_digest=identity.model_endpoint_identity_digest,
+        ),
+        source_config,
+    )
 
 
 def test_exp3_producer_emits_fault_death_before_distinct_new_attempt_provider_raw_provenance_usage_model_refs(

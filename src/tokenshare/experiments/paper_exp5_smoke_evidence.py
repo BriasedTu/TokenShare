@@ -20,8 +20,9 @@ EXP5_SMOKE_EVIDENCE_BUNDLE_SCHEMA_VERSION = (
 )
 EXP5_SMOKE_SUITE_ID = "paper_smoke_exp5_v4"
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
+# v4 只接受当前 tracked profile；旧 profile/suite digest 在 source 校验处 fail-closed。
 EXP5_SMOKE_PROFILE_DIGEST = (
-    "sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6"
+    "sha256:697b4218243a22f5fd2838bbc88baf7f6354491921970e4cf9beb0b5c1c37b1e"
 )
 _REQUIRED_PROTOCOL_EVENT_TYPES = {
     "TASK_REGISTERED",

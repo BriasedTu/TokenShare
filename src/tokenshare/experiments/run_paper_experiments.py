@@ -42,11 +42,13 @@ from tokenshare.experiments.paper_catalog_execution_view import (
     restore_catalog_execution_view,
 )
 from tokenshare.experiments.paper_model_policy import (
+    EXP5_PRICING_FRESHNESS_AS_OF,
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
     build_model_endpoint_cohort_preflight,
     load_model_endpoint_cohort,
     load_model_entry_map,
     load_provider_config_map,
+    validate_exp5_pricing_freshness_evidence,
 )
 from tokenshare.experiments.paper_exp5_smoke_evidence import (
     EXP5_SMOKE_SUITE_ID,
@@ -1100,21 +1102,32 @@ def _select_online_checks_dispatch(
     return tuple(selected_plans), root_filter
 
 
-def build_representative_full_plan_smoke_authority(
+def _build_results_first_execution_authorities(
     *,
     output_root: str | Path,
     planning_artifact_root: str | Path,
     plan_bundle_root: str | Path,
     resume: bool = False,
-):
-    """一次冻结正式 Exp1--5 authority，再派生 representative 执行服务。"""
+    _selection_kinds: Sequence[str] = ("full", "filtered"),
+    _exact_roots: bool = False,
+    _exclude_exp4: bool = False,
+) -> Mapping[str, object]:
+    """一次冻结正式 Exp1--5 full authority，再派生 full/filtered 服务。"""
 
     from tokenshare.experiments.paper_resource_accounting import FrozenPricing
+    from tokenshare.experiments.paper_budget import project_paper_execution_budget
+    from tokenshare.experiments.paper_formal_plan import (
+        derive_paper_formal_exp4_excluded_coverage,
+        derive_paper_formal_full_coverage,
+        derive_paper_formal_representative_coverage,
+        freeze_paper_formal_plan_snapshot,
+        freeze_paper_formal_prepared_request_inventory,
+    )
     from tokenshare.experiments.paper_response_bank import (
-        prepare_representative_acquisition_authority,
+        prepare_results_first_acquisition_authority,
     )
     from tokenshare.experiments.run_paper_pipeline import (
-        build_representative_full_plan_smoke_service_authority,
+        build_results_first_execution_authority,
     )
 
     execution_root = Path(output_root).resolve(strict=False)
@@ -1144,56 +1157,12 @@ def build_representative_full_plan_smoke_authority(
         if entry.enabled
     } != {"SILICONFLOW_API_KEY"}:
         raise ValueError("Exp5 v3 API key env authority drift")
-    shadow_configs = {
-        config_id: replace(
-            config,
-            entries=tuple(
-                replace(
-                    entry,
-                    api_key_env="TOKENSHARE_PRESECRET_AUTHORITY_UNSET",
-                )
-                for entry in config.entries
-            ),
-        )
-        for config_id, config in provider_configs.items()
-    }
-    model_endpoint_cohort_preflight = build_model_endpoint_cohort_preflight(
+    model_endpoint_cohort_preflight = _build_current_exp5_execution_preflight(
         cohort=cohort,
         entry_map=entry_map,
-        provider_configs=shadow_configs,
+        provider_configs=provider_configs,
         require_smoke_evidence=False,
         smoke_evidence_bundle=None,
-    )
-    member_plans = model_endpoint_cohort_preflight.get("member_plans")
-    ineligible = model_endpoint_cohort_preflight.get("ineligible_members")
-    expected_presecret_reasons = {
-        "api_key_env_mismatch",
-        "missing_api_key_env",
-    }
-    if not isinstance(member_plans, Mapping) or not isinstance(ineligible, list):
-        raise ValueError("Exp5 v3 structural preflight is malformed")
-    if len(ineligible) != len(member_plans) or any(
-        not isinstance(item, Mapping)
-        or set(item.get("blocked_reasons", ())) != expected_presecret_reasons
-        for item in ineligible
-    ):
-        raise ValueError("Exp5 v3 structural preflight has non-secret failures")
-    for member_plan in member_plans.values():
-        if not isinstance(member_plan, dict) or set(
-            member_plan.get("blocked_reasons", ())
-        ) != expected_presecret_reasons:
-            raise ValueError("Exp5 v3 member structural preflight failed")
-        member_plan["api_key_env"] = "SILICONFLOW_API_KEY"
-        member_plan["status"] = "planned"
-        member_plan["blocked_reasons"] = []
-    model_endpoint_cohort_preflight.update(
-        {
-            "status": "planned",
-            "paper_eligible_possible": True,
-            "blocked_reason": None,
-            "ineligibility_reasons": [],
-            "ineligible_members": [],
-        }
     )
 
     execution_configs: dict[str, object] = {
@@ -1299,52 +1268,186 @@ def build_representative_full_plan_smoke_authority(
     if len(baseline_entry) != 1:
         raise ValueError("representative baseline pricing authority is missing")
     pricing_body = baseline_entry[0].pricing
-    atomic_authority = prepare_representative_acquisition_authority(
+    full_snapshot = freeze_paper_formal_plan_snapshot(
         dispatch_plans=dispatch_plans,
         catalog_manifest=catalog_manifest,
         budget=budget,
         ai_api_configs=execution_configs,
-        planning_artifact_root=Path(planning_artifact_root),
-        api_key_env_by_provider_family={
-            "deepseek": "DEEPSEEK_API_KEY",
-        },
-        frozen_pricing_by_provider_family={
-            "deepseek": FrozenPricing(
-                currency=str(pricing_body["currency"]),
-                input_per_million_tokens=Decimal(
-                    str(
-                        pricing_body.get(
-                            "input_per_million_tokens",
-                            pricing_body.get(
-                                "uncached_input_per_million_tokens"
-                            ),
-                        )
-                    )
-                ),
-                output_per_million_tokens=Decimal(
-                    str(pricing_body["output_per_million_tokens"])
-                ),
-            )
-        },
-        requested_at=REPRESENTATIVE_ACQUISITION_REQUESTED_AT,
-        repeat_ids=(0,),
-        max_acquisition_concurrency=10,
+        output_root=formal_plan_root,
     )
-    hard_limits = {
-        "max_total_provider_attempts": budget.max_provider_attempts,
-        "max_total_tokens": budget.token_upper_bound,
-        "max_cost_estimate": budget.cost_upper_bound,
-    }
-    return build_representative_full_plan_smoke_service_authority(
-        atomic_authority=atomic_authority,
-        full_dispatch_plans=dispatch_plans,
+    full_prepared_inventory = freeze_paper_formal_prepared_request_inventory(
+        snapshot=full_snapshot,
         catalog_manifest=catalog_manifest,
-        full_budget=budget,
         ai_api_configs=execution_configs,
-        bundle_root=Path(plan_bundle_root),
-        output_root=execution_root,
-        resume=bool(resume),
-        hard_limits=hard_limits,
+        planning_artifact_root=(
+            Path(planning_artifact_root) / "full-prepared-inventory-freeze"
+        ),
+    )
+    requested_selection_kinds = tuple(_selection_kinds)
+    if (
+        not requested_selection_kinds
+        or len(set(requested_selection_kinds)) != len(requested_selection_kinds)
+        or not set(requested_selection_kinds).issubset({"full", "filtered"})
+    ):
+        raise ValueError("results-first selection kind is invalid")
+    if type(_exclude_exp4) is not bool:
+        raise TypeError("results-first Exp4 exclusion flag is invalid")
+    coverages: dict[str, object] = {}
+    if "full" in requested_selection_kinds:
+        coverages["full"] = (
+            derive_paper_formal_exp4_excluded_coverage(
+                snapshot=full_snapshot,
+                dispatch_plans=dispatch_plans,
+                catalog_manifest=catalog_manifest,
+                selection="full",
+            )
+            if _exclude_exp4
+            else derive_paper_formal_full_coverage(
+                snapshot=full_snapshot,
+                dispatch_plans=dispatch_plans,
+                catalog_manifest=catalog_manifest,
+            )
+        )
+    if "filtered" in requested_selection_kinds:
+        coverages["filtered"] = (
+            derive_paper_formal_exp4_excluded_coverage(
+                snapshot=full_snapshot,
+                dispatch_plans=dispatch_plans,
+                catalog_manifest=catalog_manifest,
+                selection="representative",
+            )
+            if _exclude_exp4
+            else derive_paper_formal_representative_coverage(
+                snapshot=full_snapshot,
+                dispatch_plans=dispatch_plans,
+                catalog_manifest=catalog_manifest,
+                repeat_ids=(0,),
+            )
+        )
+    frozen_pricing = {
+        "deepseek": FrozenPricing(
+            currency=str(pricing_body["currency"]),
+            input_per_million_tokens=Decimal(
+                str(
+                    pricing_body.get(
+                        "input_per_million_tokens",
+                        pricing_body.get("uncached_input_per_million_tokens"),
+                    )
+                )
+            ),
+            output_per_million_tokens=Decimal(
+                str(pricing_body["output_per_million_tokens"])
+            ),
+        )
+    }
+    authorities: dict[str, object] = {}
+    for selection_kind in requested_selection_kinds:
+        coverage = coverages[selection_kind]
+        projection = project_paper_execution_budget(
+            snapshot=full_snapshot,
+            budget=budget,
+            coverage=coverage,
+        )
+        atomic_authority = prepare_results_first_acquisition_authority(
+            full_snapshot=full_snapshot,
+            full_prepared_inventory=full_prepared_inventory,
+            full_budget=budget,
+            coverage=coverage,
+            execution_budget_projection=projection,
+            catalog_manifest=catalog_manifest,
+            ai_api_configs=execution_configs,
+            planning_artifact_root=(
+                Path(planning_artifact_root) / f"{selection_kind}-slots"
+            ),
+            api_key_env_by_provider_family={"deepseek": "DEEPSEEK_API_KEY"},
+            frozen_pricing_by_provider_family=frozen_pricing,
+            requested_at=REPRESENTATIVE_ACQUISITION_REQUESTED_AT,
+            max_acquisition_concurrency=10,
+        )
+        authorities[selection_kind] = build_results_first_execution_authority(
+            atomic_authority=atomic_authority,
+            full_dispatch_plans=dispatch_plans,
+            catalog_manifest=catalog_manifest,
+            ai_api_configs=execution_configs,
+            bundle_root=(
+                Path(plan_bundle_root)
+                if _exact_roots
+                else Path(plan_bundle_root) / selection_kind
+            ),
+            output_root=(
+                execution_root
+                if _exact_roots
+                else execution_root / selection_kind
+            ),
+            resume=bool(resume),
+        )
+    return authorities
+
+
+def build_results_first_execution_authorities(
+    *,
+    output_root: str | Path,
+    planning_artifact_root: str | Path,
+    plan_bundle_root: str | Path,
+    resume: bool = False,
+) -> Mapping[str, object]:
+    """兼容 dual-view API；一次 full freeze 后派生 full/filtered 两个视图。"""
+
+    return _build_results_first_execution_authorities(
+        output_root=output_root,
+        planning_artifact_root=planning_artifact_root,
+        plan_bundle_root=plan_bundle_root,
+        resume=resume,
+        _selection_kinds=("full", "filtered"),
+        _exact_roots=False,
+    )
+
+
+def build_results_first_execution_authority_for_selection(
+    *,
+    selection: str,
+    output_root: str | Path,
+    planning_artifact_root: str | Path,
+    plan_bundle_root: str | Path,
+    resume: bool = False,
+):
+    """从同一 full authority 派生一个 selection，并保留用户给定 exact roots。"""
+
+    selection_spec = {
+        "full": ("full", False),
+        "representative": ("filtered", False),
+        "full_exp1_exp3_exp5": ("full", True),
+        "representative_exp1_exp3_exp5": ("filtered", True),
+    }.get(selection)
+    if selection_spec is None:
+        raise ValueError("results-first selection is not preregistered")
+    selection_kind, exclude_exp4 = selection_spec
+    return _build_results_first_execution_authorities(
+        output_root=output_root,
+        planning_artifact_root=planning_artifact_root,
+        plan_bundle_root=plan_bundle_root,
+        resume=resume,
+        _selection_kinds=(selection_kind,),
+        _exact_roots=True,
+        _exclude_exp4=exclude_exp4,
+    )[selection_kind]
+
+
+def build_representative_full_plan_smoke_authority(
+    *,
+    output_root: str | Path,
+    planning_artifact_root: str | Path,
+    plan_bundle_root: str | Path,
+    resume: bool = False,
+):
+    """旧 wrapper；canonical builder 的 filtered selection。"""
+
+    return build_results_first_execution_authority_for_selection(
+        selection="representative",
+        output_root=output_root,
+        planning_artifact_root=planning_artifact_root,
+        plan_bundle_root=plan_bundle_root,
+        resume=resume,
     )
 
 
@@ -1415,56 +1518,12 @@ def build_epd027_formal_service_authority(
             if entry.enabled
         } != {"SILICONFLOW_API_KEY"}:
             raise ValueError("Exp5 v3 API key env authority drift")
-        shadow_configs = {
-            config_id: replace(
-                config,
-                entries=tuple(
-                    replace(
-                        entry,
-                        api_key_env="TOKENSHARE_PRESECRET_AUTHORITY_UNSET",
-                    )
-                    for entry in config.entries
-                ),
-            )
-            for config_id, config in provider_configs.items()
-        }
-        model_endpoint_cohort_preflight = build_model_endpoint_cohort_preflight(
+        model_endpoint_cohort_preflight = _build_current_exp5_execution_preflight(
             cohort=cohort,
             entry_map=entry_map,
-            provider_configs=shadow_configs,
+            provider_configs=provider_configs,
             require_smoke_evidence=False,
             smoke_evidence_bundle=None,
-        )
-        member_plans = model_endpoint_cohort_preflight.get("member_plans")
-        ineligible = model_endpoint_cohort_preflight.get("ineligible_members")
-        expected_presecret_reasons = {
-            "api_key_env_mismatch",
-            "missing_api_key_env",
-        }
-        if not isinstance(member_plans, Mapping) or not isinstance(ineligible, list):
-            raise ValueError("Exp5 v3 structural preflight is malformed")
-        if any(
-            set(item.get("blocked_reasons", ())) != expected_presecret_reasons
-            for item in ineligible
-            if isinstance(item, Mapping)
-        ) or len(ineligible) != len(member_plans):
-            raise ValueError("Exp5 v3 structural preflight has non-secret failures")
-        for member_plan in member_plans.values():
-            if not isinstance(member_plan, dict) or set(
-                member_plan.get("blocked_reasons", ())
-            ) != expected_presecret_reasons:
-                raise ValueError("Exp5 v3 member structural preflight failed")
-            member_plan["api_key_env"] = "SILICONFLOW_API_KEY"
-            member_plan["status"] = "planned"
-            member_plan["blocked_reasons"] = []
-        model_endpoint_cohort_preflight.update(
-            {
-                "status": "planned",
-                "paper_eligible_possible": True,
-                "blocked_reason": None,
-                "ineligibility_reasons": [],
-                "ineligible_members": [],
-            }
         )
         if model_endpoint_cohort_preflight.get("status") != "planned":
             raise ValueError("Exp5 v3 model endpoint cohort preflight is not planned")
@@ -1680,24 +1739,118 @@ def build_epd027_capability_smoke_service_authority(
     output_root: str | Path,
     resume: bool = False,
     paid_authorization: object | None = None,
+    results_first_scope_preparation_root: str | Path | None = None,
 ):
     """从同一 canonical Exp5 plan 派生 capability smoke authority。"""
 
-    formal = build_epd027_formal_service_authority(
-        command="run-exp5-online",
-        profile=profile,
-        output_root=output_root,
-        resume=resume,
-    )
-    formal_kwargs = dict(formal.keyword_arguments)
-    catalog_manifest = formal_kwargs["catalog_manifest"]
-    canonical_plans = tuple(formal_kwargs["dispatch_plans"])
-    execution_configs = dict(formal_kwargs["ai_api_configs"])
+    prepared_scope_snapshot = None
+    if results_first_scope_preparation_root is None:
+        formal = build_epd027_formal_service_authority(
+            command="run-exp5-online",
+            profile=profile,
+            output_root=output_root,
+            resume=resume,
+        )
+        formal_kwargs = dict(formal.keyword_arguments)
+        catalog_manifest = formal_kwargs["catalog_manifest"]
+        canonical_plans = tuple(formal_kwargs["dispatch_plans"])
+        execution_configs = dict(formal_kwargs["ai_api_configs"])
+        transport = formal_kwargs["transport"]
+    else:
+        from tokenshare.experiments.run_paper_pipeline import (
+            load_results_first_closure_replay_snapshot,
+        )
+
+        preparation_root = Path(results_first_scope_preparation_root).resolve(
+            strict=False
+        )
+        manifest_path = (
+            preparation_root / "exp4_excluded_scope_preparation.v1.json"
+        )
+        try:
+            preparation = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("results-first scope preparation is missing or invalid") from exc
+        if (
+            not isinstance(preparation, Mapping)
+            or preparation.get("schema_version")
+            != "tokenshare.exp4_excluded_results_first_preparation.v1"
+            or preparation.get("selection")
+            not in {
+                "representative_exp1_exp3_exp5",
+                "full_exp1_exp3_exp5",
+            }
+            or preparation.get("exp4_excluded") is not True
+            or preparation.get("excluded_experiment_ids")
+            != ["exp4_real_ai_protocol_ablation"]
+            or preparation.get("provider_calls_made") != 0
+            or not isinstance(preparation.get("source_snapshot_root"), str)
+        ):
+            raise ValueError("results-first scope preparation identity is invalid")
+        source_root = Path(preparation["source_snapshot_root"]).resolve(
+            strict=False
+        )
+        snapshot = load_results_first_closure_replay_snapshot(
+            output_root=source_root,
+        )
+        if (
+            preparation.get("source_snapshot_digest")
+            != snapshot.coverage.source_snapshot.snapshot_digest
+            or preparation.get("source_bank_terminal_entry_count") != 90
+            or preparation.get("condition_count") != 115
+            or preparation.get("root_run_count") != 115
+        ):
+            raise ValueError("results-first scope preparation snapshot binding drift")
+        catalog_manifest = snapshot.catalog_manifest
+        canonical_plans = ()
+        prepared_scope_snapshot = snapshot
+        cohort = load_model_endpoint_cohort(DEFAULT_EXP5_MODEL_COHORT)
+        entry_map = load_model_entry_map(DEFAULT_EXP5_MODEL_ENTRY_MAP)
+        provider_configs = load_provider_config_map(
+            {"siliconflow": DEFAULT_EXP5_PROVIDER_CONFIG}
+        )
+        model_preflight_current = _build_current_exp5_execution_preflight(
+            cohort=cohort,
+            entry_map=entry_map,
+            provider_configs=provider_configs,
+            require_smoke_evidence=False,
+            smoke_evidence_bundle=None,
+        )
+        if model_preflight_current.get("status") != "planned":
+            raise ValueError("current Exp5 cohort preflight is not planned")
+        execution_configs = {
+            **provider_configs,
+            APPROVED_ENDPOINT_BINDINGS_KEY: {
+                "exp5_real_ai_model_endpoint_comparison": model_preflight_current
+            },
+        }
+        transport = _ProviderFamilyTransportRouter(
+            provider_family_by_entry_id=(
+                _provider_family_bindings_from_execution_configs(execution_configs)
+            )
+        )
     model_preflight = execution_configs[APPROVED_ENDPOINT_BINDINGS_KEY][
         "exp5_real_ai_model_endpoint_comparison"
     ]
+    planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+    suite_scale_profile = load_paper_suite_scale_profile(
+        Path(profile.authorities.paper_suite_scale_profile_path)
+    )
+    lean_3x3_matrix = build_lean_3x3_matrix_plan(
+        catalog_manifest=catalog_manifest
+    )
+    if prepared_scope_snapshot is not None:
+        canonical_plans = build_gate_c_dispatch_plans(
+            catalog_manifest=catalog_manifest,
+            lean_3x3_matrix=lean_3x3_matrix,
+            experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+            baseline_endpoint_binding=_baseline_endpoint_binding(planning_profile),
+            model_endpoint_cohort_preflight=model_preflight,
+            paper_suite_scale_profile=suite_scale_profile,
+            output_root=Path(output_root).resolve(strict=False),
+        )
     smoke_profile = load_paper_smoke_profile(
-        Path("benchmarks/paper/paper_smoke_exp5_profile.v3.json")
+        Path("benchmarks/paper/paper_smoke_exp5_profile.v4.json")
     )
     execution_plan = resolve_paper_smoke_execution_plan(
         profile=smoke_profile,
@@ -1720,13 +1873,6 @@ def build_epd027_capability_smoke_service_authority(
             item.case_id: estimated_ai_units_for_case(cases_by_id[item.case_id])
             for item in execution_plan.items
         }
-    )
-    planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
-    suite_scale_profile = load_paper_suite_scale_profile(
-        Path(profile.authorities.paper_suite_scale_profile_path)
-    )
-    lean_3x3_matrix = build_lean_3x3_matrix_plan(
-        catalog_manifest=catalog_manifest
     )
     budget = plan_paper_suite(
         catalog_manifest=catalog_manifest,
@@ -1776,11 +1922,43 @@ def build_epd027_capability_smoke_service_authority(
         },
         budget_approval_required=True,
     )
+    from tokenshare.experiments.paper_formal_callbacks import (
+        DeferredPaperExp5LedgerRootCallbackFactory,
+    )
+    from tokenshare.experiments.paper_formal_plan import (
+        freeze_paper_exp5_capability_smoke_coverage,
+        freeze_paper_formal_prepared_request_inventory,
+    )
+
+    capability_coverage = freeze_paper_exp5_capability_smoke_coverage(
+        dispatch_plans=execution_plan.dispatch_plans,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+        ai_api_configs=execution_configs,
+        root_case_filter=execution_plan.root_case_filter,
+    )
+    capability_inventory = freeze_paper_formal_prepared_request_inventory(
+        snapshot=capability_coverage.source_snapshot,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=execution_configs,
+        planning_artifact_root=(
+            Path(output_root).resolve(strict=False)
+            / "exp5-capability-prepared-inventory"
+        ),
+    )
+    capability_root_callback_factory = DeferredPaperExp5LedgerRootCallbackFactory(
+        ledger_path=(
+            Path(output_root).resolve(strict=False) / "exp5_online_budget.v1.sqlite3"
+        ),
+        full_prepared_inventory=capability_inventory,
+        coverage=capability_coverage,
+        ai_api_configs=execution_configs,
+    )
     execution_transport, _limiter = _exp5_v3_smoke_execution_transport(
         profile=smoke_profile,
         execution_plan=execution_plan,
         model_endpoint_cohort_preflight=model_preflight,
-        transport=formal_kwargs["transport"],
+        transport=transport,
         ai_api_configs=execution_configs,
     )
     receipt = getattr(paid_authorization, "receipt", None)
@@ -1793,6 +1971,9 @@ def build_epd027_capability_smoke_service_authority(
         "budget_digest": budget.budget_digest,
         "receipt_digest": getattr(receipt, "receipt_digest", None),
         "output_marker_digest": getattr(marker, "marker_digest", None),
+        "paid_output_binding_marker": (
+            None if marker is None else marker.to_dict()
+        ),
     }
     return build_paper_smoke_service_authority(
         scope="exp5_capability_smoke",
@@ -1808,6 +1989,7 @@ def build_epd027_capability_smoke_service_authority(
             "max_total_tokens": budget.token_upper_bound,
             "max_cost_estimate": budget.cost_upper_bound,
         },
+        online_root_callback_factory=capability_root_callback_factory,
         resume=resume,
         launch_manifest=launch_manifest,
         authorization_budget_digest=profile.budget_digest,
@@ -1940,6 +2122,15 @@ class _Exp5V3SharedProviderTransport:
         if callable(resolver):
             return resolver(provider_family)
         return self._delegate
+
+    def tokenshare_real_transport_for_provider(self, provider_family: str):
+        """仅供 adapter 审计被 limiter 包装前的真实 provider transport。"""
+
+        resolver = getattr(self._delegate, "tokenshare_transport_for_provider", None)
+        resolved = resolver(provider_family) if callable(resolver) else self._delegate
+        if resolved is None:
+            raise ValueError("Exp5 scheduled provider router returned no transport")
+        return resolved
 
     def post_chat_completion(
         self,
@@ -2414,6 +2605,39 @@ def main(
                     ),
                     "provider_calls_made": 0,
                 },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 3
+
+    if (
+        args.real_transport
+        and not args.plan_only
+        and not args.pilot
+        and not args.replay_only
+        and args.smoke_profile is None
+    ):
+        print(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "failure_kind": "legacy_direct_paid_execution_deauthorized",
+                    "message": (
+                        "paid formal execution must use `run-results-first` so "
+                        "full and representative selections share one prepared "
+                        "inventory, atomic ledger, and results-first service"
+                    ),
+                    "provider_calls_made": None,
+                    "provider_calls_missing_reason": (
+                        "legacy_direct_path_has_no_atomic_ledger"
+                    ),
+                    "total_current_spend": None,
+                    "total_spend_missing_reason": (
+                        "legacy_direct_path_has_no_atomic_ledger"
+                    ),
+                },
+                ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
             )
@@ -3035,7 +3259,14 @@ def main(
                         "status": "blocked",
                         **error.to_summary(),
                         "message": str(error),
-                        "provider_calls_made": 0,
+                        "provider_calls_made": None,
+                        "provider_calls_missing_reason": (
+                            "formal_runner_ledger_accounting_unavailable"
+                        ),
+                        "total_current_spend": None,
+                        "total_spend_missing_reason": (
+                            "formal_runner_ledger_accounting_unavailable"
+                        ),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -5242,7 +5473,7 @@ def _model_endpoint_cohort_preflight_for_suite(
             if require_smoke_evidence and smoke_evidence_bundle is not None
             else None
         )
-        preflight = build_model_endpoint_cohort_preflight(
+        preflight = _build_current_exp5_cohort_preflight(
             cohort=cohort,
             entry_map=entry_map,
             provider_configs=provider_configs,
@@ -5264,6 +5495,149 @@ def _model_endpoint_cohort_preflight_for_suite(
             ),
             cohort,
         )
+
+
+def _build_current_exp5_cohort_preflight(
+    *,
+    cohort: dict,
+    entry_map: dict,
+    provider_configs: dict,
+    require_smoke_evidence: bool,
+    smoke_evidence_bundle: Mapping[str, object] | None,
+    api_key_presence_resolver=None,
+) -> dict:
+    """使用冻结正式 as-of 构造 Exp5 preflight；调用者不能注入旧日期。"""
+
+    preflight = build_model_endpoint_cohort_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=provider_configs,
+        require_smoke_evidence=require_smoke_evidence,
+        smoke_evidence_bundle=smoke_evidence_bundle,
+        api_key_presence_resolver=api_key_presence_resolver,
+        pricing_freshness_as_of=EXP5_PRICING_FRESHNESS_AS_OF,
+    )
+    validate_exp5_pricing_freshness_evidence(preflight)
+    return preflight
+
+
+def _build_current_exp5_execution_preflight(
+    *,
+    cohort: dict,
+    entry_map: dict,
+    provider_configs: dict,
+    require_smoke_evidence: bool = False,
+    smoke_evidence_bundle: Mapping[str, object] | None = None,
+) -> dict:
+    """构造当前 Exp5 binding；只把缺 secret 作为结构性预检结果保留。"""
+
+    preflight = _build_current_exp5_cohort_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=provider_configs,
+        require_smoke_evidence=require_smoke_evidence,
+        smoke_evidence_bundle=smoke_evidence_bundle,
+        api_key_presence_resolver=lambda _name: False,
+    )
+    member_plans = preflight.get("member_plans")
+    ineligible = preflight.get("ineligible_members")
+    expected_presecret_reasons = {"missing_api_key_env"}
+    if not isinstance(member_plans, Mapping) or not isinstance(ineligible, list):
+        raise ValueError("Exp5 v3 structural preflight is malformed")
+    if len(ineligible) != len(member_plans) or any(
+        not isinstance(item, Mapping)
+        or set(item.get("blocked_reasons", ())) != expected_presecret_reasons
+        for item in ineligible
+    ):
+        raise ValueError("Exp5 v3 structural preflight has non-secret failures")
+    for member_plan in member_plans.values():
+        if not isinstance(member_plan, dict) or set(
+            member_plan.get("blocked_reasons", ())
+        ) != expected_presecret_reasons:
+            raise ValueError("Exp5 v3 member structural preflight failed")
+        member_plan["api_key_env"] = "SILICONFLOW_API_KEY"
+        member_plan["status"] = "planned"
+        member_plan["blocked_reasons"] = []
+    preflight.update(
+        {
+            "status": "planned",
+            "paper_eligible_possible": True,
+            "blocked_reason": None,
+            "ineligibility_reasons": [],
+            "ineligible_members": [],
+        }
+    )
+    return preflight
+
+
+def _pricing_refresh_execution_identity(config: object) -> str:
+    """返回排除 pricing 后的完整执行身份，供 frozen/current 配置比较。"""
+
+    to_safe_dict = getattr(config, "to_safe_dict", None)
+    if not callable(to_safe_dict):
+        raise TypeError("pricing refresh config must expose to_safe_dict")
+    body = to_safe_dict()
+    if not isinstance(body, Mapping):
+        raise ValueError("pricing refresh config body is invalid")
+    identity = dict(body)
+    raw_entries = identity.get("entries")
+    if not isinstance(raw_entries, list) or not raw_entries:
+        raise ValueError("pricing refresh config entries are invalid")
+    entries: list[dict[str, object]] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, Mapping):
+            raise ValueError("pricing refresh config entry is invalid")
+        entry = dict(raw_entry)
+        entry.pop("pricing", None)
+        entries.append(entry)
+    identity["entries"] = entries
+    return digest_json(identity)
+
+
+def _validate_pricing_refresh_execution_identity(
+    *,
+    base_ai_api_configs: Mapping[str, object],
+    provider_configs: Mapping[str, object],
+) -> None:
+    """只允许受批准 provider config 的 pricing 改变。"""
+
+    for provider_config_id, current_config in provider_configs.items():
+        frozen_config = base_ai_api_configs.get(provider_config_id)
+        if frozen_config is None:
+            raise ValueError("pricing refresh source provider config is unavailable")
+        if _pricing_refresh_execution_identity(
+            frozen_config
+        ) != _pricing_refresh_execution_identity(current_config):
+            raise ValueError("pricing refresh execution identity drift")
+
+
+def refresh_results_first_exp5_execution_authority(
+    *,
+    base_ai_api_configs: Mapping[str, object],
+    cohort: dict,
+    entry_map: dict,
+    provider_configs: dict,
+) -> dict[str, object]:
+    """复用旧 source bank，但用当前注册 config 重建唯一 Exp5 binding。"""
+
+    if not isinstance(base_ai_api_configs, Mapping):
+        raise TypeError("results-first base API configs must be a mapping")
+    _validate_pricing_refresh_execution_identity(
+        base_ai_api_configs=base_ai_api_configs,
+        provider_configs=provider_configs,
+    )
+    current_preflight = _build_current_exp5_execution_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=provider_configs,
+    )
+    refreshed: dict[str, object] = dict(base_ai_api_configs)
+    refreshed.update(provider_configs)
+    existing_bindings = refreshed.get(APPROVED_ENDPOINT_BINDINGS_KEY)
+    bindings = dict(existing_bindings) if isinstance(existing_bindings, Mapping) else {}
+    bindings["exp5_real_ai_model_endpoint_comparison"] = current_preflight
+    refreshed[APPROVED_ENDPOINT_BINDINGS_KEY] = bindings
+    return refreshed
 
 
 def _blocked_model_endpoint_cohort_preflight(

@@ -232,6 +232,9 @@ def _observation(
     provider_refs: list[ArtifactIdentitySnapshot] = []
     source_locators: list[ExternalBankObjectLocator] = []
     evidence_class = metric.evidence_classes[0]
+    required_current_provider_roles, required_source_bank_roles = (
+        metric.required_roles_for(evidence_class)
+    )
     for member_id in denominator:
         if evidence_class == "online_real_provider":
             member_facts[member_id] = {
@@ -240,7 +243,7 @@ def _observation(
             }
             provider_refs.extend(
                 _provider_ref(role, member_id, index)
-                for index, role in enumerate(metric.required_current_provider_roles)
+                for index, role in enumerate(required_current_provider_roles)
             )
         elif evidence_class == "real_model_trace_protocol_run":
             member_facts[member_id] = {
@@ -249,7 +252,7 @@ def _observation(
             }
             source_locators.extend(
                 _source_locator(role, member_id, index)
-                for index, role in enumerate(metric.required_source_bank_roles)
+                for index, role in enumerate(required_source_bank_roles)
             )
     provisional = PaperMetricObservation(
         observation_id=_DIGEST,
@@ -280,10 +283,10 @@ def _observation(
         row_facts={},
         member_facts_by_id=member_facts,
         verified_observations=(),
-        required_current_provider_roles=metric.required_current_provider_roles,
-        required_source_bank_roles=metric.required_source_bank_roles,
-        covered_current_provider_roles=metric.required_current_provider_roles,
-        covered_source_bank_roles=metric.required_source_bank_roles,
+        required_current_provider_roles=required_current_provider_roles,
+        required_source_bank_roles=required_source_bank_roles,
+        covered_current_provider_roles=required_current_provider_roles,
+        covered_source_bank_roles=required_source_bank_roles,
         not_applicable_evidence_roles=(
             ("source_bank_object_locators",)
             if evidence_class == "online_real_provider"

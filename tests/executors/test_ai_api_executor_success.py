@@ -219,6 +219,8 @@ def test_ai_api_executor_persists_raw_parsed_provenance_usage_and_cost(
     assert submission.candidate_output_refs["answer"] == submission.parsed_output_ref
     assert submission.usage_summary["total_tokens"] == 15
     assert submission.usage_summary["provider_attempt_count"] == 1
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["provider_attempt_count"] == 1
     assert submission.usage_summary["cost_estimate_status"] == "estimated"
     assert store.verify(submission.raw_output_ref)
     assert store.verify(submission.parsed_output_ref)

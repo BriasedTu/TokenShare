@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from tokenshare.core.models import (
@@ -15,6 +16,8 @@ from tokenshare.experiments.paper_catalog import (
 )
 from tokenshare.executors.ai_api import prepare_ai_api_outbound_request
 from tokenshare.executors.ai_api_config import load_ai_api_config
+from tokenshare.executors.contracts import ExecutionSubmission
+from tokenshare.plugins.lean_proof.prompt_builder import PROOF_CANDIDATE_OUTPUT_NAME
 from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -245,6 +248,116 @@ def test_lemma_graph_planning_request_freezes_the_exact_runtime_outbound_body(
     assert planning_request.request_id != runtime_request.request_id
     assert planning_request.input_artifact_refs.keys() < (
         runtime_request.input_artifact_refs.keys()
+    )
+
+
+def test_lean_verification_rejects_a_raw_wrapper_that_replaces_checked_candidate(
+    tmp_path: Path,
+) -> None:
+    case = _simple_case("lean_easy_01")
+    store = ArtifactStore(tmp_path / "artifacts")
+    adapter = LeanRuntimeAdapter(
+        provider_family="deepseek",
+        environment_manifest=default_lean_paper_environment_manifest(),
+        checker=RecordingLeanChecker(),
+        created_at=NOW,
+    )
+    unit = adapter.plan_units(case, artifact_store=store)[0]
+    attempt = Attempt(
+        attempt_id="attempt_checked_identity",
+        task_id=unit.task_id,
+        unit_id=unit.unit_id,
+        lease_id="lease_checked_identity",
+        client_id="worker_lean_ai",
+        state=AttemptState.RUNNING,
+        attempt_kind="primary",
+        created_at=NOW,
+        started_at=NOW,
+    )
+    lease = Lease(
+        lease_id="lease_checked_identity",
+        task_id=unit.task_id,
+        unit_id=unit.unit_id,
+        attempt_id=attempt.attempt_id,
+        client_id="worker_lean_ai",
+        state=LeaseState.ACTIVE,
+        fencing_token="fence_checked_identity",
+        issued_at=NOW,
+        expires_at="2026-07-14T00:05:00Z",
+        last_heartbeat_at=None,
+        heartbeat_count=0,
+        lease_kind="execution",
+        terminated_at=None,
+        terminated_reason=None,
+        metadata={},
+    )
+    request = adapter.build_execution_request(unit, attempt=attempt, lease=lease)
+    theorem_payload = json.loads(
+        store.read_bytes(request.input_artifact_refs["child_theorem_payload"])
+    )
+    candidate_ref = store.save_json(
+        {
+            "schema_version": "lean_proof.proof_candidate.v1",
+            "proof_candidate_id": "candidate-checked",
+            "theorem_payload_digest": theorem_payload["payload_digest"],
+            "proof_source": "by trivial",
+            "created_at": NOW,
+        },
+        artifact_id="candidate_checked",
+        artifact_type="LeanProofCandidate",
+        artifact_schema_id="lean_proof.proof_candidate",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at=NOW,
+    )
+    submission = ExecutionSubmission(
+        submission_id="submission_checked_identity",
+        request_id=request.request_id,
+        task_id=request.task_id,
+        unit_id=request.unit_id,
+        attempt_id=request.attempt_id,
+        lease_id=request.lease_id,
+        fencing_token=request.fencing_token,
+        executor_id=str(request.executor["executor_id"]),
+        executor_version=str(request.executor["executor_version"]),
+        result_kind="succeeded",
+        raw_output_ref=candidate_ref,
+        parsed_output_ref=candidate_ref,
+        candidate_output_refs={PROOF_CANDIDATE_OUTPUT_NAME: candidate_ref},
+        parse_failure_ref=None,
+        log_ref=None,
+        environment_ref=request.environment_ref,
+        environment_summary={"runtime": "test"},
+        provenance_ref=None,
+        usage_summary={"provider_attempt_count": 0},
+        error=None,
+        submitted_at=NOW,
+    )
+    normalized = adapter.normalize_proof_submission(submission, request=request)
+    checked_report = adapter.verify_submission(normalized, unit=unit)
+    assert checked_report.status == "passed", checked_report.to_dict()
+
+    raw_wrapper_ref = store.save_external_trace_wrapper(
+        {
+            "schema_version": "PreparedTraceDelivery.v1",
+            "attempt_id": attempt.attempt_id,
+        },
+        artifact_id="raw_trace_wrapper",
+        created_at=NOW,
+    )
+    raw_only_submission = replace(
+        normalized,
+        parsed_output_ref=raw_wrapper_ref,
+        candidate_output_refs={"lean_proof_artifact": raw_wrapper_ref},
+    )
+
+    report = adapter.verify_submission(raw_only_submission, unit=unit)
+
+    assert report.status == "rejected"
+    assert (
+        report.metadata["plugin_domain_layer"]["reason_code"]
+        == "lean_checker_candidate_identity_mismatch"
     )
 
 

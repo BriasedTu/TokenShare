@@ -34,7 +34,38 @@
       "experiment_id": "experiment_1",
       "output_path": "metrics/paper_table_feasibility.csv",
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
+      ],
+      "evidence_role_routes": [
+        {
+          "evidence_class": "online_real_provider",
+          "required_current_provider_roles": [
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "provider_attempt",
+            "model_record"
+          ],
+          "required_source_bank_roles": []
+        },
+        {
+          "evidence_class": "real_model_trace_protocol_run",
+          "required_current_provider_roles": [],
+          "required_source_bank_roles": [
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "acquisition_attempt",
+            "model_record"
+          ]
+        }
       ],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kinds": [
@@ -4376,18 +4407,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -4450,18 +4473,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -4524,18 +4539,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -4602,18 +4609,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -4688,18 +4687,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -4770,18 +4761,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -4849,18 +4832,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -4928,18 +4903,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -5007,18 +4974,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -5090,18 +5049,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -5167,18 +5118,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -5241,18 +5184,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -5315,18 +5250,10 @@
         ]
       },
       "evidence_classes": [
-        "online_real_provider"
+        "online_real_provider",
+        "real_model_trace_protocol_run"
       ],
-      "required_current_provider_roles": [
-        "request_body",
-        "raw_output_or_provider_failure",
-        "provenance",
-        "usage_status",
-        "latency",
-        "pricing",
-        "provider_attempt",
-        "model_record"
-      ],
+      "required_current_provider_roles": [],
       "required_source_bank_roles": [],
       "row_scope": "domain_x_difficulty_x_topic_family_x_repeat",
       "row_kind": "condition_summary",
@@ -7459,8 +7386,13 @@
         },
         {
           "trigger": "zero_denominator",
-          "action": "null_and_publish_blocked",
+          "action": "null_with_explicit_reason",
           "reason": "zero_denominator"
+        },
+        {
+          "trigger": "inconsistent_worker_time_evidence",
+          "action": "null_and_publish_blocked",
+          "reason": "inconsistent_worker_time_evidence"
         }
       ],
       "pair_key": [],
@@ -15860,5 +15792,5 @@
     "composite_model_score"
   ],
   "renderer_only_derived_metrics_forbidden": true,
-  "contract_digest": "sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e"
+  "contract_digest": "sha256:fc0f92fc36c3a9166c6c091c6826776b136411ef6fb5010ccb393eb4d1455183"
 }

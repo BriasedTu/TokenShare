@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import tokenshare.executors.response_bank as response_bank_module
 from tokenshare.executors.ai_api_replay import replay_response_bank_trace
 from tokenshare.executors.ai_api_request_identity import PreparedOutboundRequestFactory
 from tokenshare.executors.response_bank import (
@@ -72,7 +73,7 @@ def test_results_first_manifest_is_explicit_and_legacy_paid_bytes_do_not_change(
     parsed = ResponseBankManifest.from_dict(facility.to_dict())
 
     assert isinstance(parsed, ResultsFirstResponseBankManifest)
-    assert parsed.authorization_kind == "user_authorized_smoke_facility"
+    assert parsed.authorization_kind == "user_authorized_results_first"
     assert "created_by_paid_receipt_digest" not in parsed.to_dict()
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -248,6 +249,28 @@ def _wrapper(manifest, row, entry):
     )
 
 
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix())
+        if path.is_file() and not path.is_symlink()
+    }
+
+
+def _with_derivation(root: Path) -> None:
+    (root / "exp2_projection_derivation.v1.json").write_bytes(
+        json.dumps(
+            {
+                "schema_version": "tokenshare.test_exp2_projection_derivation.v1",
+                "provider_calls_made": 0,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+
+
 def test_manifest_inventory_entry_and_current_wrapper_v1_exact_fields(tmp_path) -> None:
     _, manifest, row, entry, _ = _bank(tmp_path)
     wrapper = _wrapper(manifest, row, entry)
@@ -411,6 +434,244 @@ def test_external_root_is_process_local_and_marker_manifest_bound(tmp_path) -> N
     with pytest.raises(ValueError, match="root binding"):
         ResponseBankResolver.open(moved)
     assert resolver.root_path == root.resolve()
+
+
+def test_canonical_relocation_rebinds_only_root_fields_and_strictly_resolves(
+    tmp_path: Path,
+) -> None:
+    source, source_manifest, _row_value, _entry, _objects_value = _bank(tmp_path)
+    _with_derivation(source)
+    raw_copy = tmp_path / "raw-copy"
+    shutil.copytree(source, raw_copy)
+    with pytest.raises(ValueError, match="root binding"):
+        ResponseBankResolver.open(raw_copy)
+
+    target = tmp_path / "relocated-bank"
+    evidence = response_bank_module.relocate_response_bank_canonically(
+        source_root=source,
+        target_root=target,
+    )
+    relocated = ResponseBankResolver.open(target)
+    source_resolver = ResponseBankResolver.open(source)
+    source_tree = _tree_bytes(source)
+    target_tree = _tree_bytes(target)
+    source_manifest_body = json.loads(source_tree.pop("manifest.v1.json"))
+    target_manifest_body = json.loads(target_tree.pop("manifest.v1.json"))
+    source_marker = json.loads(
+        source_tree.pop("response_bank_root_marker.v1.json")
+    )
+    target_marker = json.loads(
+        target_tree.pop("response_bank_root_marker.v1.json")
+    )
+
+    assert target_tree == source_tree
+    assert {
+        key
+        for key in source_manifest_body
+        if source_manifest_body[key] != target_manifest_body[key]
+    } == {"root_binding_marker_digest"}
+    assert {
+        key for key in source_marker if source_marker[key] != target_marker[key]
+    } == {"root_identity_digest", "marker_digest"}
+    assert relocated.index.manifest.manifest_digest == source_manifest.manifest_digest
+    assert relocated.index.inventory_rows == source_resolver.index.inventory_rows
+    assert relocated.index.entries == source_resolver.index.entries
+    for entry in relocated.index.entries:
+        for locator in entry.object_locators:
+            assert relocated.read_verified(locator) == source_resolver.read_verified(locator)
+    assert set(evidence.to_dict()) == {
+        "schema_version",
+        "manifest_digest",
+        "manifest_file_sha256",
+        "marker_digest",
+        "root_identity_digest",
+        "root_free_tree_digest",
+        "root_free_file_count",
+    }
+    assert evidence.manifest_digest == source_manifest.manifest_digest
+    assert evidence.marker_digest == target_marker["marker_digest"]
+    assert evidence.root_identity_digest == target_marker["root_identity_digest"]
+    assert evidence.root_free_file_count == len(target_tree) + 1
+
+
+def test_canonical_relocation_evidence_is_recomputed_by_strict_readonly_inspection(
+    tmp_path: Path,
+) -> None:
+    source, _source_manifest, _row_value, _entry, _objects_value = _bank(tmp_path)
+    _with_derivation(source)
+    target = tmp_path / "relocated-bank"
+    relocated = response_bank_module.relocate_response_bank_canonically(
+        source_root=source,
+        target_root=target,
+    )
+
+    inspected = response_bank_module.inspect_response_bank_canonical_relocation(
+        root_path=target,
+    )
+
+    assert inspected == relocated
+
+
+@pytest.mark.parametrize("target_kind", ("same", "descendant", "ancestor"))
+def test_canonical_relocation_rejects_same_or_overlapping_root_before_write(
+    target_kind: str,
+    tmp_path: Path,
+) -> None:
+    fixture_root = tmp_path / "fixture"
+    source, _manifest, _row_value, _entry, _objects_value = _bank(fixture_root)
+    target = {
+        "same": source,
+        "descendant": source / "nested-target",
+        "ancestor": fixture_root,
+    }[target_kind]
+    before = _tree_bytes(fixture_root)
+
+    with pytest.raises(ValueError, match="distinct|overlap"):
+        response_bank_module.relocate_response_bank_canonically(
+            source_root=source,
+            target_root=target,
+        )
+
+    assert _tree_bytes(fixture_root) == before
+
+
+@pytest.mark.parametrize(
+    "drift_kind",
+    ("extra", "missing", "marker", "manifest_extra"),
+)
+def test_canonical_relocation_rejects_complete_target_drift_before_write(
+    drift_kind: str,
+    tmp_path: Path,
+) -> None:
+    source, _manifest, _row_value, _entry, _objects_value = _bank(tmp_path)
+    _with_derivation(source)
+    target = tmp_path / "relocated-bank"
+    response_bank_module.relocate_response_bank_canonically(
+        source_root=source,
+        target_root=target,
+    )
+    if drift_kind == "extra":
+        (target / "unexpected.bin").write_bytes(b"unexpected")
+    elif drift_kind == "missing":
+        object_path = next((target / "objects").iterdir())
+        object_path.unlink()
+    elif drift_kind == "marker":
+        marker_path = target / "response_bank_root_marker.v1.json"
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["root_identity_digest"] = "sha256:" + "f" * 64
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    else:
+        manifest_path = target / "manifest.v1.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["unexpected"] = True
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    before = _tree_bytes(target)
+
+    with pytest.raises((ValueError, ResponseBankBlockedError)):
+        response_bank_module.relocate_response_bank_canonically(
+            source_root=source,
+            target_root=target,
+        )
+
+    assert _tree_bytes(target) == before
+
+
+@pytest.mark.parametrize("partial_kind", ("wrong", "extra"))
+def test_canonical_relocation_rejects_invalid_partial_target_before_write(
+    partial_kind: str,
+    tmp_path: Path,
+) -> None:
+    source, _manifest, _row_value, _entry, _objects_value = _bank(tmp_path)
+    target = tmp_path / "partial-target"
+    target.mkdir()
+    if partial_kind == "wrong":
+        (target / "inventory.v1.json").write_bytes(b"wrong")
+    else:
+        (target / "unexpected.bin").write_bytes(b"unexpected")
+    before = _tree_bytes(target)
+
+    with pytest.raises(ValueError):
+        response_bank_module.relocate_response_bank_canonically(
+            source_root=source,
+            target_root=target,
+        )
+
+    assert _tree_bytes(target) == before
+
+
+def test_canonical_relocation_rejects_symlink_target_before_write(
+    tmp_path: Path,
+) -> None:
+    source, _manifest, _row_value, _entry, _objects_value = _bank(tmp_path)
+    real_target = tmp_path / "real-target"
+    real_target.mkdir()
+    target = tmp_path / "linked-target"
+    try:
+        target.symlink_to(real_target, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink creation is unavailable")
+    before = _tree_bytes(real_target)
+
+    with pytest.raises(ValueError, match="symlink"):
+        response_bank_module.relocate_response_bank_canonically(
+            source_root=source,
+            target_root=target,
+        )
+
+    assert _tree_bytes(real_target) == before
+
+
+def test_canonical_relocation_resumes_exact_partial_and_commits_marker_last(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, _manifest, _row_value, _entry, _objects_value = _bank(tmp_path)
+    _with_derivation(source)
+    target = tmp_path / "relocated-bank"
+    real_write = response_bank_module._write_relocation_bytes_once
+    first_write_count = 0
+
+    def _crash_after_three(path: Path, payload: bytes) -> None:
+        nonlocal first_write_count
+        if first_write_count == 3:
+            raise RuntimeError("simulated relocation crash")
+        first_write_count += 1
+        real_write(path, payload)
+
+    monkeypatch.setattr(
+        response_bank_module,
+        "_write_relocation_bytes_once",
+        _crash_after_three,
+    )
+    with pytest.raises(RuntimeError, match="simulated relocation crash"):
+        response_bank_module.relocate_response_bank_canonically(
+            source_root=source,
+            target_root=target,
+        )
+    assert target.is_dir()
+    assert not (target / "manifest.v1.json").exists()
+    assert not (target / "response_bank_root_marker.v1.json").exists()
+
+    writes: list[Path] = []
+
+    def _recording_write(path: Path, payload: bytes) -> None:
+        writes.append(path)
+        real_write(path, payload)
+
+    monkeypatch.setattr(
+        response_bank_module,
+        "_write_relocation_bytes_once",
+        _recording_write,
+    )
+    evidence = response_bank_module.relocate_response_bank_canonically(
+        source_root=source,
+        target_root=target,
+    )
+
+    assert writes[-1] == target / "response_bank_root_marker.v1.json"
+    assert evidence.marker_digest == ResponseBankResolver.open(
+        target
+    ).index.manifest.root_binding_marker_digest
 
 
 def test_locator_stream_reads_and_hashes_bank_internal_object(tmp_path, monkeypatch) -> None:

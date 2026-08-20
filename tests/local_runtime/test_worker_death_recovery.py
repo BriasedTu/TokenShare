@@ -17,7 +17,10 @@ from tokenshare.local_runtime import (
     ThreadWorkerBackend,
     WorkerTerminationPolicy,
 )
-from tokenshare.local_runtime.contracts import WorkerCompletionSchedule
+from tokenshare.local_runtime.contracts import (
+    PreparedTraceDelivery,
+    WorkerCompletionSchedule,
+)
 from tokenshare.local_runtime.logical_scheduler import (
     LOGICAL_SOURCE_LATENCY_1X,
     LogicalSourceLatencyScheduler,
@@ -82,6 +85,51 @@ class _ProcessCaptureExecutor:
 
     def ingest_process_result(self, result) -> None:
         self.accepted_process_results.append(dict(result))
+
+
+class _PreparedTraceExecutor:
+    def __init__(self, *, provider_failure_planned_ai_unit_ids=()) -> None:
+        self._provider_failure_planned_ai_unit_ids = frozenset(
+            provider_failure_planned_ai_unit_ids
+        )
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        del submission_id, submitted_at
+        digest = "sha256:" + "1" * 64
+        planned_ai_unit_id = request.soft_hints.get("planned_ai_unit_id")
+        return PreparedTraceDelivery.create(
+            current_run_id="run_trace_progress",
+            task_id=request.task_id,
+            unit_id=request.unit_id,
+            attempt_id=request.attempt_id,
+            attempt_ordinal=0,
+            binding_digest="sha256:" + "2" * 64,
+            inference_request_digest="sha256:" + "3" * 64,
+            bank_root_id="bank_trace_progress",
+            manifest_digest="sha256:" + "4" * 64,
+            entry_id=f"entry_{request.attempt_id}",
+            source_terminal_kind=(
+                "provider_failure"
+                if planned_ai_unit_id
+                in self._provider_failure_planned_ai_unit_ids
+                else "success"
+            ),
+            source_bank_object_locators=(
+                {
+                    "bank_root_id": "bank_trace_progress",
+                    "manifest_digest": "sha256:" + "4" * 64,
+                    "entry_id": f"entry_{request.attempt_id}",
+                    "object_role": "raw_output",
+                    "object_digest": digest,
+                },
+            ),
+            logical_start_ms=0,
+            source_latency_ms=1,
+            parser_input_media_type="application/json",
+            parser_input_digest="sha256:" + "5" * 64,
+            child_worker_id="pending-parent-process",
+            child_completion_sequence=0,
+        )
 
 
 def _restore_bootstrap_retry_executor(
@@ -510,6 +558,75 @@ def test_process_backend_arms_worker_death_only_after_real_completed_progress(
     assert killed.fact.kill_progress_actual_ratio == pytest.approx(0.5)
     assert killed.fact.kill_progress_observed_at
     assert killed.fact.kill_progress_error is None
+
+
+def test_process_backend_counts_successful_prepared_trace_finish_before_p75_target(
+    tmp_path,
+) -> None:
+    del tmp_path
+    backend = ProcessWorkerBackend(
+        executor=_PreparedTraceExecutor(),
+        capacity=2,
+        submitted_at=lambda: "2026-07-25T00:00:00Z",
+        termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=("planned_1",),
+            termination_count_target=1,
+            kill_point="progress_75",
+            total_planned_ai_unit_count=2,
+            process_timeout_seconds=30.0,
+        ),
+    )
+
+    outcomes = backend.execute_batch(
+        (
+            _execution_request(0, planned_ai_unit_id="planned_0"),
+            _execution_request(1, planned_ai_unit_id="planned_1"),
+        )
+    )
+
+    assert outcomes[0].fact.result_kind == "prepared_trace_delivery"
+    assert outcomes[0].prepared_delivery is not None
+    assert outcomes[1].fact.result_kind == "worker_terminated"
+    assert outcomes[1].prepared_delivery is not None
+    assert outcomes[1].fact.kill_progress_completed_ai_unit_count == 2
+    assert outcomes[1].fact.kill_progress_total_ai_unit_count == 2
+    assert outcomes[1].fact.kill_progress_actual_ratio == pytest.approx(1.0)
+
+
+def test_process_backend_counts_provider_failure_trace_finish_before_p75_target(
+    tmp_path,
+) -> None:
+    del tmp_path
+    backend = ProcessWorkerBackend(
+        executor=_PreparedTraceExecutor(
+            provider_failure_planned_ai_unit_ids=("planned_0",)
+        ),
+        capacity=2,
+        submitted_at=lambda: "2026-07-25T00:00:00Z",
+        termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=("planned_1",),
+            termination_count_target=1,
+            kill_point="progress_75",
+            total_planned_ai_unit_count=2,
+            process_timeout_seconds=30.0,
+        ),
+    )
+
+    outcomes = backend.execute_batch(
+        (
+            _execution_request(0, planned_ai_unit_id="planned_0"),
+            _execution_request(1, planned_ai_unit_id="planned_1"),
+        )
+    )
+
+    assert outcomes[0].fact.result_kind == "prepared_trace_delivery"
+    assert outcomes[0].prepared_delivery is not None
+    assert outcomes[0].prepared_delivery.source_terminal_kind == "provider_failure"
+    assert outcomes[1].fact.result_kind == "worker_terminated"
+    assert outcomes[1].prepared_delivery is not None
+    assert outcomes[1].fact.kill_progress_completed_ai_unit_count == 2
+    assert outcomes[1].fact.kill_progress_total_ai_unit_count == 2
+    assert outcomes[1].fact.kill_progress_actual_ratio == pytest.approx(1.0)
 
 
 def test_process_backend_kills_each_frozen_target_before_reusing_replacement(

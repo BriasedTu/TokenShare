@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from copy import copy, deepcopy
 from dataclasses import replace
 import os
 from pathlib import Path
+import pickle
+import signal
+from threading import Event, Lock, Thread
+from time import monotonic, perf_counter, sleep
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,9 +17,11 @@ from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequestFactory,
 )
 from tokenshare.experiments.paper_budget import (
+    PaperExecutionBudgetProjection,
     build_exp5_v3_token_ceiling_mapping,
     load_exp1_pilot_profile,
     plan_paper_suite,
+    project_paper_execution_budget,
 )
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
 from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
@@ -21,9 +29,14 @@ from tokenshare.experiments.paper_experiment_contracts import (
     FrozenConditionSelectionBinding,
 )
 from tokenshare.experiments.paper_formal_plan import (
+    FormalConditionSnapshot,
+    FormalExecutionCoverage,
     FormalPlanSnapshot,
     FormalPreparedRequestInventory,
     FormalRepresentativeCoverage,
+    FormalRootSnapshot,
+    derive_paper_formal_exp4_excluded_coverage,
+    derive_paper_formal_full_coverage,
     derive_paper_formal_representative_coverage,
     freeze_formal_root_prepared_replacement_requests,
     freeze_formal_root_prepared_requests,
@@ -40,6 +53,7 @@ from tokenshare.experiments.paper_response_bank import (
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
 from decimal import Decimal
 import tokenshare.experiments.paper_formal_plan as formal_plan_module
+import tokenshare.experiments.paper_experiment_contracts as contracts_module
 import tokenshare.experiments.paper_response_bank as response_bank_module
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
@@ -53,6 +67,7 @@ from tokenshare.experiments.paper_exp3_fault_recovery import (
 from tokenshare.experiments.paper_faults import select_fault_targets
 from tokenshare.experiments.paper_models import digest_json
 from tokenshare.experiments.paper_model_policy import (
+    EXP5_PRICING_FRESHNESS_AS_OF,
     build_model_endpoint_cohort_preflight,
     load_model_endpoint_cohort,
     load_model_entry_map,
@@ -63,6 +78,18 @@ from tokenshare.experiments.paper_runner import (
     build_lean_3x3_matrix_plan,
 )
 from tokenshare.experiments.paper_suite_scale import load_paper_suite_scale_profile
+from tokenshare.plugins.factorization.models import RangeResult
+from tokenshare.plugins.factorization.schemas import RANGE_RESULT_FOUND_FACTOR
+from tokenshare.plugins.factorization.split_strategy import (
+    partition_candidate_ranges,
+    resolve_requested_child_count,
+)
+from tokenshare.plugins.factorization.validator import verify_range_result
+from tokenshare.plugins.factorization.runtime_adapter import (
+    FactorizationRuntimeAdapter,
+)
+from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
+from tokenshare.storage.artifacts import ArtifactStore
 
 
 EXPERIMENT_IDS = (
@@ -72,6 +99,100 @@ EXPERIMENT_IDS = (
     "exp4_real_ai_protocol_ablation",
     "exp5_real_ai_model_endpoint_comparison",
 )
+
+
+@pytest.mark.parametrize(
+    ("domain", "case_id", "expected"),
+    (
+        ("factorization", "factor-case", "paper_factorization_factor-case"),
+        ("lean_proof", "lean-case", "paper_lean_lean-case"),
+    ),
+)
+def test_formal_runtime_task_id_is_the_closed_shared_contract(
+    domain: str,
+    case_id: str,
+    expected: str,
+) -> None:
+    helper = getattr(contracts_module, "formal_runtime_task_id", None)
+    assert helper is not None
+    assert helper(domain, case_id) == expected
+
+
+@pytest.mark.parametrize(
+    ("domain", "case_id"),
+    (
+        ("unknown", "case"),
+        ("", "case"),
+        ("factorization", ""),
+        ("lean_proof", None),
+    ),
+)
+def test_formal_runtime_task_id_rejects_unknown_or_empty_identity(
+    domain: object,
+    case_id: object,
+) -> None:
+    helper = getattr(contracts_module, "formal_runtime_task_id", None)
+    assert helper is not None
+    with pytest.raises(ValueError):
+        helper(domain, case_id)
+
+
+def _verified_factor_success_indexes(case: dict) -> tuple[int, ...]:
+    requested = resolve_requested_child_count(case["split_params"])
+    partition = partition_candidate_ranges(
+        target_n=case["target_n"],
+        requested_child_count=requested,
+        max_children_per_unit=requested,
+        min_divisor=case["candidate_start"],
+        max_divisor=case["candidate_end"],
+    )
+    target = int(case["target_n"])
+    accepted_indexes: list[int] = []
+    for oracle_factor in case["oracle_prime_factors"]:
+        factor = int(oracle_factor["prime"])
+        for range_input in partition.ranges:
+            if not (
+                int(range_input.range_start)
+                <= factor
+                <= int(range_input.range_end)
+            ):
+                continue
+            candidate = RangeResult(
+                range_result_id=(
+                    f"coverage-probe:{case['case_id']}:{range_input.child_index}"
+                ),
+                result_kind=RANGE_RESULT_FOUND_FACTOR,
+                target_n=range_input.target_n,
+                range_start=range_input.range_start,
+                range_end=range_input.range_end,
+                coverage_id=range_input.coverage_id,
+                child_index=range_input.child_index,
+                partition_params_digest=range_input.partition_params_digest,
+                found_factor=str(factor),
+                cofactor=str(target // factor),
+                checked_divisor_count=(
+                    factor - int(range_input.range_start) + 1
+                ),
+                executor_summary={
+                    "executor": "deterministic_formal_coverage_probe",
+                    "bounded_range_only": True,
+                    "checked_start": int(range_input.range_start),
+                    "checked_end": factor,
+                },
+                created_at="1970-01-01T00:00:00Z",
+            )
+            if verify_range_result(
+                candidate.to_dict(),
+                child_input=range_input,
+            ).status == "passed":
+                accepted_indexes.append(range_input.child_index)
+    if not accepted_indexes:
+        raise AssertionError("formal Factor case has no verifier-accepted oracle factor")
+    return tuple(sorted(set(accepted_indexes)))
+
+
+def _verified_factor_success_index(case: dict) -> int:
+    return min(_verified_factor_success_indexes(case))
 
 
 @pytest.fixture(scope="module")
@@ -98,15 +219,346 @@ def formal_snapshot(formal_inputs):
     )
 
 
+@pytest.fixture(scope="module")
+def small_formal_preparation_inputs(tmp_path_factory: pytest.TempPathFactory):
+    """Build two production roots without expanding the 40,520-record suite."""
+
+    tmp_path = tmp_path_factory.mktemp("small-formal-preparation")
+    catalog = load_paper_catalogs(
+        factorization_path="benchmarks/paper/factorization_catalog.v2.jsonl",
+        lean_path="benchmarks/paper/lean_catalog.v1.jsonl",
+        lean_lemma_graph_path="benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl",
+    )
+    baseline_profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    baseline_identity = baseline_profile.model_endpoint_identity.to_dict()
+    baseline_binding = {
+        **baseline_identity,
+        "model_entry_id": baseline_identity["selected_entry_id"],
+        "request_controls": dict(EXP1_FORMAL_REQUEST_CONTROLS),
+    }
+    plan = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog,
+        lean_3x3_matrix=build_lean_3x3_matrix_plan(catalog_manifest=catalog),
+        experiment_ids=("exp1_real_ai_feasibility",),
+        baseline_endpoint_binding=baseline_binding,
+        model_endpoint_cohort_preflight=None,
+        paper_suite_scale_profile=load_paper_suite_scale_profile(
+            "benchmarks/paper/paper_suite_scale_profile.v1.json"
+        ),
+        output_root=tmp_path,
+    )[0]
+    bindings_by_id = {
+        binding.condition_id: binding
+        for binding in plan.condition_selection_bindings
+    }
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in (
+            catalog.factorization_cases
+            + catalog.lean_cases
+            + catalog.lean_lemma_graph_cases
+        )
+    }
+    configs = {
+        baseline_identity["provider_config_id"]: (
+            baseline_profile.source_provider_config
+        )
+    }
+    condition_rows = []
+    roots = []
+    for domain in ("factorization", "lean_proof"):
+        condition = next(
+            item
+            for item in plan.conditions
+            if item.domain == domain and item.repeat_id == 0
+        )
+        binding = bindings_by_id[condition.condition_id]
+        case_id = binding.selection.ordered_case_ids[0]
+        case = cases_by_id[case_id]
+        endpoint_controls = formal_plan_module._freeze_endpoint_controls(
+            condition=condition,
+            ai_api_configs=configs,
+        )
+        split_profile = formal_plan_module.build_paper_budget_split_profile(
+            case=dict(case),
+            condition=condition,
+            frozen_selection=binding.selection.to_dict(),
+        )
+        plugin_id, plugin_version = formal_plan_module._plugin_identity(domain)
+        condition_rows.append(
+            FormalConditionSnapshot(
+                condition=condition,
+                binding=binding,
+                endpoint_controls=endpoint_controls,
+            )
+        )
+        roots.append(
+            FormalRootSnapshot(
+                condition=condition,
+                binding=binding,
+                case_id=case_id,
+                case_record_digest=digest_json(case),
+                condition_digest=condition.condition_digest,
+                selection_digest=binding.selection.selection_digest,
+                seed=condition.seed,
+                repeat_id=condition.repeat_id,
+                split_profile_id=getattr(
+                    binding.selection,
+                    "split_profile_id",
+                    None,
+                ),
+                split_profile_digest=digest_json(split_profile),
+                planned_ai_unit_ids=tuple(
+                    str(unit_id) for unit_id in split_profile["ai_unit_order"]
+                ),
+                plugin_id=plugin_id,
+                plugin_version=plugin_version,
+                endpoint_controls=endpoint_controls,
+            )
+        )
+    snapshot = FormalPlanSnapshot(
+        conditions=tuple(condition_rows),
+        roots=tuple(roots),
+        condition_count=len(condition_rows),
+        root_run_count=len(roots),
+        first_attempt_ai_unit_count=sum(
+            len(root.planned_ai_unit_ids) for root in roots
+        ),
+        provider_calls_made=0,
+        budget_digest=digest_json({"kind": "focused_transient_planning"}),
+    )
+    return catalog, configs, snapshot
+
+
+def _minimal_formal_snapshot(*, budget_marker: str) -> FormalPlanSnapshot:
+    return FormalPlanSnapshot(
+        conditions=(),
+        roots=(),
+        condition_count=0,
+        root_run_count=0,
+        first_attempt_ai_unit_count=0,
+        provider_calls_made=0,
+        budget_digest=digest_json({"budget_marker": budget_marker}),
+    )
+
+
+def test_formal_snapshot_digest_is_transiently_memoized_for_reads_and_to_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _minimal_formal_snapshot(budget_marker="memo-read")
+    expected = digest_json(snapshot._body())
+    instance_state_before = dict(vars(snapshot))
+    real_digest_json = formal_plan_module.digest_json
+    compute_count = 0
+
+    def _counting_digest(value):
+        nonlocal compute_count
+        compute_count += 1
+        return real_digest_json(value)
+
+    monkeypatch.setattr(formal_plan_module, "digest_json", _counting_digest)
+
+    direct = tuple(snapshot.snapshot_digest for _ in range(100))
+    serialized = tuple(snapshot.to_dict()["snapshot_digest"] for _ in range(100))
+
+    assert set(direct) == {expected}
+    assert set(serialized) == {expected}
+    assert compute_count == 1
+    assert vars(snapshot) == instance_state_before
+    assert set(snapshot.to_dict()) == {
+        "schema_version",
+        "condition_count",
+        "root_run_count",
+        "first_attempt_ai_unit_count",
+        "provider_calls_made",
+        "budget_digest",
+        "conditions",
+        "roots",
+        "snapshot_digest",
+    }
+
+
+def test_formal_snapshot_digest_cache_is_pickle_and_copy_transient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _minimal_formal_snapshot(budget_marker="memo-pickle")
+    old_pickle = pickle.dumps(snapshot, protocol=pickle.HIGHEST_PROTOCOL)
+    canonical = snapshot.snapshot_digest
+    assert pickle.dumps(snapshot, protocol=pickle.HIGHEST_PROTOCOL) == old_pickle
+
+    loaded = pickle.loads(old_pickle)
+    shallow = copy(snapshot)
+    deep = deepcopy(snapshot)
+    replaced = replace(
+        snapshot,
+        budget_digest=digest_json({"budget_marker": "memo-replaced"}),
+    )
+    assert all(
+        candidate is not snapshot for candidate in (loaded, shallow, deep, replaced)
+    )
+
+    real_digest_json = formal_plan_module.digest_json
+    compute_count = 0
+
+    def _counting_digest(value):
+        nonlocal compute_count
+        compute_count += 1
+        return real_digest_json(value)
+
+    monkeypatch.setattr(formal_plan_module, "digest_json", _counting_digest)
+
+    assert loaded.snapshot_digest == canonical
+    assert shallow.snapshot_digest == canonical
+    assert deep.snapshot_digest == canonical
+    assert replaced.snapshot_digest == digest_json(replaced._body())
+    assert replaced.snapshot_digest != canonical
+    assert compute_count == 4
+    assert loaded == shallow == deep == snapshot
+
+
+def test_formal_snapshot_digest_concurrent_first_read_computes_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _minimal_formal_snapshot(budget_marker="memo-concurrent")
+    real_digest_json = formal_plan_module.digest_json
+    counter_lock = Lock()
+    compute_count = 0
+
+    def _counting_digest(value):
+        nonlocal compute_count
+        with counter_lock:
+            compute_count += 1
+        sleep(0.02)
+        return real_digest_json(value)
+
+    monkeypatch.setattr(formal_plan_module, "digest_json", _counting_digest)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        values = tuple(pool.map(lambda _index: snapshot.snapshot_digest, range(64)))
+
+    assert len(set(values)) == 1
+    assert compute_count == 1
+
+
+def test_formal_snapshot_digest_child_reset_reinitializes_transient_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _minimal_formal_snapshot(budget_marker="memo-child-reset")
+    canonical = snapshot.snapshot_digest
+    snapshot_id = id(snapshot)
+    original_lock = formal_plan_module._FORMAL_PLAN_SNAPSHOT_DIGEST_LOCK
+    assert snapshot_id in formal_plan_module._FORMAL_PLAN_SNAPSHOT_DIGEST_CACHE
+    real_digest_json = formal_plan_module.digest_json
+    compute_count = 0
+
+    def _counting_digest(value):
+        nonlocal compute_count
+        compute_count += 1
+        return real_digest_json(value)
+
+    monkeypatch.setattr(formal_plan_module, "digest_json", _counting_digest)
+
+    formal_plan_module._reset_formal_plan_snapshot_digest_cache_after_fork()
+
+    assert formal_plan_module._FORMAL_PLAN_SNAPSHOT_DIGEST_LOCK is not original_lock
+    assert formal_plan_module._FORMAL_PLAN_SNAPSHOT_DIGEST_CACHE == {}
+    assert snapshot.snapshot_digest == canonical
+    assert compute_count == 1
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX fork is unavailable")
+def test_formal_snapshot_digest_fork_child_does_not_inherit_locked_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _minimal_formal_snapshot(budget_marker="memo-fork")
+    expected = digest_json(snapshot._body())
+    parent_pid = os.getpid()
+    entered = Event()
+    release = Event()
+    real_digest_json = formal_plan_module.digest_json
+
+    def _blocking_parent_digest(value):
+        if os.getpid() == parent_pid:
+            entered.set()
+            if not release.wait(timeout=5.0):
+                raise AssertionError("parent digest worker was not released")
+        return real_digest_json(value)
+
+    monkeypatch.setattr(
+        formal_plan_module,
+        "digest_json",
+        _blocking_parent_digest,
+    )
+    worker = Thread(target=lambda: snapshot.snapshot_digest, daemon=True)
+    worker.start()
+    assert entered.wait(timeout=2.0)
+    child_pid = os.fork()
+    if child_pid == 0:
+        try:
+            os._exit(0 if snapshot.snapshot_digest == expected else 2)
+        except BaseException:
+            os._exit(3)
+
+    child_status = None
+    try:
+        deadline = monotonic() + 2.0
+        while monotonic() < deadline:
+            waited_pid, status = os.waitpid(child_pid, os.WNOHANG)
+            if waited_pid == child_pid:
+                child_status = status
+                break
+            sleep(0.01)
+        if child_status is None:
+            os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+            pytest.fail("fork child inherited the locked snapshot digest cache")
+        assert os.waitstatus_to_exitcode(child_status) == 0
+    finally:
+        release.set()
+        worker.join(timeout=2.0)
+    assert not worker.is_alive()
+
+
+def test_full_formal_snapshot_digest_first_read_and_repeats_are_bounded(
+    formal_snapshot: FormalPlanSnapshot,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = replace(formal_snapshot)
+    real_digest_json = formal_plan_module.digest_json
+    compute_count = 0
+
+    def _counting_digest(value):
+        nonlocal compute_count
+        compute_count += 1
+        return real_digest_json(value)
+
+    monkeypatch.setattr(formal_plan_module, "digest_json", _counting_digest)
+
+    first_started = perf_counter()
+    expected = snapshot.snapshot_digest
+    first_elapsed = perf_counter() - first_started
+    repeat_started = perf_counter()
+    repeats = tuple(snapshot.snapshot_digest for _ in range(100))
+    repeat_elapsed = perf_counter() - repeat_started
+
+    assert set(repeats) == {expected}
+    assert compute_count == 1
+    assert first_elapsed + repeat_elapsed <= 120.0
+    assert repeat_elapsed <= 1.0
+
+
 def test_representative_coverage_reuses_formal_objects_and_covers_all_axes(
     formal_inputs,
     formal_snapshot,
 ) -> None:
-    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
 
     coverage = derive_paper_formal_representative_coverage(
         snapshot=formal_snapshot,
         dispatch_plans=plans,
+        catalog_manifest=catalog,
         repeat_ids=(0,),
     )
 
@@ -163,6 +615,8 @@ def test_representative_coverage_reuses_formal_objects_and_covers_all_axes(
         "factorization",
         "lean_proof",
     }
+
+
     exp1 = by_experiment["exp1_real_ai_feasibility"]
     assert {
         (condition.domain, condition.paper_difficulty, condition.topic_family)
@@ -295,14 +749,335 @@ def test_representative_coverage_reuses_formal_objects_and_covers_all_axes(
         }
 
 
+def test_full_and_representative_coverage_are_typed_views_of_one_snapshot(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+
+    full = derive_paper_formal_full_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+    )
+    representative = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        repeat_ids=(0,),
+    )
+
+    assert isinstance(full, FormalExecutionCoverage)
+    assert isinstance(representative, FormalRepresentativeCoverage)
+    assert FormalRepresentativeCoverage is FormalExecutionCoverage
+    assert full.selection_kind == "full"
+    assert representative.selection_kind == "filtered"
+    assert (
+        full.condition_count,
+        full.root_run_count,
+        full.selected_first_attempt_ai_unit_count,
+    ) == (324, 6_384, 40_520)
+    assert representative.root_run_count == 145
+    assert 0 < representative.selected_first_attempt_ai_unit_count < 40_520
+    assert full.provider_calls_made == representative.provider_calls_made == 0
+    assert full.source_snapshot is representative.source_snapshot is formal_snapshot
+    assert full.source_snapshot_digest == representative.source_snapshot_digest
+    assert full.conditions == tuple(item.condition for item in formal_snapshot.conditions)
+    assert full.bindings == tuple(item.binding for item in formal_snapshot.conditions)
+    assert full.roots == formal_snapshot.roots
+    assert all(
+        condition is source.condition and binding is source.binding
+        for condition, binding, source in zip(
+            full.conditions,
+            full.bindings,
+            formal_snapshot.conditions,
+            strict=True,
+        )
+    )
+    assert all(
+        root is source_root
+        for root, source_root in zip(full.roots, formal_snapshot.roots, strict=True)
+    )
+    assert {id(root) for root in representative.roots} < {
+        id(root) for root in full.roots
+    }
+    assert full.coverage_digest != representative.coverage_digest
+
+
+@pytest.mark.parametrize("selection", ("full", "representative"))
+def test_exp4_excluded_coverage_delegates_only_exp1_to_3_and_exp5(
+    monkeypatch: pytest.MonkeyPatch,
+    selection: str,
+) -> None:
+    """此处只检验 typed coverage 输入，不构造 Full catalog fixture。"""
+
+    conditions = tuple(
+        SimpleNamespace(experiment_id=experiment_id, condition_id=condition_id)
+        for experiment_id, condition_id in (
+            ("exp1_real_ai_feasibility", "exp1-c0"),
+            ("exp2_real_ai_scalability", "exp2-c0"),
+            ("exp3_real_ai_fault_recovery", "exp3-c0"),
+            ("exp4_real_ai_protocol_ablation", "exp4-c0"),
+            ("exp5_real_ai_model_endpoint_comparison", "exp5-c0"),
+        )
+    )
+    base = SimpleNamespace(
+        conditions=conditions,
+        root_case_filter={condition.condition_id: ("case-0",) for condition in conditions},
+    )
+    monkeypatch.setattr(
+        formal_plan_module,
+        "derive_paper_formal_full_coverage",
+        lambda **_kwargs: base,
+    )
+    monkeypatch.setattr(
+        formal_plan_module,
+        "derive_paper_formal_representative_coverage",
+        lambda **_kwargs: base,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_derive(**kwargs):
+        captured.update(kwargs)
+        return "exp4-excluded-coverage"
+
+    monkeypatch.setattr(
+        formal_plan_module,
+        "derive_paper_formal_execution_coverage",
+        fake_derive,
+    )
+
+    assert derive_paper_formal_exp4_excluded_coverage(
+        snapshot=object(),
+        dispatch_plans=(),
+        catalog_manifest=object(),
+        selection=selection,
+    ) == "exp4-excluded-coverage"
+    assert captured["selection_kind"] == (
+        "full_exp1_exp3_exp5"
+        if selection == "full"
+        else "representative_exp1_exp3_exp5"
+    )
+    assert captured["selected_condition_ids"] == (
+        "exp1-c0",
+        "exp2-c0",
+        "exp3-c0",
+        "exp5-c0",
+    )
+    assert captured["root_case_filter"] == {
+        "exp1-c0": ("case-0",),
+        "exp2-c0": ("case-0",),
+        "exp3-c0": ("case-0",),
+        "exp5-c0": ("case-0",),
+    }
+
+
+def test_representative_exp4_excluded_coverage_keeps_exact_formal_exp5_sixteen_roots(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    """正式 Exp4-excluded scope 只能带入 16 个正式 Exp5 root。"""
+
+    plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+
+    coverage = derive_paper_formal_exp4_excluded_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        selection="representative",
+    )
+
+    exp5_conditions = tuple(
+        condition
+        for condition in coverage.conditions
+        if condition.experiment_id == "exp5_real_ai_model_endpoint_comparison"
+    )
+    exp5_roots = tuple(
+        root
+        for root in coverage.roots
+        if root.condition.experiment_id == "exp5_real_ai_model_endpoint_comparison"
+    )
+
+    assert coverage.selection_kind == "representative_exp1_exp3_exp5"
+    assert "exp4_real_ai_protocol_ablation" not in {
+        condition.experiment_id for condition in coverage.conditions
+    }
+    assert len(exp5_conditions) == 16
+    assert len(exp5_roots) == 16
+    assert sum(
+        len(coverage.root_case_filter[condition.condition_id])
+        for condition in exp5_conditions
+    ) == 16
+    assert all(
+        len(coverage.root_case_filter[condition.condition_id]) == 1
+        for condition in exp5_conditions
+    )
+    assert {
+        condition.model_entry_id for condition in exp5_conditions
+    } == {
+        "glm_5_2_exp5_v3",
+        "qwen3_14b_exp5_v3",
+        "minimax_m2_5_exp5_v3",
+        "deepseek_v3_pro_exp5_v3",
+    }
+    assert {
+        condition.model_endpoint_identity_digest for condition in exp5_conditions
+    } == {
+        root.endpoint_controls.model_endpoint_identity_digest
+        for root in exp5_roots
+    }
+
+
+def test_full_coverage_rejects_snapshot_total_and_root_order_drift(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+
+    with pytest.raises(ValueError, match="snapshot totals drift"):
+        derive_paper_formal_full_coverage(
+            snapshot=replace(
+                formal_snapshot,
+                first_attempt_ai_unit_count=(
+                    formal_snapshot.first_attempt_ai_unit_count + 1
+                ),
+            ),
+            dispatch_plans=plans,
+            catalog_manifest=catalog,
+        )
+    with pytest.raises(ValueError, match="root order/selection drift"):
+        derive_paper_formal_full_coverage(
+            snapshot=replace(
+                formal_snapshot,
+                roots=tuple(reversed(formal_snapshot.roots)),
+            ),
+            dispatch_plans=plans,
+            catalog_manifest=catalog,
+        )
+
+
+def test_full_and_representative_budget_projections_are_selection_exact(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    plans, catalog, budget, _ai_api_configs, _output_root = formal_inputs
+    full_coverage = derive_paper_formal_full_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+    )
+    representative_coverage = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        repeat_ids=(0,),
+    )
+
+    full = project_paper_execution_budget(
+        snapshot=formal_snapshot,
+        budget=budget,
+        coverage=full_coverage,
+    )
+    representative = project_paper_execution_budget(
+        snapshot=formal_snapshot,
+        budget=budget,
+        coverage=representative_coverage,
+    )
+
+    assert isinstance(full, PaperExecutionBudgetProjection)
+    assert full.source_budget is representative.source_budget is budget
+    assert full.source_snapshot is representative.source_snapshot is formal_snapshot
+    assert full.coverage is full_coverage
+    assert representative.coverage is representative_coverage
+    assert full.source_budget_digest == budget.budget_digest
+    assert full.source_snapshot_digest == formal_snapshot.snapshot_digest
+    assert full.coverage_digest == full_coverage.coverage_digest
+    assert (
+        full.condition_count,
+        full.root_run_count,
+        full.first_attempt_ai_unit_count,
+    ) == (324, 6_384, 40_520)
+    assert full.provider_attempt_upper_bound == budget.max_provider_attempts
+    assert full.protocol_replacement_reserve == (
+        budget.max_provider_attempts - budget.planned_ai_units
+    )
+    assert full.token_upper_bound == budget.token_upper_bound
+    assert full.cost_upper_bound == budget.cost_upper_bound
+    assert full.disk_estimate == budget.disk_estimate
+    assert full.disk_upper_bound_bytes == budget.disk_estimate["forecast_bytes"]
+    assert full.provider_calls_made == representative.provider_calls_made == 0
+    assert full.projection_digest.startswith("sha256:")
+    assert full.to_dict()["projection_digest"] == full.projection_digest
+
+    root_ratio = representative.root_run_count / full.root_run_count
+    assert representative.root_run_count == 145
+    assert representative.provider_attempt_upper_bound != round(
+        full.provider_attempt_upper_bound * root_ratio
+    )
+    assert representative.token_upper_bound != round(full.token_upper_bound * root_ratio)
+    assert representative.disk_upper_bound_bytes != round(
+        full.disk_upper_bound_bytes * root_ratio
+    )
+    assert representative.hard_limits == {
+        "max_total_provider_attempts": representative.provider_attempt_upper_bound,
+        "max_total_tokens": representative.token_upper_bound,
+        "max_cost_estimate": representative.cost_upper_bound,
+        "max_disk_bytes": representative.disk_upper_bound_bytes,
+    }
+
+
+@pytest.mark.parametrize("drift_kind", ("replacement", "endpoint", "disk"))
+def test_execution_budget_projection_rejects_frozen_authority_drift(
+    formal_inputs,
+    formal_snapshot,
+    drift_kind: str,
+) -> None:
+    plans, catalog, budget, _ai_api_configs, _output_root = formal_inputs
+    coverage = derive_paper_formal_full_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+    )
+    quota = deepcopy(budget.quota_preflight)
+    disk_estimate = deepcopy(budget.disk_estimate)
+    if drift_kind == "replacement":
+        quota["budget_commitments"]["experiment_budget_identity"][
+            "replacement_policy_by_condition"
+        ][0]["planned_ai_unit_count"] += 1
+        match = "replacement"
+    elif drift_kind == "endpoint":
+        endpoint = quota["budget_commitments"]["endpoint_budget_identity"]
+        member_id = next(iter(endpoint["member_token_cost_subtotals"]))
+        endpoint["member_token_cost_subtotals"][member_id][
+            "cost_upper_bound_per_provider_attempt"
+        ] += 0.001
+        match = "endpoint"
+    else:
+        disk_estimate["inputs"]["planned_root_runs"] += 1
+        match = "disk"
+    drifted_budget = replace(
+        budget,
+        quota_preflight=quota,
+        disk_estimate=disk_estimate,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        project_paper_execution_budget(
+            snapshot=formal_snapshot,
+            budget=drifted_budget,
+            coverage=coverage,
+        )
+
+
 def test_representative_exp3_rate_fault_roots_contain_a_formal_target(
     formal_inputs,
     formal_snapshot,
 ) -> None:
-    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
     coverage = derive_paper_formal_representative_coverage(
         snapshot=formal_snapshot,
         dispatch_plans=plans,
+        catalog_manifest=catalog,
         repeat_ids=(0,),
     )
     roots_by_condition: dict[str, list] = {}
@@ -341,16 +1116,20 @@ def test_representative_worker_death_root_maximizes_formal_scheduled_targets(
     formal_inputs,
     formal_snapshot,
 ) -> None:
-    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
     coverage = derive_paper_formal_representative_coverage(
         snapshot=formal_snapshot,
         dispatch_plans=plans,
+        catalog_manifest=catalog,
         repeat_ids=(0,),
     )
     roots_by_condition: dict[str, list] = {}
     for root in formal_snapshot.roots:
         roots_by_condition.setdefault(root.condition.condition_id, []).append(root)
 
+    selected_factor_axes: set[tuple[str, str, int]] = set()
+    fallback_factor_axes: set[tuple[str, str, int]] = set()
+    selected_factor_condition_count = 0
     for condition in coverage.conditions:
         if (
             condition.experiment_id != "exp3_real_ai_fault_recovery"
@@ -371,16 +1150,158 @@ def test_representative_worker_death_root_maximizes_formal_scheduled_targets(
         assert selected_target_count == max(
             len(targets) for targets in targets_by_case.values()
         )
+        if condition.domain != "factorization":
+            continue
+        selected_factor_condition_count += 1
+        selected_root = next(
+            root for root in roots if root.case_id == selected_case_id
+        )
+        target_indexes = {
+            selected_root.planned_ai_unit_ids.index(
+                target.removeprefix(f"{selected_case_id}:")
+            )
+            for target in targets_by_case[selected_case_id]
+        }
+        cases_by_id = {
+            str(case["case_id"]): case for case in catalog.factorization_cases
+        }
+        selected_success_indexes = set(
+            _verified_factor_success_indexes(cases_by_id[selected_case_id])
+        )
+        progress_axis = next(
+            part for part in condition.condition_id.split("__") if part.startswith("p")
+        )
+        death_axis = int(
+            next(
+                part.removeprefix("dead")
+                for part in condition.condition_id.split("__")
+                if part.startswith("dead")
+            )
+        )
+        axis = (str(condition.difficulty), progress_axis, death_axis)
+        selected_factor_axes.add(axis)
+        if not selected_success_indexes <= target_indexes:
+            max_target_roots = tuple(
+                root
+                for root in roots
+                if len(targets_by_case[root.case_id]) == selected_target_count
+            )
+            assert not any(
+                set(_verified_factor_success_indexes(cases_by_id[root.case_id]))
+                <= {
+                    root.planned_ai_unit_ids.index(
+                        target.removeprefix(f"{root.case_id}:")
+                    )
+                    for target in targets_by_case[root.case_id]
+                }
+                for root in max_target_roots
+            )
+            assert min(selected_success_indexes) >= min(target_indexes)
+            fallback_factor_axes.add(axis)
+
+    assert selected_factor_condition_count == 18
+    assert selected_factor_axes == {
+        (difficulty, progress, dead)
+        for difficulty in ("easy", "medium", "hard")
+        for progress in ("p25", "p50", "p75")
+        for dead in (1, 3)
+    }
+    assert fallback_factor_axes == {("hard", "p50", 1)}
+
+
+def test_representative_factor_worker_death_selection_rejects_no_viable_candidate(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    _plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    condition = next(
+        item.condition
+        for item in formal_snapshot.conditions
+        if item.condition.experiment_id == "exp3_real_ai_fault_recovery"
+        and item.condition.domain == "factorization"
+        and item.condition.fault_type == "worker_death"
+        and "__p75__" in item.condition.condition_id
+    )
+    roots = tuple(
+        root for root in formal_snapshot.roots if root.condition is condition
+    )
+    targets_by_case = formal_exp3_scheduled_target_unit_ids_by_case(
+        condition=condition,
+        ordered_case_ids=tuple(root.case_id for root in roots),
+        planned_ai_unit_ids_by_case={
+            root.case_id: root.planned_ai_unit_ids for root in roots
+        },
+    )
+    cases_by_id = {
+        str(case["case_id"]): case for case in catalog.factorization_cases
+    }
+    max_target_count = max(len(targets) for targets in targets_by_case.values())
+    nonviable = tuple(
+        root
+        for root in roots
+        if len(targets_by_case[root.case_id]) == max_target_count
+        and not formal_plan_module._factorization_worker_death_root_is_structurally_viable(
+            root=root,
+            target_unit_ids=targets_by_case[root.case_id],
+            case=cases_by_id[root.case_id],
+        )
+    )
+    assert nonviable
+
+    with pytest.raises(ValueError, match="no structurally viable"):
+        formal_plan_module._select_representative_worker_death_root(
+            condition=condition,
+            roots=nonviable,
+            targets_by_case={
+                root.case_id: targets_by_case[root.case_id] for root in nonviable
+            },
+            cases_by_id=cases_by_id,
+        )
+
+
+def test_representative_factor_worker_death_selection_rejects_catalog_tamper(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    _plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    root = next(
+        root
+        for root in formal_snapshot.roots
+        if root.condition.experiment_id == "exp3_real_ai_fault_recovery"
+        and root.condition.domain == "factorization"
+        and root.condition.fault_type == "worker_death"
+        and "__p75__" in root.condition.condition_id
+    )
+    case = next(
+        case
+        for case in catalog.factorization_cases
+        if case["case_id"] == root.case_id
+    )
+    tampered = deepcopy(case)
+    tampered["target_n"] = str(int(tampered["target_n"]) + 1)
+    targets = formal_exp3_scheduled_target_unit_ids_by_case(
+        condition=root.condition,
+        ordered_case_ids=(root.case_id,),
+        planned_ai_unit_ids_by_case={root.case_id: root.planned_ai_unit_ids},
+    )[root.case_id]
+
+    with pytest.raises(ValueError, match="catalog/root digest"):
+        formal_plan_module._factorization_worker_death_root_is_structurally_viable(
+            root=root,
+            target_unit_ids=targets,
+            case=tampered,
+        )
 
 
 def test_representative_coverage_rejects_coherent_binding_and_root_tamper(
     formal_inputs,
     formal_snapshot,
 ) -> None:
-    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    plans, catalog, _budget, _ai_api_configs, _output_root = formal_inputs
     coverage = derive_paper_formal_representative_coverage(
         snapshot=formal_snapshot,
         dispatch_plans=plans,
+        catalog_manifest=catalog,
         repeat_ids=(0,),
     )
 
@@ -612,6 +1533,123 @@ def test_formal_root_preparation_uses_runtime_adapter_and_freezes_exact_request(
     assert os.environ.get("SILICONFLOW_API_KEY") is None
 
 
+@pytest.mark.parametrize("domain", ("factorization", "lean_proof"))
+def test_formal_runtime_task_identity_persists_and_loads_for_each_domain(
+    domain: str,
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    root = next(
+        item
+        for item in formal_snapshot.roots
+        if item.condition.domain == domain and item.repeat_id == 0
+    )
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / f"{domain}-runtime-task-plan",
+    )
+    expected_runtime_task_id = contracts_module.formal_runtime_task_id(
+        domain,
+        root.case_id,
+    )
+    for record in records:
+        prepared = record.prepared_request
+        assert prepared.case_id == expected_runtime_task_id
+        assert prepared.planned_ai_unit_id == record.planned_ai_unit_id
+        assert prepared.sample_slot_index == record.sample_slot_index
+        assert prepared.replacement_slot == record.base_replacement_slot
+        assert (
+            prepared.provider_config_digest
+            == record.prepared_execution_config_digest
+        )
+        assert prepared.entry_id == record.model_entry_id
+        assert prepared.configured_model == record.provider_model_id
+        assert prepared.plugin_id == root.plugin_id
+        assert prepared.plugin_version == root.plugin_version
+    compact_snapshot, compact_inventory, _coverage = _compact_formal_authority(
+        formal_snapshot,
+        roots=(root,),
+        records=records,
+    )
+    inventory_root = tmp_path / f"{domain}-runtime-task-inventory"
+
+    manifest = formal_plan_module.persist_formal_prepared_request_inventory(
+        inventory=compact_inventory,
+        snapshot=compact_snapshot,
+        output_root=inventory_root,
+    )
+    loaded = formal_plan_module.load_formal_prepared_request_inventory(
+        output_root=inventory_root,
+        snapshot=compact_snapshot,
+        expected_manifest=manifest,
+    )
+
+    assert loaded == compact_inventory
+    assert loaded.inventory_digest == compact_inventory.inventory_digest
+
+
+@pytest.mark.parametrize("case_identity_kind", ("catalog", "wrong_domain"))
+def test_formal_runtime_task_identity_rejects_resigned_wrong_case_identity(
+    case_identity_kind: str,
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    root = next(
+        item
+        for item in formal_snapshot.roots
+        if item.condition.domain == "factorization" and item.repeat_id == 0
+    )
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / f"resigned-{case_identity_kind}-plan",
+    )
+    original = records[0].prepared_request
+    drifted_case_id = (
+        root.case_id
+        if case_identity_kind == "catalog"
+        else contracts_module.formal_runtime_task_id("lean_proof", root.case_id)
+    )
+    resigned = PreparedOutboundRequestFactory.prepare(
+        body_obj=dict(original.body_obj),
+        base_url=original.normalized_absolute_endpoint,
+        endpoint="",
+        provider_config_digest=original.provider_config_digest,
+        entry_id=original.entry_id,
+        configured_model=original.configured_model,
+        effective_controls_digest=original.effective_controls_digest,
+        plugin_id=original.plugin_id,
+        plugin_version=original.plugin_version,
+        prompt_profile_id=original.prompt_profile_id,
+        prompt_serialization_schema=original.prompt_serialization_schema,
+        body_serialization_schema=original.body_serialization_schema,
+        case_id=drifted_case_id,
+        planned_ai_unit_id=original.planned_ai_unit_id,
+        sample_slot_index=original.sample_slot_index,
+        replacement_slot=original.replacement_slot,
+    )
+    drifted_records = (replace(records[0], prepared_request=resigned), *records[1:])
+    compact_snapshot, compact_inventory, _coverage = _compact_formal_authority(
+        formal_snapshot,
+        roots=(root,),
+        records=drifted_records,
+    )
+
+    with pytest.raises(ValueError, match="nested identity drift"):
+        formal_plan_module.persist_formal_prepared_request_inventory(
+            inventory=compact_inventory,
+            snapshot=compact_snapshot,
+            output_root=tmp_path / f"resigned-{case_identity_kind}-inventory",
+        )
+
+
 def test_formal_root_preparation_is_deterministic_across_planning_roots(
     formal_inputs,
     formal_snapshot,
@@ -639,6 +1677,129 @@ def test_formal_root_preparation_is_deterministic_across_planning_roots(
     assert tuple(item.prepared_request for item in first) == tuple(
         item.prepared_request for item in second
     )
+
+
+@pytest.mark.parametrize("domain", ("factorization", "lean_proof"))
+def test_transient_planning_artifact_store_has_exact_durable_store_parity(
+    domain: str,
+    tmp_path: Path,
+) -> None:
+    """Planning-only storage must preserve the adapters' exact artifact contract."""
+
+    transient = formal_plan_module._TransientPlanningArtifactStore()
+    durable = ArtifactStore(tmp_path / f"durable-{domain}")
+    payload = {
+        "domain": domain,
+        "fixture": "small_planning_artifact",
+        "ordered_values": [1, 2, 3],
+    }
+    save_kwargs = {
+        "artifact_id": f"planning:{domain}:payload",
+        "artifact_type": "PlanningFixture",
+        "artifact_schema_id": f"tokenshare.{domain}.planning_fixture",
+        "artifact_schema_version": "v1",
+        "source": {"kind": "focused_parity", "domain": domain},
+        "metadata": {"planning_only": True},
+        "created_at": "2026-08-16T00:00:00Z",
+    }
+
+    durable_ref = durable.save_json(payload, **save_kwargs)
+    transient_ref = transient.save_json(payload, **save_kwargs)
+    durable_bytes = durable.read_bytes(durable_ref)
+    transient_bytes = transient.read_bytes(transient_ref)
+
+    assert transient_ref == durable_ref
+    assert transient_ref.to_dict() == durable_ref.to_dict()
+    assert transient_bytes == durable_bytes
+    assert transient_ref.content_hash == durable_ref.content_hash
+    assert transient_ref.size_bytes == len(transient_bytes)
+    assert transient.verify(transient_ref)
+
+    transient.release()
+    assert transient.retained_artifact_count == 0
+    with pytest.raises(RuntimeError, match="released"):
+        transient.read_bytes(transient_ref)
+
+
+def test_small_formal_inventory_uses_real_adapters_and_releases_each_transient_store(
+    small_formal_preparation_inputs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production planning stays real while durable I/O and provider seams stay closed."""
+
+    catalog, ai_api_configs, small_snapshot = small_formal_preparation_inputs
+    roots = small_snapshot.roots
+    adapter_calls = {"factorization": 0, "lean_proof": 0, "outbound": 0}
+    real_factor_plan_units = FactorizationRuntimeAdapter.plan_units
+    real_lean_plan_units = LeanRuntimeAdapter.plan_units
+    real_prepare_outbound = formal_plan_module.prepare_ai_api_outbound_request
+    real_transient_store = formal_plan_module._TransientPlanningArtifactStore
+    stores = []
+
+    def _factor_plan_units(self, *args, **kwargs):
+        adapter_calls["factorization"] += 1
+        return real_factor_plan_units(self, *args, **kwargs)
+
+    def _lean_plan_units(self, *args, **kwargs):
+        adapter_calls["lean_proof"] += 1
+        return real_lean_plan_units(self, *args, **kwargs)
+
+    def _prepare_outbound(**kwargs):
+        adapter_calls["outbound"] += 1
+        return real_prepare_outbound(**kwargs)
+
+    class _TrackingTransientStore(real_transient_store):
+        def __init__(self) -> None:
+            super().__init__()
+            stores.append(self)
+
+    def _durable_commit_bomb(*_args, **_kwargs):
+        raise AssertionError("planning inventory must not durably commit artifacts")
+
+    def _fsync_bomb(*_args, **_kwargs):
+        raise AssertionError("planning inventory must not fsync artifacts")
+
+    monkeypatch.setattr(
+        FactorizationRuntimeAdapter,
+        "plan_units",
+        _factor_plan_units,
+    )
+    monkeypatch.setattr(LeanRuntimeAdapter, "plan_units", _lean_plan_units)
+    monkeypatch.setattr(
+        formal_plan_module,
+        "prepare_ai_api_outbound_request",
+        _prepare_outbound,
+    )
+    monkeypatch.setattr(
+        formal_plan_module,
+        "_TransientPlanningArtifactStore",
+        _TrackingTransientStore,
+    )
+    monkeypatch.setattr(ArtifactStore, "_commit_bytes", _durable_commit_bomb)
+    monkeypatch.setattr(formal_plan_module.os, "fsync", _fsync_bomb)
+
+    inventory = freeze_paper_formal_prepared_request_inventory(
+        snapshot=small_snapshot,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "must-remain-absent",
+    )
+
+    assert inventory.record_count == small_snapshot.first_attempt_ai_unit_count
+    assert adapter_calls["factorization"] == 1
+    assert adapter_calls["lean_proof"] == 1
+    assert adapter_calls["outbound"] == inventory.record_count
+    assert len(stores) == len(
+        {
+            formal_plan_module._formal_prepared_template_cache_key(root)
+            for root in roots
+        }
+    )
+    assert all(store.released for store in stores)
+    assert all(store.retained_artifact_count == 0 for store in stores)
+    assert not (tmp_path / "must-remain-absent").exists()
+    assert inventory.provider_calls_made == 0
 
 
 @pytest.mark.parametrize("domain", ("factorization", "lean_proof"))
@@ -769,6 +1930,7 @@ def test_public_representative_acquisition_rebuilds_and_audits_full_authority(
     supplied_coverage = derive_paper_formal_representative_coverage(
         snapshot=formal_snapshot,
         dispatch_plans=plans,
+        catalog_manifest=catalog,
         repeat_ids=(0,),
     )
     canonical_snapshot = _clone_formal_snapshot(formal_snapshot)
@@ -948,6 +2110,23 @@ def test_semantic_builder_rejects_forged_validated_authority_token(tmp_path: Pat
         )
 
 
+def test_representative_paid_acquisition_call_graph_uses_exp1_only_selector() -> None:
+    """Static boundary: the paid builder must route through the Exp1-only seam."""
+
+    import inspect
+
+    source = inspect.getsource(
+        response_bank_module._build_representative_unified_acquisition_plan_from_validated_authority
+    )
+
+    assert "select_exp1_source_roots(" in source
+    assert "full_roots=snapshot.roots" in source
+    assert "selected_roots=coverage.roots" in source
+    assert '"exp2_real_ai_scalability"' not in source
+    assert '"exp3_real_ai_fault_recovery"' not in source
+    assert '"exp4_real_ai_protocol_ablation"' not in source
+
+
 @pytest.mark.parametrize("root_scope", ("selected", "unselected"))
 def test_public_representative_acquisition_rejects_full_snapshot_control_tamper(
     root_scope: str,
@@ -960,6 +2139,7 @@ def test_public_representative_acquisition_rejects_full_snapshot_control_tamper(
     canonical_coverage = derive_paper_formal_representative_coverage(
         snapshot=formal_snapshot,
         dispatch_plans=plans,
+        catalog_manifest=catalog,
         repeat_ids=(0,),
     )
     selected_ids = {id(root) for root in canonical_coverage.roots}
@@ -982,6 +2162,7 @@ def test_public_representative_acquisition_rejects_full_snapshot_control_tamper(
     drifted_coverage = derive_paper_formal_representative_coverage(
         snapshot=drifted_snapshot,
         dispatch_plans=plans,
+        catalog_manifest=catalog,
         repeat_ids=(0,),
     )
     inventory = FormalPreparedRequestInventory(
@@ -1679,6 +2860,7 @@ def _build_formal_inputs(tmp_path: Path):
         provider_configs=exp5_configs,
         require_smoke_evidence=False,
         smoke_evidence_bundle=None,
+        pricing_freshness_as_of=EXP5_PRICING_FRESHNESS_AS_OF,
     )
     member_plans = exp5_preflight["member_plans"]
     expected_secret_reasons = {"missing_api_key_env"}

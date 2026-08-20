@@ -21,7 +21,7 @@
     "cohort_id": "tokenshare.paper.model_endpoint_cohort.v3",
     "cohort_digest": "sha256:1b317c9827d87c43b974b77c469b115906da463a79064d3ffb3b949dc5257942",
     "provider_config_id": "executor_ai_api_exp5_siliconflow_v3",
-    "provider_config_digest": "sha256:6b1d6ffe977340ebbf59d69368d8c977fef664007575de72593c08c038d5ffe1",
+    "provider_config_digest": "sha256:5135c1c2da0f7512b9891f4ea35c65891044dab544d7ad01230ef1db43ff4b5d",
     "selection_id": "tokenshare.paper.exp5.parent_quarter.v4",
     "selection_digest": "sha256:452f25dcc53a1eb0387665c6f451f1320095efb0c4bf154af62bf5e388afb6b2",
     "sequence_plan_digest": "sha256:de9271732513d7d2ab20624d2949af3c9230b9adc2cd8db4b1f1ddb0d57b58cb",
@@ -34,7 +34,7 @@
       "2": ["minimax_m2_5_siliconflow", "glm_5_2_siliconflow", "deepseek_v3_pro_siliconflow", "qwen3_14b_siliconflow"]
     }
   },
-  "profile_digest": "sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6",
+  "profile_digest": "sha256:697b4218243a22f5fd2838bbc88baf7f6354491921970e4cf9beb0b5c1c37b1e",
   "items": [
     {"item_id":"exp5_factor_glm","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"factor_v2_hard_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":3,"cohort_member_id":"glm_5_2_siliconflow"}},
     {"item_id":"exp5_lean_glm","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"lean_v2_hard_frontier_pure_logic_checker_06","repeat_id":0,"condition_selector":{"domain":"lean_proof","difficulty":"hard","paper_difficulty":"hard_frontier","topic_family":"pure_logic","worker_count":3,"cohort_member_id":"glm_5_2_siliconflow"}},

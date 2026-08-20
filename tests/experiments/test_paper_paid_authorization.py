@@ -395,3 +395,20 @@ def test_allow_provider_calls_flag_is_also_required(tmp_path: Path) -> None:
     with pytest.raises(PaidAuthorizationError):
         _validate(receipt, root, allow_provider_calls=False)
     assert not root.exists()
+
+
+def test_exp4_excluded_results_first_scopes_are_explicit_and_not_generic() -> None:
+    """Exp4 排除后的两种正式规模必须各有精确 paid scope。"""
+
+    from tokenshare.experiments.paper_paid_authorization import PAID_SCOPES
+    from tokenshare.experiments.paper_formal_gate import (
+        selected_experiments_for_provider_scope,
+    )
+
+    expected = {
+        "results_first_representative_exp1_exp3_exp5",
+        "results_first_full_exp1_exp3_exp5",
+    }
+    assert expected.issubset(PAID_SCOPES)
+    for scope in expected:
+        assert selected_experiments_for_provider_scope(scope) == ("exp1", "exp5")

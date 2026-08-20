@@ -371,6 +371,7 @@ def validate_fixed_entry_config_identity(
     expected_identity: PaperModelEndpointIdentity,
     provider_config_id: str,
     source_config: AIAPIExecutorConfig,
+    allow_pricing_refresh: bool = False,
 ) -> ValidatedModelEndpointBinding:
     """在任何 provider call 前验证 source config 与批准 endpoint 完全一致。"""
 
@@ -379,7 +380,10 @@ def validate_fixed_entry_config_identity(
         reasons.append("provider_config_id_mismatch")
     if source_config.provider_family != expected_identity.provider_family:
         reasons.append("provider_family_mismatch")
-    if source_config.config_digest != expected_identity.source_provider_config_digest:
+    if (
+        not allow_pricing_refresh
+        and source_config.config_digest != expected_identity.source_provider_config_digest
+    ):
         reasons.append("source_provider_config_digest_mismatch")
 
     selected_entry = _entry_by_id(source_config, expected_identity.selected_entry_id)
@@ -439,6 +443,7 @@ def validate_condition_fixed_entry_identity(
     *,
     condition: PaperExperimentCondition,
     source_config: AIAPIExecutorConfig,
+    allow_pricing_refresh: bool = False,
 ) -> ValidatedModelEndpointBinding | None:
     """将正式 condition 身份绑定到本次 adapter 收到的 source config。
 
@@ -503,6 +508,7 @@ def validate_condition_fixed_entry_identity(
             expected_identity=expected_identity,
             provider_config_id=str(values["provider_config_id"]),
             source_config=source_config,
+            allow_pricing_refresh=allow_pricing_refresh,
         )
     except PaperModelIdentityMismatch as exc:
         reasons.extend(exc.reasons)

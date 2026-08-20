@@ -33,6 +33,20 @@ def canonical_contract_digest(value: Any) -> str:
     return digest_json(value)
 
 
+def formal_runtime_task_id(domain: str, case_id: str) -> str:
+    """把 catalog case identity 映射为正式 runtime task identity。"""
+
+    _require_non_empty("domain", domain)
+    _require_non_empty("case_id", case_id)
+    prefix = {
+        "factorization": "paper_factorization_",
+        "lean_proof": "paper_lean_",
+    }.get(domain)
+    if prefix is None:
+        raise ValueError("formal runtime task domain is unsupported")
+    return f"{prefix}{case_id}"
+
+
 @dataclass(frozen=True, kw_only=True)
 class FrozenCaseSelection:
     selection_id: str

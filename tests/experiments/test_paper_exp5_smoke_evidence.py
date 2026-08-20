@@ -82,6 +82,7 @@ def test_build_bundle_derives_four_members_and_two_verified_domains(
         entry_map=entry_map,
         provider_configs=provider_configs,
         smoke_evidence_bundle=bundle,
+        pricing_freshness_as_of="2026-08-15",
     )
     assert formal["status"] == "planned"
     assert formal["smoke_evidence_bundle_digest"] == bundle["bundle_digest"]
@@ -117,6 +118,7 @@ def test_formal_preflight_detects_stale_source_artifact_bytes(
         entry_map=entry_map,
         provider_configs=provider_configs,
         smoke_evidence_bundle=bundle,
+        pricing_freshness_as_of="2026-08-15",
     )
 
     assert formal["status"] == "blocked"
@@ -395,6 +397,7 @@ def _policy_inputs(
         entry_map=entry_map,
         provider_configs=provider_configs,
         require_smoke_evidence=False,
+        pricing_freshness_as_of="2026-08-15",
     )
     assert bootstrap["status"] == "planned"
     return cohort, entry_map, provider_configs, bootstrap

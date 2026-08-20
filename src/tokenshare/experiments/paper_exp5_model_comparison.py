@@ -28,6 +28,7 @@ from tokenshare.experiments.paper_model_policy import (
     PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
+    validate_exp5_pricing_freshness_evidence,
 )
 from tokenshare.experiments.paper_models import (
     JsonObject,
@@ -1203,6 +1204,21 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         raise ValueError("attempt join body must be a mapping")
     _validate_required_attempt_fields(attempt, item=item)
     _validate_attempt_identity(record_body, attempt)
+    provider_attempt_index = _non_negative_int(
+        attempt["provider_attempt_index"],
+        "provider_attempt_index",
+    )
+    provider_attempt_count = _non_negative_int(
+        attempt["provider_attempt_count"],
+        "provider_attempt_count",
+    )
+    if (
+        provider_attempt_index > 0
+        or provider_attempt_count != 1
+        or len(request_identities) > 1
+        or len(provider_attempts) > 1
+    ):
+        failure_reasons.append("exp5_retry_forbidden")
     task_paper_eligible, task_eligibility_reason = _task_paper_eligibility(
         item,
         record_body,
@@ -1318,10 +1334,8 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         "model_execution_record_digest": record_body.get("record_digest"),
         "identity_status": record_body.get("identity_status"),
         "worker_id": attempt.get("worker_id"),
-        "provider_attempt_index": _non_negative_int(
-            attempt["provider_attempt_index"],
-            "provider_attempt_index",
-        ),
+        "provider_attempt_index": provider_attempt_index,
+        "provider_attempt_count": provider_attempt_count,
         "attempt_status": attempt.get("attempt_status"),
         "provider": attempt.get("provider"),
         "model": attempt.get("model"),
@@ -1444,6 +1458,7 @@ def _validate_required_attempt_fields(
         "attempt_id",
         "worker_id",
         "provider_attempt_index",
+        "provider_attempt_count",
         "attempt_status",
         "provider",
         "model",
@@ -1853,6 +1868,7 @@ def _validate_v3_condition_order(
 def _validated_v3_member_plans(value: Any) -> dict[str, JsonObject]:
     if not isinstance(value, Mapping):
         raise ValueError("missing Experiment 5 v3 cohort preflight")
+    validate_exp5_pricing_freshness_evidence(value)
     expected_ids = tuple(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
     cohort_digest = value.get("model_cohort_digest")
     member_plans = value.get("member_plans")
@@ -1995,9 +2011,7 @@ def _v3_condition(
         difficulty=difficulty,
         paper_difficulty=paper_difficulty,
         topic_family=topic_family,
-        topic_family_version=(
-            None if domain == "factorization" else "exp1_hard_frontier_15_v1"
-        ),
+        topic_family_version=None,
         worker_count=EXP5_V3_WORKER_COUNT,
         fault_type="none",
         fault_rate=0.0,
@@ -2056,9 +2070,7 @@ def _condition(
         difficulty=difficulty,
         paper_difficulty=paper_difficulty,
         topic_family=topic_family,
-        topic_family_version=(
-            None if domain == "factorization" else "exp1_hard_frontier_15_v1"
-        ),
+        topic_family_version=None,
         worker_count=EXP5_WORKER_COUNT,
         fault_type="none",
         fault_rate=0.0,

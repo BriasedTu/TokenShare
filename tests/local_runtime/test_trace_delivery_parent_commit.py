@@ -71,6 +71,34 @@ CANONICAL_FIELDS = (
     "delivery_digest",
 )
 
+TYPED_FIELDS = (
+    "schema_version",
+    "current_run_id",
+    "task_id",
+    "unit_id",
+    "attempt_id",
+    "attempt_ordinal",
+    "binding_digest",
+    "inference_request_digest",
+    "bank_root_id",
+    "manifest_digest",
+    "entry_id",
+    "source_terminal_kind",
+    "source_bank_object_locators",
+    "logical_start_ms",
+    "source_api_latency_ms",
+    "source_api_latency_missing",
+    "source_api_latency_missing_count",
+    "source_api_latency_ref",
+    "protocol_operational_delay_ms",
+    "logical_finish_ms",
+    "parser_input_media_type",
+    "parser_input_digest",
+    "child_worker_id",
+    "child_completion_sequence",
+    "delivery_digest",
+)
+
 
 def _digest(character: str) -> str:
     return f"sha256:{character * 64}"
@@ -334,8 +362,12 @@ def _run_root_runtime(tmp_path, *, backend, run_id: str, max_retries: int = 0):
 def test_prepared_trace_delivery_v1_exact_fields_and_digest() -> None:
     delivery = _delivery()
 
-    assert tuple(item.name for item in fields(delivery)) == CANONICAL_FIELDS
+    assert tuple(item.name for item in fields(delivery)) == TYPED_FIELDS
     assert tuple(delivery.to_dict()) == CANONICAL_FIELDS
+    assert delivery.source_api_latency_ms == 25
+    assert delivery.source_api_latency_missing is False
+    assert delivery.source_api_latency_missing_count == 0
+    assert delivery.protocol_operational_delay_ms == 25
     assert [
         item["object_role"] for item in delivery.to_dict()["source_bank_object_locators"]
     ] == ["provenance", "raw_output"]

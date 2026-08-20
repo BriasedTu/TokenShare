@@ -311,7 +311,7 @@ audit/replay_report.json
 ## 7. Smoke、路径与 replay
 
 - `paper_smoke_exp3_exp4_profile.v1.json`：Exp3–4-only，11 roots，显式省略 baseline，只作 regression。
-- `paper_smoke_exp5_profile.v4.json`：Exp5-only 8-root bootstrap，suite=`paper_smoke_exp5_v4`，canonical profile digest=`sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6`，tracked 文件原始字节 digest=`sha256:8378ce5c5a3c76339344088a36f995eda5c862059b9c9eecf5e34347985de5df`；四模型各 1 Factorization + 1 Lean。identity-only 另输出 8-item `selection_inventory` 的 bundle digest=`sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1`，它不是 v4 selection digest。历史 v3 profile 只供 replay。
+- `paper_smoke_exp5_profile.v4.json`：Exp5-only 8-root bootstrap，suite=`paper_smoke_exp5_v4`，canonical profile digest=`sha256:697b4218243a22f5fd2838bbc88baf7f6354491921970e4cf9beb0b5c1c37b1e`，tracked 文件原始字节 digest=`sha256:2e6fb71c799339bff9bfded5ae3fd0a856c3d5066e7f3b8ffe40c0635b6bd67e`；四模型各 1 Factorization + 1 Lean。identity-only 另输出 8-item `selection_inventory` 的 bundle digest=`sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1`，它不是 v4 selection digest。历史 v3 profile 只供 replay。
 - `paper_smoke_profile.v3.json`：29-root 综合兼容 profile；它不是正式矩阵，任何 v2-derived 兼容字段不得覆盖本规格。
 - Exp1–4 v3 launcher 与历史 smoke 只作回归/诊断；所有结果固定 paper-ineligible。
 

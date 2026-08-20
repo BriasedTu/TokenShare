@@ -17,6 +17,10 @@ from tokenshare.executors.ai_api_artifacts import (
     build_raw_model_identity_fields,
 )
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, AIAPIProviderEntry
+from tokenshare.executors.ai_api_hard_deadline import (
+    HardDeadlineDispatchOutcome,
+    prepare_provider_transport_hard_deadline_session,
+)
 from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequest,
     PreparedOutboundRequestFactory,
@@ -45,6 +49,7 @@ from tokenshare.storage.artifacts import ArtifactStore
 
 PROVIDER_FAILURE_TAXONOMY = (
     "timeout",
+    "no_response",
     "connection_error",
     "rate_limited",
     "provider_error",
@@ -66,11 +71,14 @@ class PreparedDispatchEvidence:
     provider_response_id: str | None
     finish_reason: str | None
     usage: JsonObject | None
-    latency_ms: int
+    latency_ms: int | None
     http_status: int | None
     resolved_model: str | None
     response_model_status: str
     error_message: str | None
+    transport_call_count: int = 1
+    latency_timing_source: str = "provider_transport_observed"
+    hard_deadline_evidence: JsonObject | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -79,6 +87,121 @@ class PreparedAIAPIOutboundRequest:
 
     prepared_request: PreparedOutboundRequest
     provider_request_identity: JsonObject
+
+
+class _HardDeadlinePreDispatchError(RuntimeError):
+    def __init__(self, outcome: HardDeadlineDispatchOutcome) -> None:
+        super().__init__(outcome.error_message or "hard-deadline pre-dispatch failure")
+        self.outcome = outcome
+
+
+def persist_zero_provider_attempt_provenance(
+    *,
+    artifact_store: ArtifactStore,
+    config: AIAPIExecutorConfig,
+    executor_id: str,
+    submission_id: str,
+    request: ExecutionRequest,
+    final_result_kind: str,
+    submitted_at: str,
+) -> ArtifactRef:
+    """为 transport 前 fail-closed terminal 持久化显式零调用 provenance。"""
+
+    return artifact_store.save_json(
+        {
+            "schema_version": "phase7.ai_provider_call_provenance.v2",
+            "submission_id": submission_id,
+            "request_id": request.request_id,
+            "provider_family": config.provider_family,
+            "config_digest": config.config_digest,
+            "selection_record": _empty_selection_record(
+                config=config,
+                request=request,
+                require_json_mode=False,
+            ),
+            "attempts": [],
+            "provider_attempt_count": 0,
+            "final_entry_id": None,
+            "final_result_kind": final_result_kind,
+            "secret_redaction": {
+                "authorization_header": False,
+                "api_key_value": False,
+            },
+        },
+        artifact_id=f"ai_provider_provenance_{submission_id}",
+        artifact_type="AIProviderCallProvenance",
+        artifact_schema_id="phase7.ai_provider_call_provenance",
+        artifact_schema_version="v2",
+        source={"kind": "ai_api_executor", "request_id": request.request_id},
+        metadata={"executor_id": executor_id},
+        created_at=submitted_at,
+    )
+
+
+def validated_current_provider_attempt_count(
+    *,
+    store: ArtifactStore,
+    submission: Any,
+    usage_ref: ArtifactRef | Mapping[str, Any],
+) -> int:
+    """三方核对 submission、persisted usage 与 provenance 的显式调用数。"""
+
+    def read_json_ref(ref: ArtifactRef | Mapping[str, Any]) -> JsonObject:
+        artifact_ref = ArtifactRef.from_dict(ref) if isinstance(ref, Mapping) else ref
+        return json.loads(store.read_bytes(artifact_ref).decode("utf-8"))
+
+    submission_usage = submission.usage_summary
+    persisted_usage = read_json_ref(usage_ref)
+    if not isinstance(submission_usage, Mapping):
+        raise ValueError("provider attempt count evidence is missing")
+    counts: list[int] = []
+    for evidence in (submission_usage, persisted_usage):
+        value = evidence.get("provider_attempt_count")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("provider attempt count evidence is missing or invalid")
+        counts.append(value)
+    if counts[0] != counts[1]:
+        raise ValueError("provider attempt count evidence is conflicting")
+
+    source_classes = tuple(
+        evidence.get("source_usage_class")
+        for evidence in (submission_usage, persisted_usage)
+    )
+    if any(value is not None for value in source_classes):
+        if source_classes != ("trace_attribution", "trace_attribution"):
+            raise ValueError(
+                "provider attempt count evidence has conflicting source domain"
+            )
+        if counts[0] != 0 or any(
+            type(evidence.get("current_provider_call_count")) is not int
+            or evidence.get("current_provider_call_count") != 0
+            for evidence in (submission_usage, persisted_usage)
+        ):
+            raise ValueError(
+                "provider attempt count evidence conflicts with trace domain"
+            )
+        return 0
+
+    if submission.provenance_ref is None:
+        raise ValueError("provider attempt count evidence is missing provenance inventory")
+    provenance = read_json_ref(submission.provenance_ref)
+    provider_attempts = provenance.get("attempts")
+    if (
+        not isinstance(provider_attempts, Sequence)
+        or isinstance(provider_attempts, (str, bytes, bytearray))
+        or any(not isinstance(item, Mapping) for item in provider_attempts)
+    ):
+        raise ValueError("provider attempt count evidence inventory is invalid")
+    provenance_count = provenance.get("provider_attempt_count")
+    if (
+        isinstance(provenance_count, bool)
+        or not isinstance(provenance_count, int)
+        or provenance_count < 0
+    ):
+        raise ValueError("provider attempt count evidence is missing or invalid")
+    if provenance_count != counts[0]:
+        raise ValueError("provider attempt count evidence is conflicting")
+    return counts[0]
 
 
 def prepare_ai_api_outbound_request(
@@ -152,6 +275,7 @@ def dispatch_prepared_request_once(
     transport: Any,
     api_key: str,
     timeout_seconds: int,
+    on_transport_start: Callable[[], None] | None = None,
 ) -> PreparedDispatchEvidence:
     """发送已经冻结的 endpoint/body bytes 恰好一次并保留 provider taxonomy。"""
 
@@ -166,14 +290,45 @@ def dispatch_prepared_request_once(
     exact_transport = _exact_transport_for_provider(transport, provider_family)
     started = perf_counter()
     response: Any | None = None
+    deadline_outcome: HardDeadlineDispatchOutcome | None = None
     try:
-        response = exact_transport.post_chat_completion(
-            api_key=api_key,
-            body_bytes=prepared.body_bytes,
-            normalized_absolute_endpoint=prepared.normalized_absolute_endpoint,
-            content_type="application/json",
-            timeout_seconds=timeout_seconds,
-        )
+        if getattr(exact_transport, "tokenshare_hard_total_deadline", False) is True:
+            deadline_outcome = _dispatch_hard_deadline_through_exact_transport(
+                exact_transport=exact_transport,
+                provider_family=provider_family,
+                api_key=api_key,
+                body_bytes=prepared.body_bytes,
+                normalized_absolute_endpoint=prepared.normalized_absolute_endpoint,
+                content_type="application/json",
+                hard_total_seconds=float(timeout_seconds),
+                on_transport_start=on_transport_start,
+            )
+            if deadline_outcome.status != "completed":
+                return _prepared_failure_evidence(
+                    failure_kind=(deadline_outcome.failure_kind or "provider_error"),
+                    latency_ms=deadline_outcome.provider_latency_ms,
+                    http_status=deadline_outcome.http_status,
+                    message=(
+                        deadline_outcome.error_message
+                        or "provider child returned no response"
+                    ),
+                    transport_call_count=deadline_outcome.transport_call_count,
+                    latency_timing_source=_hard_deadline_latency_timing_source(
+                        deadline_outcome
+                    ),
+                    hard_deadline_evidence=deadline_outcome.quiescence_evidence,
+                )
+            response = deadline_outcome.response
+        else:
+            if on_transport_start is not None:
+                on_transport_start()
+            response = exact_transport.post_chat_completion(
+                api_key=api_key,
+                body_bytes=prepared.body_bytes,
+                normalized_absolute_endpoint=prepared.normalized_absolute_endpoint,
+                content_type="application/json",
+                timeout_seconds=timeout_seconds,
+            )
         parsed = parse_provider_response(response)
     except TimeoutError:
         return _prepared_failure_evidence(
@@ -181,6 +336,11 @@ def dispatch_prepared_request_once(
             latency_ms=int((perf_counter() - started) * 1000),
             http_status=None,
             message="provider request timed out",
+            hard_deadline_evidence=(
+                None
+                if deadline_outcome is None
+                else deadline_outcome.quiescence_evidence
+            ),
         )
     except OSError as exc:
         return _prepared_failure_evidence(
@@ -188,6 +348,11 @@ def dispatch_prepared_request_once(
             latency_ms=int((perf_counter() - started) * 1000),
             http_status=None,
             message=_redact_single_secret(str(exc), api_key),
+            hard_deadline_evidence=(
+                None
+                if deadline_outcome is None
+                else deadline_outcome.quiescence_evidence
+            ),
         )
     except (SiliconFlowProviderError, OpenAIProviderError, DeepSeekProviderError) as exc:
         failure_kind = (
@@ -197,9 +362,28 @@ def dispatch_prepared_request_once(
         )
         return _prepared_failure_evidence(
             failure_kind=failure_kind,
-            latency_ms=int((perf_counter() - started) * 1000),
+            latency_ms=(
+                int((perf_counter() - started) * 1000)
+                if deadline_outcome is None
+                else deadline_outcome.provider_latency_ms
+            ),
             http_status=exc.http_status,
             message=_redact_single_secret(exc.message, api_key),
+            transport_call_count=(
+                1
+                if deadline_outcome is None
+                else deadline_outcome.transport_call_count
+            ),
+            latency_timing_source=(
+                "provider_transport_observed"
+                if deadline_outcome is None
+                else "provider_child_observed"
+            ),
+            hard_deadline_evidence=(
+                None
+                if deadline_outcome is None
+                else deadline_outcome.quiescence_evidence
+            ),
         )
     return PreparedDispatchEvidence(
         terminal_kind="success",
@@ -210,22 +394,42 @@ def dispatch_prepared_request_once(
         provider_response_id=parsed.provider_response_id,
         finish_reason=parsed.finish_reason,
         usage=(None if parsed.usage is None else dict(parsed.usage)),
-        latency_ms=int((perf_counter() - started) * 1000),
+        latency_ms=(
+            int((perf_counter() - started) * 1000)
+            if deadline_outcome is None
+            else deadline_outcome.provider_latency_ms
+        ),
         http_status=(None if response is None else int(response.status_code)),
         resolved_model=getattr(parsed, "resolved_model", None),
         response_model_status=str(
             getattr(parsed, "response_model_status", "missing")
         ),
         error_message=None,
+        transport_call_count=(
+            1 if deadline_outcome is None else deadline_outcome.transport_call_count
+        ),
+        latency_timing_source=(
+            "provider_transport_observed"
+            if deadline_outcome is None
+            else "provider_child_observed"
+        ),
+        hard_deadline_evidence=(
+            None
+            if deadline_outcome is None
+            else deadline_outcome.quiescence_evidence
+        ),
     )
 
 
 def _prepared_failure_evidence(
     *,
     failure_kind: str,
-    latency_ms: int,
+    latency_ms: int | None,
     http_status: int | None,
     message: str,
+    transport_call_count: int = 1,
+    latency_timing_source: str = "provider_transport_observed",
+    hard_deadline_evidence: JsonObject | None = None,
 ) -> PreparedDispatchEvidence:
     return PreparedDispatchEvidence(
         terminal_kind="provider_failure",
@@ -236,11 +440,14 @@ def _prepared_failure_evidence(
         provider_response_id=None,
         finish_reason=None,
         usage=None,
-        latency_ms=max(0, latency_ms),
+        latency_ms=(None if latency_ms is None else max(0, latency_ms)),
         http_status=http_status,
         resolved_model=None,
         response_model_status="unavailable_provider_failure",
         error_message=message[:500],
+        transport_call_count=transport_call_count,
+        latency_timing_source=latency_timing_source,
+        hard_deadline_evidence=hard_deadline_evidence,
     )
 
 
@@ -327,6 +534,7 @@ class AIAPIExecutor:
                     require_json_mode=False,
                 ),
                 attempts=[],
+                provider_attempt_count=0,
                 final_entry_id=None,
                 final_result_kind="executor_error",
                 submitted_at=submitted_at,
@@ -365,6 +573,7 @@ class AIAPIExecutor:
                     "attempt_entry_ids": [],
                 },
                 attempts=[],
+                provider_attempt_count=0,
                 final_entry_id=None,
                 final_result_kind="executor_error",
                 submitted_at=submitted_at,
@@ -404,6 +613,7 @@ class AIAPIExecutor:
                     require_json_mode=require_json_mode,
                 ),
                 attempts=attempts,
+                provider_attempt_count=0,
                 final_entry_id=None,
                 final_result_kind="executor_error",
                 submitted_at=submitted_at,
@@ -447,6 +657,7 @@ class AIAPIExecutor:
             prepared_request_ref: ArtifactRef | None = None
             prepared_hook_completed = False
             dispatch_intent_recorded = False
+            hard_deadline_outcome: HardDeadlineDispatchOutcome | None = None
             try:
                 planned_request = prepare_ai_api_outbound_request(
                     config=self._config,
@@ -499,31 +710,75 @@ class AIAPIExecutor:
                 if self._resolved_secret_observer is not None:
                     self._resolved_secret_observer(api_key)
                 validate_prepared_request(prepared_request)
-                self._invoke_lifecycle_method(
-                    "before_provider_dispatch",
-                    artifact_store=self._artifact_store,
-                    request=request,
-                    submission_id=submission_id,
-                    prepared_request_ref=prepared_request_ref,
-                    prepared_request=prepared_request,
-                    provider_request_identity=request_identity,
-                    provider_family=self._config.provider_family,
-                    model=entry.model,
-                    entry_id=entry.entry_id,
-                    provider_call_count=provider_call_count,
-                    submitted_at=submitted_at,
+                timeout_seconds = int(
+                    self._config.defaults.get("timeout_seconds", 30)
                 )
-                dispatch_intent_recorded = True
-                provider_call_count += 1
-                response = transport.post_chat_completion(
-                    api_key=api_key,
-                    body_bytes=prepared_request.body_bytes,
-                    normalized_absolute_endpoint=(
-                        prepared_request.normalized_absolute_endpoint
-                    ),
-                    content_type="application/json",
-                    timeout_seconds=int(self._config.defaults.get("timeout_seconds", 30)),
-                )
+
+                def record_provider_dispatch() -> None:
+                    nonlocal dispatch_intent_recorded, provider_call_count
+                    self._invoke_lifecycle_method(
+                        "before_provider_dispatch",
+                        artifact_store=self._artifact_store,
+                        request=request,
+                        submission_id=submission_id,
+                        prepared_request_ref=prepared_request_ref,
+                        prepared_request=prepared_request,
+                        provider_request_identity=request_identity,
+                        provider_family=self._config.provider_family,
+                        model=entry.model,
+                        entry_id=entry.entry_id,
+                        provider_call_count=provider_call_count,
+                        submitted_at=submitted_at,
+                    )
+                    dispatch_intent_recorded = True
+                    provider_call_count += 1
+
+                if getattr(
+                    transport, "tokenshare_hard_total_deadline", False
+                ) is True:
+                    hard_deadline_outcome = _dispatch_hard_deadline_through_exact_transport(
+                        exact_transport=transport,
+                        provider_family=self._config.provider_family,
+                        api_key=api_key,
+                        body_bytes=prepared_request.body_bytes,
+                        normalized_absolute_endpoint=(
+                            prepared_request.normalized_absolute_endpoint
+                        ),
+                        content_type="application/json",
+                        hard_total_seconds=float(timeout_seconds),
+                        on_transport_start=record_provider_dispatch,
+                    )
+                    if hard_deadline_outcome.status == "pre_dispatch_failure":
+                        raise _HardDeadlinePreDispatchError(hard_deadline_outcome)
+                    if hard_deadline_outcome.status != "completed":
+                        error_type = {
+                            "deepseek": DeepSeekProviderError,
+                            "openai": OpenAIProviderError,
+                            "siliconflow": SiliconFlowProviderError,
+                        }[self._config.provider_family]
+                        raise error_type(
+                            error_kind=(
+                                hard_deadline_outcome.failure_kind
+                                or "provider_error"
+                            ),
+                            http_status=hard_deadline_outcome.http_status,
+                            message=(
+                                hard_deadline_outcome.error_message
+                                or "provider child returned no response"
+                            ),
+                        )
+                    response = hard_deadline_outcome.response
+                else:
+                    record_provider_dispatch()
+                    response = transport.post_chat_completion(
+                        api_key=api_key,
+                        body_bytes=prepared_request.body_bytes,
+                        normalized_absolute_endpoint=(
+                            prepared_request.normalized_absolute_endpoint
+                        ),
+                        content_type="application/json",
+                        timeout_seconds=timeout_seconds,
+                    )
                 final_result = parse_provider_response(response)
                 final_entry = entry
                 final_request_identity = request_identity
@@ -534,6 +789,39 @@ class AIAPIExecutor:
                         "succeeded",
                         perf_counter() - started,
                         response.status_code,
+                        extra=_hard_deadline_attempt_extra(
+                            hard_deadline_outcome
+                        ),
+                        provider_request_identity=request_identity,
+                    )
+                )
+                break
+            except _HardDeadlinePreDispatchError as exc:
+                hard_deadline_outcome = exc.outcome
+                if prepared_hook_completed and prepared_request_ref is not None:
+                    self._invoke_lifecycle_method(
+                        "after_pre_transport_abort",
+                        artifact_store=self._artifact_store,
+                        request=request,
+                        submission_id=submission_id,
+                        prepared_request_ref=prepared_request_ref,
+                        provider_request_identity=request_identity,
+                        provider_family=self._config.provider_family,
+                        model=entry.model,
+                        entry_id=entry.entry_id,
+                        abort_kind="executor_error",
+                        provider_call_count=provider_call_count,
+                        submitted_at=submitted_at,
+                    )
+                attempts.append(
+                    _attempt_record(
+                        self._config.provider_family,
+                        entry,
+                        "executor_error",
+                        perf_counter() - started,
+                        None,
+                        message=_redact_text(str(exc), resolved_secret_values),
+                        extra=_hard_deadline_attempt_extra(hard_deadline_outcome),
                         provider_request_identity=request_identity,
                     )
                 )
@@ -603,10 +891,17 @@ class AIAPIExecutor:
                         perf_counter() - started,
                         exc.http_status,
                         message=_redact_text(exc.message, resolved_secret_values),
+                        extra=_hard_deadline_attempt_extra(
+                            hard_deadline_outcome
+                        ),
                         provider_request_identity=request_identity,
                     )
                 )
-                if exc.error_kind in {"invalid_output", "client_error"}:
+                if exc.error_kind in {
+                    "invalid_output",
+                    "client_error",
+                    "no_response",
+                }:
                     terminal_error = exc
                     break
         if final_result is None or final_entry is None or final_request_identity is None:
@@ -620,6 +915,7 @@ class AIAPIExecutor:
                 if last_result_kind
                 in {
                     "timeout",
+                    "no_response",
                     "connection_error",
                     "rate_limited",
                     "provider_error",
@@ -655,6 +951,7 @@ class AIAPIExecutor:
                 request=request,
                 selection=selection.to_dict(),
                 attempts=attempts,
+                provider_attempt_count=provider_call_count,
                 final_entry_id=None,
                 final_result_kind=result_kind,
                 submitted_at=submitted_at,
@@ -778,6 +1075,7 @@ class AIAPIExecutor:
                 request=request,
                 selection=selection.to_dict(),
                 attempts=attempts,
+                provider_attempt_count=provider_call_count,
                 final_entry_id=final_entry.entry_id,
                 raw_output_ref=raw_ref,
                 submitted_at=submitted_at,
@@ -824,6 +1122,7 @@ class AIAPIExecutor:
                 request=request,
                 selection=selection.to_dict(),
                 attempts=attempts,
+                provider_attempt_count=provider_call_count,
                 final_entry_id=final_entry.entry_id,
                 final_result_kind=hook_result_kind,
                 submitted_at=submitted_at,
@@ -864,6 +1163,7 @@ class AIAPIExecutor:
                         request=request,
                         selection=selection.to_dict(),
                         attempts=attempts,
+                        provider_attempt_count=provider_call_count,
                         final_entry_id=final_entry.entry_id,
                         final_result_kind="parse_failed",
                         submitted_at=submitted_at,
@@ -913,6 +1213,7 @@ class AIAPIExecutor:
                     request=request,
                     selection=selection.to_dict(),
                     attempts=attempts,
+                    provider_attempt_count=provider_call_count,
                     final_entry_id=final_entry.entry_id,
                     final_result_kind="parse_failed",
                     submitted_at=submitted_at,
@@ -947,6 +1248,7 @@ class AIAPIExecutor:
             request=request,
             selection=selection.to_dict(),
             attempts=attempts,
+            provider_attempt_count=provider_call_count,
             final_entry_id=final_entry.entry_id,
             final_result_kind=result_kind,
             submitted_at=submitted_at,
@@ -1081,6 +1383,7 @@ class AIAPIExecutor:
         request: ExecutionRequest,
         selection: JsonObject,
         attempts: list[JsonObject],
+        provider_attempt_count: int,
         final_entry_id: str | None,
         final_result_kind: str,
         submitted_at: str,
@@ -1094,6 +1397,7 @@ class AIAPIExecutor:
                 "config_digest": self._config.config_digest,
                 "selection_record": selection,
                 "attempts": attempts,
+                "provider_attempt_count": provider_attempt_count,
                 "final_entry_id": final_entry_id,
                 "final_result_kind": final_result_kind,
                 "secret_redaction": {
@@ -1191,6 +1495,7 @@ class AIAPIExecutor:
         request: ExecutionRequest,
         selection: JsonObject,
         attempts: list[JsonObject],
+        provider_attempt_count: int,
         final_entry_id: str,
         raw_output_ref: ArtifactRef,
         submitted_at: str,
@@ -1206,6 +1511,7 @@ class AIAPIExecutor:
                 "config_digest": self._config.config_digest,
                 "selection_record": selection,
                 "attempts": attempts,
+                "provider_attempt_count": provider_attempt_count,
                 "final_entry_id": final_entry_id,
                 "raw_output_ref": raw_output_ref.to_dict(),
                 "lifecycle_stage": "provider_response_persisted_before_parser",
@@ -1318,6 +1624,29 @@ class AIAPIExecutor:
             error=error,
             submitted_at=submitted_at,
         )
+
+
+def _hard_deadline_attempt_extra(
+    outcome: HardDeadlineDispatchOutcome | None,
+) -> JsonObject | None:
+    if outcome is None:
+        return None
+    return {
+        "latency_ms": outcome.provider_latency_ms,
+        "latency_timing_source": _hard_deadline_latency_timing_source(outcome),
+        "transport_call_count": outcome.transport_call_count,
+        "hard_deadline_evidence": dict(outcome.quiescence_evidence),
+    }
+
+
+def _hard_deadline_latency_timing_source(
+    outcome: HardDeadlineDispatchOutcome,
+) -> str:
+    if outcome.status == "pre_dispatch_failure":
+        return "unavailable_pre_dispatch"
+    if outcome.provider_latency_ms is None:
+        return "unknown_no_response"
+    return "provider_child_observed"
 
 
 def _attempt_record(
@@ -1784,3 +2113,44 @@ def _build_pre_secret_provider_selection(
 def _exact_transport_for_provider(transport: Any, provider_family: str) -> Any:
     resolver = getattr(transport, "tokenshare_transport_for_provider", None)
     return resolver(provider_family) if callable(resolver) else transport
+
+
+def _dispatch_hard_deadline_through_exact_transport(
+    *,
+    exact_transport: Any,
+    provider_family: str,
+    api_key: str,
+    body_bytes: bytes,
+    normalized_absolute_endpoint: str,
+    content_type: str,
+    hard_total_seconds: float,
+    on_transport_start: Callable[[], None] | None = None,
+) -> HardDeadlineDispatchOutcome:
+    """ready ack 后才穿过 exact/accounted transport，且该边界恰好一次。"""
+
+    session = prepare_provider_transport_hard_deadline_session(
+        provider_family=provider_family,
+        api_key=api_key,
+        body_bytes=body_bytes,
+        normalized_absolute_endpoint=normalized_absolute_endpoint,
+        content_type=content_type,
+        hard_total_seconds=hard_total_seconds,
+    )
+    try:
+        if session.pre_dispatch_outcome is not None:
+            return session.pre_dispatch_outcome
+        if on_transport_start is not None:
+            on_transport_start()
+        outcome = exact_transport.post_chat_completion(
+            api_key=api_key,
+            body_bytes=body_bytes,
+            normalized_absolute_endpoint=normalized_absolute_endpoint,
+            content_type=content_type,
+            timeout_seconds=int(hard_total_seconds),
+            hard_deadline_session=session,
+        )
+        if type(outcome) is not HardDeadlineDispatchOutcome:
+            raise TypeError("hard-deadline exact transport returned invalid outcome")
+        return outcome
+    finally:
+        session.close()

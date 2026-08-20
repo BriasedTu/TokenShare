@@ -260,6 +260,7 @@ def project_exp3_trace_condition(
         EXP3_TRACE_NUMERIC_FIELDS,
         bundle,
     )
+    cells = _normalize_exp3_trace_cells(cells)
     return Exp3TraceObservationRow(
         condition_id=value.condition_id,
         fault_type=value.fault_type,
@@ -269,6 +270,50 @@ def project_exp3_trace_condition(
         audit_ratios=_trace_audit_ratios(value, member_facts),
         paper_eligible=False,
     )
+
+
+def _normalize_exp3_trace_cells(
+    cells: tuple[Exp3ObservationCell, ...],
+) -> tuple[Exp3ObservationCell, ...]:
+    """把已知的 per-metric operand 不可用保持为明确 NA，而不连坐其他 cells。"""
+
+    result: list[Exp3ObservationCell] = []
+    for cell in cells:
+        if (
+            cell.metric_id == "kill_progress_error_pp"
+            and cell.reason == "pair_cardinality_not_one"
+            and len(cell.included_member_ids) > 1
+        ):
+            result.append(
+                replace(
+                    cell,
+                    value=None,
+                    reason="multiple_deaths_use_signed_aggregates",
+                    publish_blocked=False,
+                    blocked_member_ids=(),
+                )
+            )
+        elif (
+            cell.metric_id == "trace_replay_wall_clock_overhead_ms"
+            and isinstance(cell.reason, str)
+            and cell.reason.startswith("invalid_member_field:")
+            and (
+                cell.reason.endswith(":fault_trace_replay_wall_clock_ms")
+                or cell.reason.endswith(":reference_trace_replay_wall_clock_ms")
+            )
+        ):
+            result.append(
+                replace(
+                    cell,
+                    value=None,
+                    reason="reference_replay_wall_clock_unavailable",
+                    publish_blocked=False,
+                    blocked_member_ids=(),
+                )
+            )
+        else:
+            result.append(cell)
+    return tuple(result)
 
 
 def project_exp3_online_recovery(

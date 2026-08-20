@@ -169,7 +169,11 @@ def _validated_runtime(
             row.planned_ai_unit_id for row in rows
         )
     )
-    return PaperTraceRuntimeContext(resolver=resolver, bindings=bindings)
+    return PaperTraceRuntimeContext(
+        resolver=resolver,
+        bindings=bindings,
+        inventory_rows=resolver.index.inventory_rows,
+    )
 
 
 def _recursive_size(value: Any, seen: set[int] | None = None) -> int:
@@ -408,7 +412,13 @@ def _pressure_trace_context(
                 sort_keys=True,
             ).encode("utf-8"),
             "usage": b'{"usage_status":"reported","usage":{"total_tokens":7}}',
-            "latency": b'{"latency_ms":1}',
+            "latency": json.dumps(
+                {
+                    "schema_version": "tokenshare.response_bank_latency.v1",
+                    "latency_ms": 1,
+                },
+                sort_keys=True,
+            ).encode("utf-8"),
             "pricing": b'{"cost_usd":"0.01"}',
             "acquisition_attempt": b'{"attempt":"approved"}',
             "model_record": json.dumps(
@@ -467,6 +477,7 @@ def _pressure_trace_context(
         row = row_by_case_digest[case_digest]
         runtime = PaperTraceRuntimeContext(
             resolver=resolver,
+            inventory_rows=(row,),
             bindings=(
                 freeze_trace_source_binding(
                     resolver,
@@ -553,6 +564,7 @@ def test_two_worker_trace_roots_overlap_on_deterministic_condition_lanes(
         _formal_execution_kwargs,
         _generation_records,
         _planned_dispatch_plan,
+        _with_ai_unit_commitments,
     )
     from tokenshare.experiments.paper_formal_callbacks import (
         ScheduledConditionAccumulator,
@@ -698,10 +710,13 @@ def test_two_worker_trace_roots_overlap_on_deterministic_condition_lanes(
                 "lean_cases": (),
                 "lean_lemma_graph_cases": (),
             },
-            "budget": _budget(
-                planned_conditions=1,
-                planned_root_runs=3,
-                planned_ai_units=3,
+            "budget": _with_ai_unit_commitments(
+                _budget(
+                    planned_conditions=1,
+                    planned_root_runs=3,
+                    planned_ai_units=3,
+                ),
+                *plan.bound_items(),
             ),
             "trace_context": trace_context,
             "transport": _ForbiddenOfflineCapturingTransport(),
@@ -765,6 +780,7 @@ def test_500_distinct_factor_roots_stream_through_formal_trace_and_checkpoint(
         _formal_execution_kwargs,
         _generation_records,
         _planned_dispatch_plan,
+        _with_ai_unit_commitments,
     )
     from tokenshare.experiments.paper_exp1 import (
         EXP1_BASELINE_ENTRY_ID,
@@ -897,6 +913,10 @@ def test_500_distinct_factor_roots_stream_through_formal_trace_and_checkpoint(
         planned_conditions=5,
         planned_root_runs=500,
         planned_ai_units=500,
+    )
+    pressure_budget = _with_ai_unit_commitments(
+        pressure_budget,
+        *plan.bound_items(),
     )
     from tokenshare.experiments import paper_budget
 

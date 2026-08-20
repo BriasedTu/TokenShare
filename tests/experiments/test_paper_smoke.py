@@ -95,6 +95,157 @@ def test_smoke_suite_forwards_results_first_trace_context(
     ) is terminal
     assert captured[0]["trace_context"] is trace_context
     assert captured[0]["real_transport"] is False
+
+
+def test_smoke_suite_forwards_exp5_typed_root_callback_factory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import paper_formal_evidence, paper_formal_runner
+    from tokenshare.experiments import paper_smoke as smoke
+    from tokenshare.experiments import paper_smoke_report
+
+    captured: list[dict[str, object]] = []
+    online_root_callback_factory = object()
+    monkeypatch.setattr(
+        paper_formal_runner,
+        "execute_paper_formal_suite",
+        lambda **kwargs: captured.append(kwargs)
+        or SimpleNamespace(status="completed", provider_attempt_count=0),
+    )
+    monkeypatch.setattr(
+        paper_smoke_report,
+        "generate_paper_smoke_report",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        paper_formal_evidence.FormalEvidenceStore,
+        "_refresh_evidence_manifest",
+        lambda _self: None,
+    )
+    profile = SimpleNamespace(
+        profile_digest="sha256:" + "a" * 64,
+        baseline_policy="omitted_for_smoke_regression",
+        suite_id="exp5-typed-root-authority",
+        to_dict=lambda: {},
+    )
+    execution_plan = SimpleNamespace(
+        profile_digest=profile.profile_digest,
+        baseline_policy=profile.baseline_policy,
+        dispatch_plans=(),
+        output_root=tmp_path,
+        root_case_filter={},
+        to_dict=lambda: {},
+    )
+
+    smoke.execute_paper_smoke_suite(
+        profile=profile,
+        execution_plan=execution_plan,
+        catalog_manifest=object(),
+        budget=SimpleNamespace(
+            quota_preflight={"budget_approval": {"approval_mode": "plan_only"}}
+        ),
+        ai_api_configs={},
+        transport=object(),
+        real_transport=False,
+        hard_limits={},
+        online_root_callback_factory=online_root_callback_factory,
+        launch_manifest={},
+    )
+
+    assert captured[0]["online_root_callback_factory"] is online_root_callback_factory
+
+
+def test_smoke_service_authority_carries_exp5_typed_root_callback_factory() -> None:
+    from tokenshare.experiments.paper_smoke import (
+        SMOKE_INELIGIBILITY_REASONS,
+        build_paper_smoke_service_authority,
+    )
+
+    class TypedRootCallbackFactory:
+        serialize_roots = False
+
+        def __call__(self, **_root_context: object) -> object:
+            return object()
+
+    root_callback_factory = TypedRootCallbackFactory()
+    profile = SimpleNamespace(
+        experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+        formal=False,
+        pilot_only=True,
+        regression_only=True,
+        paper_eligible=False,
+        ineligibility_reasons=SMOKE_INELIGIBILITY_REASONS,
+        profile_digest="sha256:" + "b" * 64,
+        baseline_policy="required_by_formal_plan",
+    )
+    execution_plan = SimpleNamespace(
+        profile_digest=profile.profile_digest,
+        experiment_ids=profile.experiment_ids,
+        baseline_policy=profile.baseline_policy,
+        execution_plan_digest="sha256:" + "c" * 64,
+    )
+    service = build_paper_smoke_service_authority(
+        scope="exp5_capability_smoke",
+        authorized_plan_digest="sha256:" + "d" * 64,
+        profile=profile,
+        execution_plan=execution_plan,
+        catalog_manifest=object(),
+        budget=SimpleNamespace(budget_digest="sha256:" + "e" * 64),
+        ai_api_configs={"siliconflow": object()},
+        transport=object(),
+        hard_limits={"max_total_provider_attempts": 1},
+        online_root_callback_factory=root_callback_factory,
+        resume=False,
+        launch_manifest={},
+    )
+
+    assert (
+        service.keyword_arguments["online_root_callback_factory"]
+        is root_callback_factory
+    )
+
+
+def test_smoke_service_authority_rejects_missing_exp5_typed_root_callback_factory() -> None:
+    from tokenshare.experiments.paper_smoke import (
+        SMOKE_INELIGIBILITY_REASONS,
+        build_paper_smoke_service_authority,
+    )
+
+    profile = SimpleNamespace(
+        experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+        formal=False,
+        pilot_only=True,
+        regression_only=True,
+        paper_eligible=False,
+        ineligibility_reasons=SMOKE_INELIGIBILITY_REASONS,
+        profile_digest="sha256:" + "b" * 64,
+        baseline_policy="required_by_formal_plan",
+    )
+    execution_plan = SimpleNamespace(
+        profile_digest=profile.profile_digest,
+        experiment_ids=profile.experiment_ids,
+        baseline_policy=profile.baseline_policy,
+        execution_plan_digest="sha256:" + "c" * 64,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="capability smoke requires typed Exp5 root callback authority",
+    ):
+        build_paper_smoke_service_authority(
+            scope="exp5_capability_smoke",
+            authorized_plan_digest="sha256:" + "d" * 64,
+            profile=profile,
+            execution_plan=execution_plan,
+            catalog_manifest=object(),
+            budget=SimpleNamespace(budget_digest="sha256:" + "e" * 64),
+            ai_api_configs={"siliconflow": object()},
+            transport=object(),
+            hard_limits={"max_total_provider_attempts": 1},
+            resume=False,
+            launch_manifest={},
+        )
 MATRIX8_SMOKE_PROFILES = tuple(
     REPO_ROOT / f"benchmarks/paper/paper_smoke_exp{experiment}_matrix8_profile.v1.json"
     for experiment in range(1, 5)
@@ -497,6 +648,9 @@ def test_exp5_v4_standalone_smoke_profile_binds_active_selection() -> None:
     )
     assert profile.exp5_v3_contract["selection_digest"] == (
         "sha256:452f25dcc53a1eb0387665c6f451f1320095efb0c4bf154af62bf5e388afb6b2"
+    )
+    assert profile.exp5_v3_contract["provider_config_digest"] == (
+        "sha256:5135c1c2da0f7512b9891f4ea35c65891044dab544d7ad01230ef1db43ff4b5d"
     )
 
 

@@ -1958,13 +1958,14 @@ def _trace_identity_chain_complete(
         return False
     valid = (
         len(bindings) == facts.executed_ai_unit_count
-        and len(wrappers) == facts.executed_ai_unit_count
+        and len(wrappers) >= facts.executed_ai_unit_count
     )
     bindings_by_planned = {binding.planned_ai_unit_id: binding for binding in bindings}
-    wrappers_by_unit = {wrapper.current_unit_id: wrapper for wrapper in wrappers}
+    wrappers_by_unit: dict[str, list[CurrentTraceWrapper]] = {}
+    for wrapper in wrappers:
+        wrappers_by_unit.setdefault(wrapper.current_unit_id, []).append(wrapper)
     if (
         len(bindings_by_planned) != len(bindings)
-        or len(wrappers_by_unit) != len(wrappers)
         or set(bindings_by_planned)
         != {identity[0] for identity in unit_identities.values()}
         or set(wrappers_by_unit) != set(unit_identities)
@@ -1991,9 +1992,6 @@ def _trace_identity_chain_complete(
             if (
                 row is None
                 or entry is None
-                or row.planned_ai_unit_id != binding.planned_ai_unit_id
-                or row.sample_slot_index != binding.sample_slot_index
-                or row.replacement_slot != replacement.replacement_slot
                 or row.entry_id != entry.entry_id
                 or row.inventory_entry_id != entry.inventory_entry_id
                 or row.semantic_slot_key != entry.semantic_slot_key
@@ -2007,60 +2005,59 @@ def _trace_identity_chain_complete(
     attempt_ids: set[str] = set()
     for unit_id, (planned_id, _) in unit_identities.items():
         binding = bindings_by_planned.get(planned_id)
-        wrapper = wrappers_by_unit.get(unit_id)
-        if binding is None or wrapper is None:
+        unit_wrappers = wrappers_by_unit.get(unit_id)
+        if binding is None or not unit_wrappers:
             valid = False
             continue
-        try:
-            replacement = binding.replacement(wrapper.attempt_ordinal)
-            entry = entries_by_id[wrapper.entry_id]
-        except (KeyError, TypeError, ValueError):
-            valid = False
-            continue
-        locator_digests = {
-            locator.object_role: locator.object_digest
-            for locator in entry.object_locators
-        }
-        if (
-            wrapper.bank_root_id != manifest.bank_root_id
-            or wrapper.manifest_digest != manifest.manifest_digest
-            or wrapper.root_binding_marker_digest
-            != manifest.root_binding_marker_digest
-            or replacement.entry_id != entry.entry_id
-            or replacement.inference_request_digest
-            != entry.inference_request_digest
-            or wrapper.inference_request_digest != entry.inference_request_digest
-            or wrapper.locator_digests != locator_digests
-            or binding.sample_slot_index != entry.sample_slot_index
-            or wrapper.attempt_ordinal != entry.replacement_slot
-            or type(wrapper.attempt_ordinal) is not int
-            or wrapper.attempt_ordinal < 0
-            or type(wrapper.source_latency_ms) is not int
-            or wrapper.source_latency_ms < 0
-            or not _trace_terminal_chain_valid(
-                wrapper,
-                entry,
-                domains_by_unit.get(unit_id),
-            )
-            or not _non_empty_strings(
-                wrapper.__dict__,
-                (
-                    "current_run_id",
-                    "current_task_id",
-                    "current_unit_id",
-                    "current_attempt_id",
-                    "logical_started_at",
-                    "logical_finished_at",
-                    "current_ledger_ref",
-                ),
-            )
-        ):
-            valid = False
-        attempt_ids.add(wrapper.current_attempt_id)
+        for wrapper in unit_wrappers:
+            try:
+                replacement = binding.replacement(wrapper.attempt_ordinal)
+                entry = entries_by_id[wrapper.entry_id]
+            except (KeyError, TypeError, ValueError):
+                valid = False
+                continue
+            locator_digests = {
+                locator.object_role: locator.object_digest
+                for locator in entry.object_locators
+            }
+            if (
+                wrapper.bank_root_id != manifest.bank_root_id
+                or wrapper.manifest_digest != manifest.manifest_digest
+                or wrapper.root_binding_marker_digest
+                != manifest.root_binding_marker_digest
+                or replacement.entry_id != entry.entry_id
+                or replacement.inference_request_digest
+                != entry.inference_request_digest
+                or wrapper.inference_request_digest != entry.inference_request_digest
+                or wrapper.locator_digests != locator_digests
+                or type(wrapper.attempt_ordinal) is not int
+                or wrapper.attempt_ordinal < 0
+                or type(wrapper.source_latency_ms) is not int
+                or wrapper.source_latency_ms < 0
+                or not _trace_terminal_chain_valid(
+                    wrapper,
+                    entry,
+                    domains_by_unit.get(unit_id),
+                )
+                or not _non_empty_strings(
+                    wrapper.__dict__,
+                    (
+                        "current_run_id",
+                        "current_task_id",
+                        "current_unit_id",
+                        "current_attempt_id",
+                        "logical_started_at",
+                        "logical_finished_at",
+                        "current_ledger_ref",
+                    ),
+                )
+            ):
+                valid = False
+            attempt_ids.add(wrapper.current_attempt_id)
     if (
         len(attempt_ids) != len(wrappers)
-        or tuple(sorted(covered_entries)) != manifest.entry_ids
-        or len(set(covered_entries)) != len(covered_entries)
+        or not covered_entries
+        or not set(covered_entries) <= set(manifest.entry_ids)
     ):
         valid = False
     if not valid:

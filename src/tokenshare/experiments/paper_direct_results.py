@@ -54,6 +54,7 @@ CONDITION_AXIS_KEYS = (
     "ablation_mode",
     "model_endpoint_id",
 )
+LEAN_MIXED_TOPIC_FAMILY_AXIS = "mixed_topic_family"
 
 _CONDITION_MANIFEST_SCHEMA = "tokenshare.preregistered_condition_manifest.v1"
 _CONDITION_RECORD_SCHEMA = "tokenshare.preregistered_condition_record.v1"
@@ -61,7 +62,8 @@ _CONDITION_REF_SCHEMA = "tokenshare.preregistered_condition_ref.v1"
 _CATALOG_MANIFEST_SCHEMA = "tokenshare.preregistered_case_catalog_manifest.v1"
 _CASE_RECORD_SCHEMA = "tokenshare.preregistered_case_record.v1"
 _CASE_REF_SCHEMA = "tokenshare.preregistered_case_ref.v1"
-_VERDICT_SCHEMA = "tokenshare.paper_direct_correctness_verdict.v1"
+_LEAN_CASE_RECORD_SCHEMA = "tokenshare.preregistered_lean_case_record.v1"
+_LEAN_CASE_REF_SCHEMA = "tokenshare.preregistered_lean_case_ref.v1"
 _ACTUAL_RESOURCE_BOOK_SCHEMA = "tokenshare.paper_actual_resource_book.v1"
 _PARSER_ROLES = frozenset({"parser_result", "parse_failure"})
 
@@ -89,8 +91,15 @@ _REGRESSION_SOURCE_ROLES = frozenset(
     {"raw_output", "provenance", "model_record"}
 )
 _VERIFIER_ROLES = frozenset(
-    {"independent_verdict", "lean_checker_verdict", "verification_report"}
+    {
+        "independent_verdict",
+        "lean_checker_verdict",
+        "root_checker_report",
+        "verification_report",
+    }
 )
+from tokenshare.plugins.lean_proof.checker import render_lean_source
+from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
 _DIRECT_RUNTIME_STATUSES = frozenset(
     {
         "completed",
@@ -461,6 +470,7 @@ class NativeDirectArtifactBundle:
     actual_resource_book_ref: ArtifactRef | None
     independent_verdict_ref: ArtifactRef | None
     parser_refs: tuple[ArtifactRef, ...]
+    domain_report_refs: tuple[ArtifactRef, ...] = ()
 
     def __iter__(self):
         yield self.actual_resource_book_ref
@@ -468,8 +478,11 @@ class NativeDirectArtifactBundle:
 
     def to_dict(self) -> JsonObject:
         body: JsonObject = {
-            "schema_version": "tokenshare.paper_direct_native_artifacts.v1",
+            "schema_version": "tokenshare.paper_direct_native_artifacts.v2",
             "parser_refs": [ref.to_dict() for ref in self.parser_refs],
+            "domain_report_refs": [
+                ref.to_dict() for ref in self.domain_report_refs
+            ],
         }
         if self.actual_resource_book_ref is not None:
             body["actual_resource_book_ref"] = (
@@ -495,6 +508,7 @@ def persist_native_online_direct_artifacts(
         Mapping[str, Sequence[ArtifactRef]] | Sequence[ArtifactRef] | None
     ) = None,
     parser_object_refs: Mapping[str, Sequence[ArtifactRef]] | None = None,
+    domain_report_refs: Sequence[ArtifactRef] = (),
 ) -> NativeDirectArtifactBundle:
     """在 adapter 原生 store 内投影 direct ABI，不重新判断 correctness。"""
 
@@ -560,6 +574,9 @@ def persist_native_online_direct_artifacts(
         for role in sorted(normalized_parser_by_role)
         for ref in normalized_parser_by_role[role]
     )
+    normalized_domain_report_refs = tuple(domain_report_refs)
+    if any(not isinstance(ref, ArtifactRef) for ref in normalized_domain_report_refs):
+        raise TypeError("native domain report refs must contain ArtifactRef")
     identity_refs = tuple(
         ref
         for ref in (final_result_ref, oracle_verdict_ref)
@@ -571,12 +588,14 @@ def persist_native_online_direct_artifacts(
             *identity_refs,
             *source_refs,
             *parser_source_refs,
+            *normalized_domain_report_refs,
         )
     )
     supplied = (
         *identity_refs,
         *source_refs,
         *parser_source_refs,
+        *normalized_domain_report_refs,
     )
     if any(left.to_dict() != right.to_dict() for left, right in zip(authoritative, supplied)):
         raise ValueError("native direct source artifact identity mismatch")
@@ -704,42 +723,16 @@ def persist_native_online_direct_artifacts(
             },
             created_at=created_at_ref.created_at,
         )
-    verdict_ref: ArtifactRef | None = None
-    if isinstance(final_result_ref, ArtifactRef) and isinstance(
-        oracle_verdict_ref,
-        ArtifactRef,
-    ):
-        verdict_ref = artifact_store.save_json(
-        {
-            "schema_version": _VERDICT_SCHEMA,
-            "execution_id": execution_id,
-            "task_id": task_id,
-            "root_unit_id": root_unit_id,
-            "final_artifact_id": final_result_ref.artifact_id,
-            "final_content_hash": final_result_ref.content_hash,
-            "final_size_bytes": final_result_ref.size_bytes,
-            "verdict_kind": oracle_kind,
-            "correct": oracle_correct,
-        },
-        artifact_id=f"paper_direct_verdict_{identity_suffix}",
-        artifact_type="PaperDirectCorrectnessVerdict",
-        artifact_schema_id=_VERDICT_SCHEMA,
-        artifact_schema_version="v1",
-        source={
-            "kind": "native_oracle_direct_projection",
-            "role": "independent_verdict",
-            "execution_id": execution_id,
-            "task_id": task_id,
-            "oracle_verdict_ref": oracle_verdict_ref.to_dict(),
-            **({"oracle_fact": dict(oracle_fact)} if oracle_fact is not None else {}),
-        },
-        metadata={"oracle_kind": oracle_kind},
-        created_at=oracle_verdict_ref.created_at,
-        )
+    # correctness 不能由 adapter 传入的 bool 再包装成自报 verdict。这里仅携带
+    # domain verifier/checker 的原生 artifact；canonical closure 会实际读取它。
+    verdict_ref = (
+        oracle_verdict_ref if isinstance(oracle_verdict_ref, ArtifactRef) else None
+    )
     return NativeDirectArtifactBundle(
         actual_resource_book_ref=resource_ref,
         independent_verdict_ref=verdict_ref,
         parser_refs=parser_refs,
+        domain_report_refs=normalized_domain_report_refs,
     )
 
 
@@ -947,10 +940,12 @@ def build_canonical_direct_evidence(
             verdict_ref,
             verifier_checker_refs,
             artifact_store=artifact_store,
+            inventory_row=inventory_row,
             execution_id=execution_id,
             task_id=task_id,
             root_unit_id=root_unit_id,
             final_result_ref=final_snapshot,
+            events=tuple(event.to_dict() for event in events),
         )
 
     canonical_event = (
@@ -1350,21 +1345,31 @@ def _catalog_index(
         if not isinstance(records, (list, tuple)) or not records:
             raise ValueError("catalog records must be non-empty")
         for record in records:
-            _exact_keys(
-                record,
-                {
-                    "schema_version",
-                    "case_id",
-                    "domain",
-                    "difficulty",
-                    "case_axes_digest",
-                    "factor_position_quantile",
-                    "position_stratum",
-                    "case_record_digest",
-                },
-                "case record",
+            expected_record_keys = {
+                "schema_version",
+                "case_id",
+                "domain",
+                "difficulty",
+                "case_axes_digest",
+                "factor_position_quantile",
+                "position_stratum",
+                "case_record_digest",
+            }
+            if isinstance(record, Mapping) and record.get("domain") == "lean_proof":
+                expected_record_keys.update(
+                    {
+                        "official_case_digest",
+                        "official_root_theorem_id",
+                        "official_root_theorem_payload_digest",
+                    }
+                )
+            _exact_keys(record, expected_record_keys, "case record")
+            expected_record_schema = (
+                _LEAN_CASE_RECORD_SCHEMA
+                if record["domain"] == "lean_proof"
+                else _CASE_RECORD_SCHEMA
             )
-            if record["schema_version"] != _CASE_RECORD_SCHEMA:
+            if record["schema_version"] != expected_record_schema:
                 raise ValueError("unsupported case record schema")
             record_body = {
                 key: value
@@ -1373,6 +1378,26 @@ def _catalog_index(
             }
             if digest_json(record_body) != record["case_record_digest"]:
                 raise ValueError("case record digest mismatch")
+            _validate_case_identity_axes(record)
+            if record["domain"] == "lean_proof":
+                for field_name in (
+                    "official_case_digest",
+                    "official_root_theorem_payload_digest",
+                ):
+                    value = record[field_name]
+                    if (
+                        not isinstance(value, str)
+                        or not value.startswith("sha256:")
+                        or len(value) != 71
+                    ):
+                        raise ValueError(
+                            f"Lean case record {field_name} is invalid"
+                        )
+                if (
+                    not isinstance(record["official_root_theorem_id"], str)
+                    or not record["official_root_theorem_id"]
+                ):
+                    raise ValueError("Lean case record theorem identity is missing")
             case_axes = {
                 "factor_position_quantile": record["factor_position_quantile"],
                 "position_stratum": record["position_stratum"],
@@ -1437,33 +1462,65 @@ def _validate_case_binding(
         raise ValueError("catalog is missing inventory case")
     manifest, record = found
     ref = row.preregistered_case_ref
-    _exact_keys(
-        ref,
-        {
-            "schema_version",
-            "catalog_digest",
-            "case_record_digest",
-            "case_axes_digest",
-            "factor_position_quantile",
-            "position_stratum",
-        },
-        "case ref",
+    expected_ref_keys = {
+        "schema_version",
+        "catalog_digest",
+        "case_record_digest",
+        "case_axes_digest",
+        "factor_position_quantile",
+        "position_stratum",
+    }
+    if record["domain"] == "lean_proof":
+        expected_ref_keys.update(
+            {
+                "official_case_digest",
+                "official_root_theorem_id",
+                "official_root_theorem_payload_digest",
+            }
+        )
+    _exact_keys(ref, expected_ref_keys, "case ref")
+    expected_ref_schema = (
+        _LEAN_CASE_REF_SCHEMA
+        if record["domain"] == "lean_proof"
+        else _CASE_REF_SCHEMA
     )
     expected = {
-        "schema_version": _CASE_REF_SCHEMA,
+        "schema_version": expected_ref_schema,
         "catalog_digest": manifest["catalog_digest"],
         "case_record_digest": record["case_record_digest"],
         "case_axes_digest": record["case_axes_digest"],
         "factor_position_quantile": record["factor_position_quantile"],
         "position_stratum": record["position_stratum"],
+        **(
+            {
+                "official_case_digest": record["official_case_digest"],
+                "official_root_theorem_id": record[
+                    "official_root_theorem_id"
+                ],
+                "official_root_theorem_payload_digest": record[
+                    "official_root_theorem_payload_digest"
+                ],
+            }
+            if record["domain"] == "lean_proof"
+            else {}
+        ),
     }
     if _thaw(ref) != expected:
         raise ValueError("case ref is not digest-bound to catalog record")
-    if (
-        record["domain"] != row.condition_axes["domain"]
-        or record["difficulty"] != row.condition_axes["difficulty"]
-    ):
-        raise ValueError("case record axes do not match condition axes")
+
+
+def _validate_case_identity_axes(record: Mapping[str, Any]) -> None:
+    domain = record["domain"]
+    difficulty = record["difficulty"]
+    if domain == "factorization":
+        if difficulty not in {"easy", "medium", "hard"}:
+            raise ValueError("invalid factorization case axes")
+        return
+    if domain == "lean_proof":
+        if difficulty not in {"simple", "medium_lemma_dag", "hard_frontier"}:
+            raise ValueError("invalid Lean case axes")
+        return
+    raise ValueError("unsupported case domain")
 
 
 def _validate_condition_axes(value: Any) -> None:
@@ -1481,6 +1538,7 @@ def _validate_condition_axes(value: Any) -> None:
         "pure_logic",
         "function_set",
         "induction",
+        LEAN_MIXED_TOPIC_FAMILY_AXIS,
     }:
         raise ValueError("invalid Lean axes")
     _strict_int("worker_count", value["worker_count"], minimum=1)
@@ -1912,10 +1970,12 @@ def _read_bound_verdict(
     refs: Sequence[ArtifactRef],
     *,
     artifact_store: ArtifactStore,
+    inventory_row: PaperDirectRootInventoryRow,
     execution_id: str,
     task_id: str,
     root_unit_id: str,
     final_result_ref: ArtifactIdentitySnapshot,
+    events: Sequence[Mapping[str, Any]],
 ) -> bool:
     original = next(
         ref
@@ -1927,47 +1987,1063 @@ def _read_bound_verdict(
         body = json.loads(artifact_store.read_bytes(original).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("independent verdict artifact is invalid JSON") from exc
+    schema_version = body.get("schema_version") if isinstance(body, Mapping) else None
+    if schema_version == "tokenshare.paper_factorization_domain_verifier_report.v1":
+        return _read_factor_domain_verdict(
+            body,
+            original=original,
+            artifact_store=artifact_store,
+            inventory_row=inventory_row,
+            execution_id=execution_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            final_result_ref=final_result_ref,
+        )
+    if schema_version == "tokenshare.paper_lean_domain_verdict_binding.v2":
+        return _read_lean_domain_verdict(
+            body,
+            original=original,
+            refs=refs,
+            artifact_store=artifact_store,
+            inventory_row=inventory_row,
+            execution_id=execution_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            final_result_ref=final_result_ref,
+            events=events,
+        )
+    if schema_version == "tokenshare.paper_persisted_verification_event_verdict.v1":
+        return _read_persisted_verification_event_verdict(
+            body,
+            inventory_row=inventory_row,
+            execution_id=execution_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            final_result_ref=final_result_ref,
+            events=events,
+        )
+    raise ValueError("unsupported artifact-backed domain verdict schema")
+
+
+def build_persisted_verification_event_verdict_body(
+    *,
+    inventory_row: PaperDirectRootInventoryRow,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_result_ref: ArtifactIdentitySnapshot,
+    verification_event: Mapping[str, Any],
+) -> JsonObject:
+    """把已落盘的最终 verifier/checker event 绑定为只读 direct verdict。"""
+
+    if not isinstance(inventory_row, PaperDirectRootInventoryRow):
+        raise TypeError("inventory_row must be PaperDirectRootInventoryRow")
+    if not isinstance(final_result_ref, ArtifactIdentitySnapshot):
+        raise TypeError("final_result_ref must be ArtifactIdentitySnapshot")
+    if not isinstance(verification_event, Mapping):
+        raise TypeError("verification_event must be a mapping")
+    domain = inventory_row.condition_axes.get("domain")
+    if domain not in {"factorization", "lean_proof"}:
+        raise ValueError("persisted verification event domain is unsupported")
+    body: JsonObject = {
+        "schema_version": (
+            "tokenshare.paper_persisted_verification_event_verdict.v1"
+        ),
+        "preregistered_root_run_id": inventory_row.preregistered_root_run_id,
+        "experiment_id": inventory_row.experiment_id,
+        "condition_id": inventory_row.condition_id,
+        "case_id": inventory_row.case_id,
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "root_unit_id": root_unit_id,
+        "domain": domain,
+        "final_result_ref": final_result_ref.to_dict(),
+        "verification_event": dict(verification_event),
+    }
+    return {**body, "projection_digest": digest_json(body)}
+
+
+def _read_persisted_verification_event_verdict(
+    body: Mapping[str, Any],
+    *,
+    inventory_row: PaperDirectRootInventoryRow,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_result_ref: ArtifactIdentitySnapshot,
+    events: Sequence[Mapping[str, Any]],
+) -> bool:
+    """验证 persisted final verification event；不重新调用 domain verifier。"""
+
     _exact_keys(
         body,
         {
             "schema_version",
+            "preregistered_root_run_id",
+            "experiment_id",
+            "condition_id",
+            "case_id",
             "execution_id",
             "task_id",
             "root_unit_id",
-            "final_artifact_id",
-            "final_content_hash",
-            "final_size_bytes",
-            "verdict_kind",
-            "correct",
+            "domain",
+            "final_result_ref",
+            "verification_event",
+            "projection_digest",
         },
-        "independent verdict",
+        "persisted verification event verdict",
     )
-    if body["schema_version"] != _VERDICT_SCHEMA:
-        raise ValueError("unsupported independent verdict schema")
-    if type(body["correct"]) is not bool:
-        raise ValueError("independent verdict correct must be bool")
-    _strict_int("final_size_bytes", body["final_size_bytes"], minimum=0)
-    expected = (
+    projection_body = dict(body)
+    projection_digest = projection_body.pop("projection_digest")
+    if projection_digest != digest_json(projection_body):
+        raise ValueError("persisted verification event projection digest mismatch")
+    domain = inventory_row.condition_axes.get("domain")
+    expected_identity = (
+        inventory_row.preregistered_root_run_id,
+        inventory_row.experiment_id,
+        inventory_row.condition_id,
+        inventory_row.case_id,
         execution_id,
         task_id,
         root_unit_id,
-        final_result_ref.artifact_id,
-        final_result_ref.content_hash,
-        final_result_ref.size_bytes,
+        domain,
     )
-    actual = (
+    actual_identity = tuple(
+        body.get(name)
+        for name in (
+            "preregistered_root_run_id",
+            "experiment_id",
+            "condition_id",
+            "case_id",
+            "execution_id",
+            "task_id",
+            "root_unit_id",
+            "domain",
+        )
+    )
+    if actual_identity != expected_identity:
+        raise ValueError("persisted verification event root identity mismatch")
+    if _ref_triple(body.get("final_result_ref")) != _snapshot_triple(
+        final_result_ref
+    ):
+        raise ValueError("persisted verification event final identity mismatch")
+
+    verification_event = body.get("verification_event")
+    if not isinstance(verification_event, Mapping):
+        raise ValueError("persisted verification event is invalid")
+    matches = tuple(
+        event
+        for event in events
+        if isinstance(event, Mapping)
+        and event.get("event_seq") == verification_event.get("event_seq")
+        and event.get("event_id") == verification_event.get("event_id")
+        and event.get("event_hash") == verification_event.get("event_hash")
+    )
+    if len(matches) != 1 or dict(matches[0]) != dict(verification_event):
+        raise ValueError("persisted verification event identity mismatch")
+    if (
+        verification_event.get("event_type")
+        != EventType.VERIFICATION_RECORDED.value
+        or verification_event.get("task_id") != task_id
+    ):
+        raise ValueError("persisted verification event binding mismatch")
+    payload = verification_event.get("payload")
+    if not isinstance(payload, Mapping):
+        raise ValueError("persisted verification record is missing")
+    report = payload.get("verification_report")
+    if not isinstance(report, Mapping):
+        raise ValueError("persisted verification report is missing")
+    if payload.get("verification_report_digest") != digest_json(report):
+        raise ValueError("persisted verification report digest mismatch")
+    expected_validator = {
+        "factorization": "factorization.merge_result.validator.v1",
+        "lean_proof": "lean_proof.checker.validator.v1",
+    }.get(domain)
+    if any(
+        value is not True
+        for value in (
+            payload.get("eligible_for_canonical"),
+            report.get("eligible_for_canonical"),
+        )
+    ) or any(
+        value != "passed"
+        for value in (payload.get("status"), report.get("status"))
+    ):
+        raise ValueError("persisted verification event did not pass")
+    if any(
+        value != expected
+        for value, expected in (
+            (payload.get("plugin_id"), domain),
+            (report.get("plugin_id"), domain),
+            (payload.get("validator_policy_id"), expected_validator),
+            (report.get("validator_policy_id"), expected_validator),
+            (payload.get("task_id"), task_id),
+            (report.get("task_id"), task_id),
+            (payload.get("unit_id"), report.get("unit_id")),
+        )
+    ):
+        raise ValueError("persisted verification event validator identity mismatch")
+    candidate_refs = report.get("candidate_output_refs")
+    if not isinstance(candidate_refs, Mapping):
+        raise ValueError("persisted verification candidate refs are missing")
+    final_matches = tuple(
+        value
+        for value in candidate_refs.values()
+        if _ref_triple(value) == _snapshot_triple(final_result_ref)
+    )
+    if len(final_matches) != 1:
+        raise ValueError("persisted verification final candidate is ambiguous or missing")
+    return True
+
+
+def _read_factor_domain_verdict(
+    body: Mapping[str, Any],
+    *,
+    original: ArtifactRef,
+    artifact_store: ArtifactStore,
+    inventory_row: PaperDirectRootInventoryRow,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_result_ref: ArtifactIdentitySnapshot,
+) -> bool:
+    _exact_keys(
+        body,
+        {
+            "schema_version",
+            "case_id",
+            "execution_id",
+            "task_id",
+            "root_unit_id",
+            "final_result_ref",
+            "environment_ref",
+            "verifier",
+            "target_n",
+            "checks",
+            "status",
+            "correct",
+            "report_digest",
+        },
+        "Factor domain verdict",
+    )
+    report_body = dict(body)
+    report_digest = report_body.pop("report_digest")
+    if report_digest != digest_json(report_body):
+        raise ValueError("Factor domain verdict report digest mismatch")
+    final_binding = ArtifactRef.from_dict(body["final_result_ref"])
+    if _ref_triple(final_binding.to_dict()) != _snapshot_triple(final_result_ref):
+        raise ValueError("Factor domain verdict final identity mismatch")
+    expected_identity = (
+        inventory_row.case_id,
+        execution_id,
+        task_id,
+        root_unit_id,
+    )
+    actual_identity = (
+        body["case_id"],
         body["execution_id"],
         body["task_id"],
         body["root_unit_id"],
-        body["final_artifact_id"],
-        body["final_content_hash"],
-        body["final_size_bytes"],
     )
-    if actual != expected:
-        raise ValueError("independent verdict identity binding mismatch")
-    if body["verdict_kind"] not in {"independent_verifier", "lean_checker"}:
-        raise ValueError("unsupported independent verdict kind")
-    return body["correct"]
+    if actual_identity != expected_identity:
+        raise ValueError("Factor domain verdict runtime identity mismatch")
+    _validate_domain_environment_ref(body["environment_ref"])
+    source_environment = original.source.get("environment_digest")
+    if source_environment is not None and source_environment != body[
+        "environment_ref"
+    ]["environment_digest"]:
+        raise ValueError("Factor domain verdict environment binding mismatch")
+    if body["verifier"] != {
+        "verifier_id": "factorization.prime_factorization_result.verifier",
+        "verifier_version": "v1",
+    }:
+        raise ValueError("Factor domain verdict verifier identity mismatch")
+    if not isinstance(body["target_n"], str) or not body["target_n"].isdigit():
+        raise ValueError("Factor domain verdict target is invalid")
+    try:
+        final_body = json.loads(
+            artifact_store.read_bytes(
+                artifact_store.load_artifact_ref(final_result_ref.artifact_id)
+            ).decode("utf-8")
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Factor final result is invalid JSON") from exc
+    checks = _factor_domain_checks(final_body, target_n=body["target_n"])
+    if body["checks"] != checks:
+        raise ValueError("Factor domain verdict checks mismatch")
+    correct = all(checks.values())
+    if type(body["correct"]) is not bool or body["correct"] is not correct:
+        raise ValueError("Factor domain verdict self-report mismatch")
+    if body["status"] != ("accepted" if correct else "rejected"):
+        raise ValueError("Factor domain verdict status mismatch")
+    return correct
+
+
+def _read_lean_domain_verdict(
+    body: Mapping[str, Any],
+    *,
+    original: ArtifactRef,
+    refs: Sequence[ArtifactRef],
+    artifact_store: ArtifactStore,
+    inventory_row: PaperDirectRootInventoryRow,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_result_ref: ArtifactIdentitySnapshot,
+    events: Sequence[Mapping[str, Any]],
+) -> bool:
+    """从真实 root checker report 判定 Lean correctness，binding 仅承载身份。"""
+
+    if inventory_row.condition_axes.get("domain") != "lean_proof":
+        raise ValueError("Lean domain verdict inventory domain mismatch")
+    _exact_keys(
+        body,
+        {
+            "schema_version",
+            "case_id",
+            "execution_id",
+            "task_id",
+            "root_unit_id",
+            "final_result_ref",
+            "root_checker_report_ref",
+            "root_theorem_payload_ref",
+            "official_case_digest",
+            "official_root_theorem_id",
+            "official_root_theorem_payload_digest",
+            "normalized_theorem_digest",
+            "environment_digest",
+            "report_status",
+            "verifier",
+            "binding_digest",
+        },
+        "Lean domain verdict binding",
+    )
+    binding_body = dict(body)
+    binding_digest = binding_body.pop("binding_digest")
+    if binding_digest != digest_json(binding_body):
+        raise ValueError("Lean domain verdict binding digest mismatch")
+    native_binding_ref = original.source.get("source_artifact_ref")
+    native_binding_source = (
+        native_binding_ref.get("source")
+        if isinstance(native_binding_ref, Mapping)
+        and isinstance(native_binding_ref.get("source"), Mapping)
+        else original.source
+    )
+    source_environment_digest = native_binding_source.get("environment_digest")
+    if source_environment_digest is not None and source_environment_digest != body[
+        "environment_digest"
+    ]:
+        raise ValueError("Lean domain verdict source environment mismatch")
+    for field_name in (
+        "final_result_ref",
+        "root_checker_report_ref",
+        "root_theorem_payload_ref",
+    ):
+        source_value = native_binding_source.get(field_name)
+        if source_value is not None and _ref_triple(source_value) != _ref_triple(
+            body[field_name]
+        ):
+            raise ValueError(f"Lean domain verdict source {field_name} mismatch")
+    source_theorem_digest = native_binding_source.get("normalized_theorem_digest")
+    if (
+        source_theorem_digest is not None
+        and source_theorem_digest != body["normalized_theorem_digest"]
+    ):
+        raise ValueError("Lean domain verdict source normalized theorem mismatch")
+    for field_name in (
+        "official_case_digest",
+        "official_root_theorem_id",
+        "official_root_theorem_payload_digest",
+    ):
+        source_value = native_binding_source.get(field_name)
+        if source_value is not None and source_value != body[field_name]:
+            raise ValueError(
+                f"Lean domain verdict source {field_name} mismatch"
+            )
+    expected_identity = (
+        inventory_row.case_id,
+        execution_id,
+        task_id,
+        root_unit_id,
+    )
+    actual_identity = (
+        body["case_id"],
+        body["execution_id"],
+        body["task_id"],
+        body["root_unit_id"],
+    )
+    if actual_identity != expected_identity:
+        raise ValueError("Lean domain verdict runtime identity mismatch")
+    if body["verifier"] != {
+        "verifier_id": "lean_proof.checker.validator.v1",
+        "verifier_version": "0.1.0",
+    }:
+        raise ValueError("Lean domain verdict verifier identity mismatch")
+    final_binding = ArtifactRef.from_dict(body["final_result_ref"])
+    if _ref_triple(final_binding.to_dict()) != _snapshot_triple(final_result_ref):
+        raise ValueError("Lean domain verdict final identity mismatch")
+    final_source_triples = _final_domain_source_triples(
+        final_result_ref,
+        artifact_store=artifact_store,
+    )
+    bound_verification_events: list[
+        tuple[
+            Mapping[str, Any],
+            Mapping[str, Any],
+            Mapping[str, Any],
+            tuple[Any, ...],
+        ]
+    ] = []
+    for event in events:
+        if (
+            not isinstance(event, Mapping)
+            or event.get("event_type") != EventType.VERIFICATION_RECORDED.value
+            or event.get("task_id") != task_id
+        ):
+            continue
+        payload = event.get("payload")
+        report = payload.get("verification_report") if isinstance(payload, Mapping) else None
+        candidate_refs = (
+            report.get("candidate_output_refs") if isinstance(report, Mapping) else None
+        )
+        if not isinstance(candidate_refs, Mapping):
+            continue
+        final_matches = tuple(
+            value
+            for value in candidate_refs.values()
+            if _ref_triple(value) in final_source_triples
+        )
+        if final_matches:
+            bound_verification_events.append((event, payload, report, final_matches))
+    if len(bound_verification_events) != 1:
+        raise ValueError(
+            "Lean domain verdict requires exactly one authoritative verification event"
+        )
+    verification_event, verification_payload, verification_report, final_matches = (
+        bound_verification_events[0]
+    )
+    if verification_payload.get("verification_report_digest") != digest_json(
+        verification_report
+    ):
+        raise ValueError("Lean verification report digest mismatch")
+    if len(final_matches) != 1:
+        raise ValueError("Lean verification final candidate is ambiguous")
+    bound_canonical_events: list[
+        tuple[Mapping[str, Any], Mapping[str, Any], tuple[Any, ...]]
+    ] = []
+    for event in events:
+        if (
+            not isinstance(event, Mapping)
+            or event.get("event_type") != EventType.CANONICAL_OUTPUTS_BOUND.value
+            or event.get("task_id") != task_id
+        ):
+            continue
+        payload = event.get("payload")
+        selection = payload.get("canonical_selection") if isinstance(payload, Mapping) else None
+        output_refs = (
+            selection.get("canonical_output_refs")
+            if isinstance(selection, Mapping)
+            else None
+        )
+        if not isinstance(output_refs, Mapping):
+            continue
+        selection_matches = tuple(
+            value
+            for value in output_refs.values()
+            if _ref_triple(value) in final_source_triples
+        )
+        if selection_matches:
+            bound_canonical_events.append((event, selection, selection_matches))
+    if not bound_canonical_events:
+        raise ValueError("Lean canonical selection is missing")
+    _, canonical_selection, canonical_final_matches = bound_canonical_events[-1]
+    if len(canonical_final_matches) != 1:
+        raise ValueError("Lean canonical selection final candidate is ambiguous")
+    if any(
+        value != expected
+        for value, expected in (
+            (
+                canonical_selection.get("selected_verification_event_seq"),
+                verification_event.get("event_seq"),
+            ),
+            (
+                canonical_selection.get("selected_verification_report_id"),
+                verification_report.get("verification_report_id"),
+            ),
+            (
+                canonical_selection.get("selected_attempt_id"),
+                verification_payload.get("attempt_id"),
+            ),
+            (
+                canonical_selection.get("selected_attempt_id"),
+                verification_report.get("attempt_id"),
+            ),
+            (
+                canonical_selection.get("selected_submission_id"),
+                verification_payload.get("submission_id"),
+            ),
+            (
+                canonical_selection.get("selected_submission_id"),
+                verification_report.get("submission_id"),
+            ),
+            (canonical_selection.get("task_id"), task_id),
+            (
+                canonical_selection.get("unit_id"),
+                verification_payload.get("unit_id"),
+            ),
+            (
+                canonical_selection.get("unit_id"),
+                verification_report.get("unit_id"),
+            ),
+        )
+    ):
+        raise ValueError("Lean canonical selection verification binding mismatch")
+    if any(
+        value is not True
+        for value in (
+            verification_payload.get("eligible_for_canonical"),
+            verification_report.get("eligible_for_canonical"),
+        )
+    ) or any(
+        value != "passed"
+        for value in (
+            verification_payload.get("status"),
+            verification_report.get("status"),
+        )
+    ):
+        raise ValueError("Lean verification event did not pass")
+    expected_validator = "lean_proof.checker.validator.v1"
+    if any(
+        value != expected
+        for value, expected in (
+            (verification_payload.get("plugin_id"), "lean_proof"),
+            (verification_report.get("plugin_id"), "lean_proof"),
+            (
+                verification_payload.get("validator_policy_id"),
+                expected_validator,
+            ),
+            (
+                verification_report.get("validator_policy_id"),
+                expected_validator,
+            ),
+            (verification_payload.get("task_id"), task_id),
+            (verification_report.get("task_id"), task_id),
+            (
+                verification_payload.get("unit_id"),
+                verification_report.get("unit_id"),
+            ),
+        )
+    ) or not isinstance(verification_payload.get("unit_id"), str):
+        raise ValueError("Lean verification event validator identity mismatch")
+    environment_digest = body["environment_digest"]
+    if not isinstance(environment_digest, str) or not environment_digest:
+        raise ValueError("Lean domain verdict environment digest is missing")
+    allowed_statuses = {
+        "accepted",
+        "rejected",
+        "timeout",
+        "environment_error",
+        "helper_error",
+    }
+    if body["report_status"] not in allowed_statuses:
+        raise ValueError("Lean domain verdict report status is invalid")
+
+    root_theorem_ref, root_theorem_bytes = _read_internal_lean_artifact(
+        body["root_theorem_payload_ref"],
+        artifact_store=artifact_store,
+        field_name="root_theorem_payload_ref",
+    )
+    try:
+        root_theorem_body = json.loads(root_theorem_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Lean root theorem payload is invalid JSON") from exc
+    _validate_lean_root_theorem_payload(
+        root_theorem_body,
+        authoritative_ref=root_theorem_ref,
+        case_id=inventory_row.case_id,
+    )
+    official_case_ref = inventory_row.preregistered_case_ref
+    official_fields = (
+        "official_case_digest",
+        "official_root_theorem_id",
+        "official_root_theorem_payload_digest",
+    )
+    if any(field_name not in official_case_ref for field_name in official_fields):
+        raise ValueError("Lean official case authority is missing")
+    if any(
+        body[field_name] != official_case_ref[field_name]
+        for field_name in official_fields
+    ):
+        raise ValueError("Lean official root theorem authority mismatch")
+    if (
+        root_theorem_body["theorem_id"]
+        != official_case_ref["official_root_theorem_id"]
+        or root_theorem_body["payload_digest"]
+        != official_case_ref["official_root_theorem_payload_digest"]
+    ):
+        raise ValueError("Lean official root theorem payload mismatch")
+    normalized_theorem_digest = digest_json(
+        {
+            "theorem_name": root_theorem_body["theorem_name"],
+            "imports": root_theorem_body["imports"],
+            "namespace": root_theorem_body["namespace"],
+            "parameters_source": root_theorem_body["parameters_source"],
+            "statement_source": root_theorem_body["statement_source"],
+        }
+    )
+    if body["normalized_theorem_digest"] != normalized_theorem_digest:
+        raise ValueError("Lean domain verdict normalized theorem mismatch")
+
+    report_refs = tuple(
+        ref for ref in refs if ref.source.get("role") == "root_checker_report"
+    )
+    if len(report_refs) != 1:
+        raise ValueError("Lean domain verdict requires exactly one root checker report")
+    report_ref = report_refs[0]
+    binding_report_triple = _ref_triple(body["root_checker_report_ref"])
+    projected_source_triple = _ref_triple(report_ref.source.get("source_artifact_ref"))
+    if binding_report_triple not in {
+        _ref_triple(report_ref.to_dict()),
+        projected_source_triple,
+    }:
+        raise ValueError("Lean root checker report identity mismatch")
+    try:
+        report_body = json.loads(artifact_store.read_bytes(report_ref).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Lean root checker report is invalid JSON") from exc
+    _exact_keys(
+        report_body,
+        {
+            "schema_version",
+            "report_id",
+            "request_id",
+            "status",
+            "exit_code",
+            "stdout_ref",
+            "stderr_ref",
+            "generated_source_ref",
+            "proof_artifact_ref",
+            "diagnostics",
+            "normalized_theorem_digest",
+            "proof_digest",
+            "environment_ref",
+            "command_summary",
+            "duration_ms",
+        },
+        "Lean root checker report",
+    )
+    if report_body["schema_version"] != "lean_proof.checker_report.v1":
+        raise ValueError("unsupported Lean root checker report schema")
+    for field_name in ("report_id", "request_id", "normalized_theorem_digest"):
+        if not isinstance(report_body[field_name], str) or not report_body[field_name]:
+            raise ValueError("Lean root checker report identity is incomplete")
+    if report_body["status"] != body["report_status"]:
+        raise ValueError("Lean root checker report status mismatch")
+    if report_body["status"] not in allowed_statuses:
+        raise ValueError("Lean root checker report status is invalid")
+    _require_lean_request_identity(
+        report_ref,
+        report_ref,
+        request_id=report_body["request_id"],
+        field_name="root_checker_report_ref",
+    )
+    _validate_domain_environment_ref(report_body["environment_ref"])
+    if report_body["environment_ref"]["environment_digest"] != environment_digest:
+        raise ValueError("Lean root checker report environment mismatch")
+    if not isinstance(report_body["diagnostics"], Mapping) or not isinstance(
+        report_body["command_summary"], Mapping
+    ):
+        raise ValueError("Lean root checker report diagnostics are invalid")
+    if type(report_body["duration_ms"]) is not int or report_body["duration_ms"] < 0:
+        raise ValueError("Lean root checker report duration is invalid")
+    if report_body["normalized_theorem_digest"] != normalized_theorem_digest:
+        raise ValueError("Lean root checker normalized theorem mismatch")
+    verification_metadata = verification_report.get("metadata")
+    plugin_domain_layer = (
+        verification_metadata.get("plugin_domain_layer")
+        if isinstance(verification_metadata, Mapping)
+        else None
+    )
+    plugin_domain_details = (
+        plugin_domain_layer.get("details")
+        if isinstance(plugin_domain_layer, Mapping)
+        else None
+    )
+    if (
+        not isinstance(verification_metadata, Mapping)
+        or not isinstance(plugin_domain_details, Mapping)
+        or _ref_triple(verification_metadata.get("checker_report_ref"))
+        != binding_report_triple
+        or plugin_domain_details.get("environment_digest") != environment_digest
+        or plugin_domain_details.get("proof_digest") != report_body["proof_digest"]
+        or plugin_domain_details.get("checker_status") != report_body["status"]
+    ):
+        raise ValueError("Lean checker event metadata binding mismatch")
+
+    proof_triple = _ref_triple(report_body["proof_artifact_ref"])
+    if report_body["status"] == "accepted":
+        checker_artifacts: dict[str, tuple[ArtifactRef, bytes]] = {}
+        for field_name in ("stdout_ref", "stderr_ref", "generated_source_ref"):
+            if report_body[field_name] is None:
+                raise ValueError(
+                    f"accepted Lean checker report {field_name} is missing"
+                )
+            supplied_ref = ArtifactRef.from_dict(report_body[field_name])
+            authoritative_ref, artifact_bytes = _read_internal_lean_artifact(
+                report_body[field_name],
+                artifact_store=artifact_store,
+                field_name=field_name,
+            )
+            _require_lean_request_identity(
+                supplied_ref,
+                authoritative_ref,
+                request_id=report_body["request_id"],
+                field_name=field_name,
+            )
+            _validate_lean_checker_artifact_contract(
+                supplied_ref,
+                authoritative_ref,
+                field_name=field_name,
+            )
+            try:
+                artifact_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"Lean checker {field_name} is not UTF-8"
+                ) from exc
+            checker_artifacts[field_name] = (authoritative_ref, artifact_bytes)
+        if not checker_artifacts["generated_source_ref"][1]:
+            raise ValueError("accepted Lean checker generated source is empty")
+        if proof_triple is None:
+            raise ValueError(
+                "accepted Lean checker report proof_artifact_ref is missing"
+            )
+        supplied_proof_ref = ArtifactRef.from_dict(report_body["proof_artifact_ref"])
+        authoritative_proof_ref, proof_bytes = _read_internal_lean_artifact(
+            report_body["proof_artifact_ref"],
+            artifact_store=artifact_store,
+            field_name="proof_artifact_ref",
+        )
+        _validate_lean_checker_artifact_contract(
+            supplied_proof_ref,
+            authoritative_proof_ref,
+            field_name="proof_artifact_ref",
+        )
+        _require_lean_request_identity(
+            supplied_proof_ref,
+            authoritative_proof_ref,
+            request_id=report_body["request_id"],
+            field_name="proof_artifact_ref",
+        )
+        if proof_triple not in _final_domain_source_triples(
+            final_result_ref,
+            artifact_store=artifact_store,
+        ):
+            raise ValueError("Lean checker proof does not bind the canonical final")
+        if report_body["exit_code"] != 0:
+            raise ValueError("accepted Lean checker report exit status mismatch")
+        if not isinstance(report_body["proof_digest"], str) or not report_body[
+            "proof_digest"
+        ]:
+            raise ValueError("accepted Lean checker report proof digest is missing")
+        try:
+            proof_source = proof_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Lean checker proof artifact is not UTF-8") from exc
+        recomputed_proof_digest = digest_json(
+            {
+                "theorem_payload_digest": root_theorem_body["payload_digest"],
+                "proof_source": proof_source,
+            }
+        )
+        if (
+            supplied_proof_ref.metadata.get("proof_digest")
+            != report_body["proof_digest"]
+            or authoritative_proof_ref.metadata.get("proof_digest")
+            != report_body["proof_digest"]
+            or recomputed_proof_digest != report_body["proof_digest"]
+        ):
+            raise ValueError("Lean checker proof digest mismatch")
+        generated_source = checker_artifacts["generated_source_ref"][1]
+        expected_generated_source = render_lean_source(
+            LeanTheoremPayload.from_dict(dict(root_theorem_body)),
+            proof_source,
+        ).encode("utf-8")
+        if generated_source != expected_generated_source:
+            raise ValueError("Lean checker generated source mismatch")
+        return True
+    if report_body["proof_artifact_ref"] is not None:
+        raise ValueError("non-accepted Lean checker report cannot carry proof artifact")
+    return False
+
+
+def _read_internal_lean_artifact(
+    value: Any,
+    *,
+    artifact_store: ArtifactStore,
+    field_name: str,
+) -> tuple[ArtifactRef, bytes]:
+    """按 canonical manifest 解析 checker 内部 ref，并真实读取其内容。"""
+
+    if not isinstance(value, Mapping):
+        raise ValueError(f"Lean checker {field_name} is missing")
+    supplied = ArtifactRef.from_dict(value)
+    try:
+        authoritative = artifact_store.load_artifact_ref(supplied.artifact_id)
+    except (FileNotFoundError, ValueError) as exc:
+        raise ValueError(f"Lean checker {field_name} artifact is unavailable") from exc
+    if _ref_triple(authoritative.to_dict()) != _ref_triple(supplied.to_dict()):
+        raise ValueError(f"Lean checker {field_name} identity mismatch")
+    try:
+        content = artifact_store.read_bytes(authoritative)
+    except OSError as exc:
+        raise ValueError(f"Lean checker {field_name} artifact is unreadable") from exc
+    return authoritative, content
+
+
+def _native_artifact_source(ref: ArtifactRef) -> Mapping[str, Any]:
+    source_artifact_ref = ref.source.get("source_artifact_ref")
+    if isinstance(source_artifact_ref, Mapping) and isinstance(
+        source_artifact_ref.get("source"), Mapping
+    ):
+        return source_artifact_ref["source"]
+    return ref.source
+
+
+def _require_lean_request_identity(
+    supplied: ArtifactRef,
+    authoritative: ArtifactRef,
+    *,
+    request_id: str,
+    field_name: str,
+) -> None:
+    supplied_request_id = _native_artifact_source(supplied).get("request_id")
+    authoritative_request_id = _native_artifact_source(authoritative).get(
+        "request_id"
+    )
+    if (
+        supplied_request_id != request_id
+        or authoritative_request_id != request_id
+    ):
+        raise ValueError(f"Lean checker {field_name} request identity mismatch")
+
+
+def _validate_lean_checker_artifact_contract(
+    supplied: ArtifactRef,
+    authoritative: ArtifactRef,
+    *,
+    field_name: str,
+) -> None:
+    expected = {
+        "stdout_ref": (
+            "LeanCheckerStdout",
+            "text/plain",
+            "lean_proof.checker_log",
+            "v1",
+        ),
+        "stderr_ref": (
+            "LeanCheckerStderr",
+            "text/plain",
+            "lean_proof.checker_log",
+            "v1",
+        ),
+        "generated_source_ref": (
+            "LeanGeneratedSource",
+            "text/x-lean",
+            "lean_proof.generated_source",
+            "v1",
+        ),
+        "proof_artifact_ref": (
+            "LeanProofArtifact",
+            "text/x-lean",
+            "lean_proof.proof_artifact",
+            "v1",
+        ),
+    }[field_name]
+    for ref in (supplied, authoritative):
+        actual = (
+            ref.artifact_type,
+            ref.media_type,
+            ref.artifact_schema_id,
+            ref.artifact_schema_version,
+        )
+        if actual != expected:
+            raise ValueError(f"Lean checker {field_name} type mismatch")
+
+
+def _validate_lean_root_theorem_payload(
+    value: Any,
+    *,
+    authoritative_ref: ArtifactRef,
+    case_id: str,
+) -> None:
+    expected_keys = {
+        "schema_version",
+        "theorem_id",
+        "theorem_name",
+        "imports",
+        "namespace",
+        "open_namespaces",
+        "options",
+        "parameters_source",
+        "statement_source",
+        "theorem_source",
+        "proof_candidate_ref",
+        "library_context",
+        "decomposition_policy",
+        "resource_limits",
+        "payload_digest",
+    }
+    _exact_keys(value, expected_keys, "Lean root theorem payload")
+    if value["schema_version"] != "lean_proof.theorem_payload.v1":
+        raise ValueError("unsupported Lean root theorem payload schema")
+    payload_body = dict(value)
+    payload_digest = payload_body.pop("payload_digest")
+    if payload_digest != digest_json(payload_body):
+        raise ValueError("Lean root theorem payload digest mismatch")
+    theorem_id = value["theorem_id"]
+    if theorem_id != f"lean_theorem:{case_id}" and not (
+        isinstance(theorem_id, str)
+        and theorem_id.startswith(f"lean_lemma_graph:{case_id}:")
+    ):
+        raise ValueError("Lean root theorem payload case identity mismatch")
+    if authoritative_ref.metadata.get("case_id") != case_id:
+        raise ValueError("Lean root theorem payload case metadata mismatch")
+    if authoritative_ref.metadata.get("output_name") != "lean_theorem_payload":
+        raise ValueError("Lean root theorem payload is not the runtime root output")
+    library_context = value["library_context"]
+    if not isinstance(library_context, Mapping) or library_context.get(
+        "case_id"
+    ) not in {None, case_id}:
+        raise ValueError("Lean root theorem payload library case mismatch")
+    if (
+        not isinstance(value["theorem_name"], str)
+        or not value["theorem_name"]
+        or not isinstance(value["imports"], list)
+        or not value["imports"]
+        or not all(isinstance(item, str) and item for item in value["imports"])
+        or value["namespace"] is not None
+        and not isinstance(value["namespace"], str)
+        or not isinstance(value["parameters_source"], str)
+        or not isinstance(value["statement_source"], str)
+        or not value["statement_source"]
+    ):
+        raise ValueError("Lean root theorem payload identity is incomplete")
+
+
+def _final_domain_source_triples(
+    final_result_ref: ArtifactIdentitySnapshot,
+    *,
+    artifact_store: ArtifactStore,
+) -> set[tuple[str, str, int]]:
+    """收集 canonical final 与其只读 projection/source lineage 的身份。"""
+
+    values = {_snapshot_triple(final_result_ref)}
+    authoritative = artifact_store.load_artifact_ref(final_result_ref.artifact_id)
+    frontier: list[Any] = [authoritative.to_dict()]
+    visited: set[str] = set()
+    while frontier:
+        current = frontier.pop()
+        triple = _ref_triple(current)
+        if triple is None or not isinstance(current, Mapping):
+            continue
+        projection_identity = digest_json(current)
+        if projection_identity in visited:
+            continue
+        visited.add(projection_identity)
+        values.add(triple)
+        source = current.get("source")
+        if isinstance(source, Mapping):
+            for field_name in ("source_artifact_ref", "source_ref"):
+                nested = source.get(field_name)
+                if isinstance(nested, Mapping):
+                    frontier.append(nested)
+    return values
+
+
+def _factor_domain_checks(value: Any, *, target_n: str) -> JsonObject:
+    body = value if isinstance(value, Mapping) else {}
+    factors = body.get("prime_factors")
+    factor_values = (
+        tuple(factors)
+        if isinstance(factors, list)
+        and factors
+        and all(isinstance(item, Mapping) for item in factors)
+        else ()
+    )
+    pairs: list[tuple[int, int]] = []
+    try:
+        pairs = [
+            (int(str(item["prime"])), int(item["exponent"]))
+            for item in factor_values
+        ]
+    except (KeyError, TypeError, ValueError):
+        pairs = []
+    primes = [prime for prime, _ in pairs]
+    encoding_valid = (
+        bool(pairs)
+        and all(prime >= 2 and exponent >= 1 for prime, exponent in pairs)
+        and primes == sorted(set(primes))
+    )
+    product = 1
+    if encoding_valid:
+        for prime, exponent in pairs:
+            product *= prime**exponent
+    return {
+        "target_matches": str(body.get("target_n", "")) == target_n,
+        "canonical_factor_encoding": encoding_valid,
+        "factor_product_matches": encoding_valid and product == int(target_n),
+        "all_factors_prime": encoding_valid
+        and all(_deterministic_prime_check(prime) for prime in primes),
+    }
+
+
+def _deterministic_prime_check(value: int) -> bool:
+    if value < 2:
+        return False
+    if value % 2 == 0:
+        return value == 2
+    divisor = 3
+    while divisor <= math.isqrt(value):
+        if value % divisor == 0:
+            return False
+        divisor += 2
+    return True
+
+
+def _validate_domain_environment_ref(value: Any) -> None:
+    _exact_keys(
+        value,
+        {
+            "schema_version",
+            "environment_id",
+            "environment_digest",
+            "runtime",
+            "tool_versions",
+            "resource_limits",
+            "fixture_profile_digest",
+            "seed",
+            "clock_policy",
+            "created_at",
+        },
+        "domain verdict environment",
+    )
+    if value["schema_version"] != "phase3.environment_ref.v1":
+        raise ValueError("unsupported domain verdict environment schema")
+    for field_name in (
+        "environment_id",
+        "environment_digest",
+        "runtime",
+        "fixture_profile_digest",
+        "clock_policy",
+        "created_at",
+    ):
+        if not isinstance(value[field_name], str) or not value[field_name]:
+            raise ValueError("domain verdict environment identity is incomplete")
+    if not isinstance(value["tool_versions"], Mapping) or not isinstance(
+        value["resource_limits"], Mapping
+    ):
+        raise ValueError("domain verdict environment facts are invalid")
 
 
 def _canonical_locators(

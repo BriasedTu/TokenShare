@@ -58,6 +58,9 @@ _EXP5_V3_MEMBER_IDS = (
     "minimax_m2_5_siliconflow",
     "deepseek_v3_pro_siliconflow",
 )
+_EXP5_V3_HISTORICAL_PROVIDER_CONFIG_DIGEST = (
+    "sha256:6b1d6ffe977340ebbf59d69368d8c977fef664007575de72593c08c038d5ffe1"
+)
 _EXP5_V3_REPEAT_MEMBER_ORDER = {
     "0": list(_EXP5_V3_MEMBER_IDS),
     "1": [
@@ -355,6 +358,7 @@ def build_paper_smoke_service_authority(
     hard_limits: Mapping[str, object],
     resume: bool,
     launch_manifest: Mapping[str, object],
+    online_root_callback_factory: object | None = None,
     recovery_manifest: Mapping[str, object] | None = None,
     authorization_budget_digest: str | None = None,
 ) -> PaperSmokeServiceAuthority:
@@ -394,6 +398,10 @@ def build_paper_smoke_service_authority(
         raise ValueError("capability smoke AI API configs are missing")
     if not isinstance(hard_limits, Mapping) or not isinstance(launch_manifest, Mapping):
         raise ValueError("capability smoke launch authority is invalid")
+    if not callable(online_root_callback_factory):
+        raise ValueError(
+            "capability smoke requires typed Exp5 root callback authority"
+        )
     return PaperSmokeServiceAuthority(
         scope=scope,
         plan_digest=authorized_plan_digest,
@@ -408,6 +416,7 @@ def build_paper_smoke_service_authority(
             "transport": transport,
             "real_transport": True,
             "hard_limits": dict(hard_limits),
+            "online_root_callback_factory": online_root_callback_factory,
             "resume": bool(resume),
             "secret_values": (),
             "launch_manifest": dict(launch_manifest),
@@ -601,13 +610,15 @@ def _canonical_exp5_v3_contract_digests(
     cohort = load_model_endpoint_cohort(
         repository_root / "benchmarks/paper/model_comparison_cohort.v3.json"
     )
-    provider_config_body = json.loads(
-        (
-            repository_root
-            / "benchmarks/paper/exp5_siliconflow_provider_config.v3.json"
-        ).read_text(encoding="utf-8")
-    )
-    provider_config = load_ai_api_config(provider_config_body)
+    provider_config_digest = _EXP5_V3_HISTORICAL_PROVIDER_CONFIG_DIGEST
+    if profile_version != "v3":
+        provider_config_body = json.loads(
+            (
+                repository_root
+                / "benchmarks/paper/exp5_siliconflow_provider_config.v3.json"
+            ).read_text(encoding="utf-8")
+        )
+        provider_config_digest = load_ai_api_config(provider_config_body).config_digest
     selection = (
         load_exp5_v4_selection()
         if profile_version == "v4"
@@ -615,7 +626,7 @@ def _canonical_exp5_v3_contract_digests(
     )
     return {
         "cohort_digest": str(cohort["model_cohort_digest"]),
-        "provider_config_digest": provider_config.config_digest,
+        "provider_config_digest": provider_config_digest,
         "selection_digest": str(selection["selection_digest"]),
         "sequence_plan_digest": EXP5_V3_SEQUENCE_PLAN_DIGEST,
     }
@@ -821,6 +832,7 @@ def execute_paper_smoke_suite(
     transport: Any,
     real_transport: bool,
     hard_limits: Mapping[str, Any],
+    online_root_callback_factory: Any | None = None,
     resume: bool = False,
     secret_values: Sequence[str] = (),
     launch_manifest: Mapping[str, Any],
@@ -848,6 +860,9 @@ def execute_paper_smoke_suite(
         recovery_documents[
             f"smoke_recoveries/{recovery_id}.json"
         ] = dict(recovery_manifest)
+    paid_output_marker = launch_manifest.get("paid_output_binding_marker")
+    if paid_output_marker is not None and not isinstance(paid_output_marker, Mapping):
+        raise ValueError("smoke paid output marker is invalid")
 
     result = execute_paper_formal_suite(
         dispatch_plans=execution_plan.dispatch_plans,
@@ -859,6 +874,7 @@ def execute_paper_smoke_suite(
         transport=transport,
         real_transport=real_transport,
         hard_limits=hard_limits,
+        online_root_callback_factory=online_root_callback_factory,
         resume=resume,
         root_case_filter=execution_plan.root_case_filter,
         execution_classification=smoke_execution_classification(
@@ -870,6 +886,7 @@ def execute_paper_smoke_suite(
             "smoke_execution_plan.json": execution_plan.to_dict(),
             "smoke_launch_manifest.json": dict(launch_manifest),
         },
+        preexisting_paid_output_marker=paid_output_marker,
         recovery_documents=recovery_documents,
         trace_context=trace_context,
     )

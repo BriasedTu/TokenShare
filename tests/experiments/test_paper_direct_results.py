@@ -33,12 +33,51 @@ from tokenshare.local_runtime import (
     build_experiment_premature_merge_attempted_observation,
 )
 from tokenshare.local_runtime.projection import project_protocol_run
+from tokenshare.plugins.lean_proof.checker import render_lean_source
+from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType
 
 
 def _digest(label: str) -> str:
     return digest_json({"label": label})
+
+
+def _test_lean_root_theorem_body(case_id: str) -> dict[str, Any]:
+    body = {
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "theorem_id": f"lean_theorem:{case_id}",
+        "theorem_name": case_id.replace("-", "_"),
+        "imports": ["Init"],
+        "namespace": "TokenSharePaperCatalog",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "",
+        "statement_source": "True",
+        "theorem_source": None,
+        "proof_candidate_ref": None,
+        "library_context": {"case_id": case_id},
+        "decomposition_policy": {
+            "policy_id": "lean_proof.deterministic_tactic_split.v1",
+            "allowed_rules": ["conjunction"],
+            "max_depth": 1,
+            "max_children": 2,
+            "unsupported_policy": "return_unsupported",
+        },
+        "resource_limits": {"timeout_seconds": 30, "max_output_bytes": 65536},
+    }
+    body["payload_digest"] = digest_json(body)
+    return body
+
+
+def _test_lean_official_case_digest(case_id: str) -> str:
+    return digest_json(
+        {
+            "schema_version": "tokenshare.test_lean_official_case.v1",
+            "case_id": case_id,
+            "root_theorem_payload": _test_lean_root_theorem_body(case_id),
+        }
+    )
 
 
 def _axes(worker_count: int = 3) -> dict[str, Any]:
@@ -183,6 +222,22 @@ def _replace_inventory_row(
     values.pop("schema_version")
     values.pop("inventory_row_digest")
     values.update(changes)
+    if values["condition_axes"].get("domain") == "lean_proof":
+        theorem_body = _test_lean_root_theorem_body(values["case_id"])
+        case_ref = dict(values["preregistered_case_ref"])
+        case_ref["schema_version"] = "tokenshare.preregistered_lean_case_ref.v1"
+        defaults = {
+            "official_case_digest": _test_lean_official_case_digest(
+                values["case_id"]
+            ),
+            "official_root_theorem_id": theorem_body["theorem_id"],
+            "official_root_theorem_payload_digest": theorem_body[
+                "payload_digest"
+            ],
+        }
+        for field_name, field_value in defaults.items():
+            case_ref.setdefault(field_name, field_value)
+        values["preregistered_case_ref"] = case_ref
     body = {
         "schema_version": "tokenshare.paper_direct_root_inventory_row.v2",
         **values,
@@ -201,6 +256,8 @@ def _save_role_artifact(
     execution_id: str,
     task_id: str,
     body: dict[str, Any] | None = None,
+    source_extra: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> ArtifactRef:
     return store.save_json(
         body or {"label": label},
@@ -212,8 +269,9 @@ def _save_role_artifact(
             "role": role,
             "execution_id": execution_id,
             "task_id": task_id,
+            **(source_extra or {}),
         },
-        metadata={},
+        metadata=metadata or {},
         created_at="2026-08-01T00:00:00Z",
     )
 
@@ -326,6 +384,11 @@ def _canonical_fixture(
     merge_selection_id: str = "canonical:merge-unit",
     duplicate_merge_canonical: bool = False,
     merge_commitment_tamper: str | None = None,
+    lean_proof_bytes: bytes | None = None,
+    lean_proof_artifact_type: str = "LeanProofArtifact",
+    include_verification_event: bool = True,
+    duplicate_verification_event: bool = False,
+    verification_event_tamper: str | None = None,
 ):
     root_id = row.preregistered_root_run_id
     execution_id = f"execution:{root_id}"
@@ -334,12 +397,49 @@ def _canonical_fixture(
     unit_id = f"unit:{root_id}"
     store = ArtifactStore(tmp_path / root_id.replace(":", "_"))
     ledger = EventLedger(store.root_path / "events" / "ledger.jsonl")
+    lean_checker_request_id = f"request:{row.case_id}"
+    expected_proof_source = "by\n  trivial\n"
+    lean_theorem_body = _test_lean_root_theorem_body(row.case_id)
+    lean_proof_digest = digest_json(
+        {
+            "theorem_payload_digest": lean_theorem_body["payload_digest"],
+            "proof_source": expected_proof_source,
+        }
+    )
+    lean_checker_proof_ref = (
+        store.save_bytes(
+            lean_proof_bytes or expected_proof_source.encode("utf-8"),
+            artifact_id=f"checker_proof_{root_id.replace(':', '_')}",
+            artifact_type=lean_proof_artifact_type,
+            media_type="text/x-lean",
+            artifact_schema_id="lean_proof.proof_artifact",
+            artifact_schema_version="v1",
+            source={"kind": "lean_checker", "request_id": lean_checker_request_id},
+            metadata={"proof_digest": lean_proof_digest},
+            created_at="2026-08-01T00:00:00Z",
+        )
+        if row.condition_axes.get("domain") == "lean_proof"
+        else None
+    )
     final_ref = _save_role_artifact(
         store,
         label=f"final_{root_id.replace(':', '_')}",
         role="final_result",
         execution_id=execution_id,
         task_id=task_id,
+        body={
+            "schema_version": "factorization.prime_factorization_result.v1",
+            "target_n": "91",
+            "prime_factors": [
+                {"prime": "7", "exponent": 1},
+                {"prime": "13" if correct else "11", "exponent": 1},
+            ],
+        },
+        source_extra=(
+            {"source_ref": lean_checker_proof_ref.to_dict()}
+            if lean_checker_proof_ref is not None
+            else None
+        ),
     )
     parser_ref = _save_role_artifact(
         store,
@@ -348,24 +448,14 @@ def _canonical_fixture(
         execution_id=execution_id,
         task_id=task_id,
     )
-    verdict_body = {
-        "schema_version": "tokenshare.paper_direct_correctness_verdict.v1",
-        "execution_id": execution_id,
-        "task_id": task_id,
-        "root_unit_id": unit_id,
-        "final_artifact_id": final_ref.artifact_id,
-        "final_content_hash": final_ref.content_hash,
-        "final_size_bytes": final_ref.size_bytes,
-        "verdict_kind": "independent_verifier",
-        "correct": correct,
-    }
-    verdict_ref = _save_role_artifact(
-        store,
-        label=f"verdict_{root_id.replace(':', '_')}",
-        role="independent_verdict",
+    verdict_ref = _factor_domain_verdict_ref(
+        store=store,
+        row=row,
         execution_id=execution_id,
         task_id=task_id,
-        body=verdict_body,
+        root_unit_id=unit_id,
+        final_ref=final_ref,
+        correct=correct,
     )
     current_roles = (
         "request_body",
@@ -415,7 +505,6 @@ def _canonical_fixture(
     for event_type, state, suffix in (
         (EventType.EXECUTION_REQUEST_RECORDED, "Running", "request"),
         (EventType.EXECUTION_SUBMISSION_RECORDED, "Submitted", "submission"),
-        (EventType.VERIFICATION_RECORDED, "Verified", "verification"),
     ):
         _append_event(
             ledger,
@@ -430,6 +519,47 @@ def _canonical_fixture(
                 "state": state,
             },
         )
+    if include_verification_event:
+        domain = str(row.condition_axes.get("domain"))
+        validator_policy_id = {
+            "factorization": "factorization.merge_result.validator.v1",
+            "lean_proof": "lean_proof.checker.validator.v1",
+        }[domain]
+        verification_report = {
+            "task_id": task_id,
+            "unit_id": unit_id,
+            "plugin_id": domain,
+            "validator_policy_id": validator_policy_id,
+            "status": "passed",
+            "eligible_for_canonical": True,
+            "candidate_output_refs": {"answer": final_ref.to_dict()},
+        }
+        verification_payload = {
+            "schema_version": "phase4.verification_record.v1",
+            "task_id": task_id,
+            "unit_id": unit_id,
+            "attempt_id": attempt_id,
+            "state": "Verified",
+            "plugin_id": domain,
+            "validator_policy_id": validator_policy_id,
+            "status": "passed",
+            "eligible_for_canonical": True,
+            "verification_report": verification_report,
+        }
+        if verification_event_tamper == "plugin":
+            verification_payload["plugin_id"] = "factorization"
+            verification_report["plugin_id"] = "factorization"
+        verification_payload["verification_report_digest"] = digest_json(
+            verification_report
+        )
+        for index in range(2 if duplicate_verification_event else 1):
+            _append_event(
+                ledger,
+                task_id=task_id,
+                event_type=EventType.VERIFICATION_RECORDED,
+                suffix=f"verification-{index}",
+                payload=verification_payload,
+            )
     root_canonical_ref = final_ref
     if merge_unit_canonical_final:
         root_canonical_ref = _save_role_artifact(
@@ -591,6 +721,850 @@ def _canonical_fixture(
             trace_resource_book_ref=resource_ref,
         )
     return kwargs, ledger, store, runtime_result, final_ref
+
+
+def _factor_domain_verdict_ref(
+    *,
+    store: ArtifactStore,
+    row: PaperDirectRootInventoryRow,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_ref: ArtifactRef,
+    correct: bool,
+    final_binding_ref: ArtifactRef | None = None,
+) -> ArtifactRef:
+    environment_ref = {
+        "schema_version": "phase3.environment_ref.v1",
+        "environment_id": "env_factorization_runtime",
+        "environment_digest": "sha256:env_factorization_runtime",
+        "runtime": "python",
+        "tool_versions": {"factorization_plugin": "1.0.0"},
+        "resource_limits": {"timeout_seconds": 600},
+        "fixture_profile_digest": "sha256:factorization_runtime",
+        "seed": 1,
+        "clock_policy": "fixed",
+        "created_at": "2026-08-01T00:00:00Z",
+    }
+    checks = {
+        "target_matches": True,
+        "canonical_factor_encoding": True,
+        "factor_product_matches": correct,
+        "all_factors_prime": True,
+    }
+    body = {
+        "schema_version": "tokenshare.paper_factorization_domain_verifier_report.v1",
+        "case_id": row.case_id,
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "root_unit_id": root_unit_id,
+        "final_result_ref": (final_binding_ref or final_ref).to_dict(),
+        "environment_ref": environment_ref,
+        "verifier": {
+            "verifier_id": "factorization.prime_factorization_result.verifier",
+            "verifier_version": "v1",
+        },
+        "target_n": "91",
+        "checks": checks,
+        "status": "accepted" if correct else "rejected",
+        "correct": correct,
+    }
+    body["report_digest"] = digest_json(body)
+    return store.save_json(
+        body,
+        artifact_id=f"factor_domain_verdict_{row.case_id}_{correct}",
+        artifact_type="FactorizationDomainVerifierReport",
+        artifact_schema_id="tokenshare.paper_factorization_domain_verifier_report",
+        artifact_schema_version="v1",
+        source={
+            "kind": "factorization_domain_verifier",
+            "role": "independent_verdict",
+            "case_id": row.case_id,
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "final_result_ref": (final_binding_ref or final_ref).to_dict(),
+            "environment_digest": environment_ref["environment_digest"],
+        },
+        metadata={"status": body["status"], "correct": correct},
+        created_at="2026-08-01T00:00:00Z",
+    )
+
+
+def _lean_domain_verdict_refs(
+    *,
+    store: ArtifactStore,
+    row: PaperDirectRootInventoryRow,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_ref: ArtifactRef,
+    status: str,
+    binding_final_ref: ArtifactRef | None = None,
+    binding_report_ref: ArtifactRef | None = None,
+    binding_status: str | None = None,
+    binding_environment_digest: str | None = None,
+    missing_checker_ref: str | None = None,
+    report_request_id: str | None = None,
+    checker_source_request_id: str | None = None,
+    report_normalized_theorem_digest: str | None = None,
+    report_proof_digest: str | None = None,
+    theorem_body_override: dict[str, Any] | None = None,
+    generated_source_bytes: bytes | None = None,
+    generated_source_artifact_type: str = "LeanGeneratedSource",
+    ledger: EventLedger | None = None,
+    canonical_selection_tamper: str | None = None,
+    verification_metadata_tamper: str | None = None,
+) -> tuple[ArtifactRef, ArtifactRef]:
+    environment_ref = {
+        "schema_version": "phase3.environment_ref.v1",
+        "environment_id": "env_lean_runtime",
+        "environment_digest": "sha256:env_lean_runtime",
+        "runtime": "lean",
+        "tool_versions": {"lean": "4.19.0"},
+        "resource_limits": {"timeout_seconds": 600},
+        "fixture_profile_digest": "sha256:lean_runtime",
+        "seed": 1,
+        "clock_policy": "fixed",
+        "created_at": "2026-08-01T00:00:00Z",
+    }
+    request_id = f"request:{row.case_id}"
+    source_request_id = checker_source_request_id or request_id
+    theorem_body = theorem_body_override or _test_lean_root_theorem_body(row.case_id)
+    root_theorem_ref = _save_role_artifact(
+        store,
+        label=f"root_theorem_{row.case_id}_{status}",
+        role="protocol_runtime_artifact",
+        execution_id=execution_id,
+        task_id=task_id,
+        body=theorem_body,
+        source_extra={"case_id": row.case_id},
+        metadata={
+            "case_id": row.case_id,
+            "output_name": "lean_theorem_payload",
+        },
+    )
+    normalized_theorem_digest = digest_json(
+        {
+            "theorem_name": theorem_body["theorem_name"],
+            "imports": theorem_body["imports"],
+            "namespace": theorem_body["namespace"],
+            "parameters_source": theorem_body["parameters_source"],
+            "statement_source": theorem_body["statement_source"],
+        }
+    )
+    proof_ref = ArtifactRef.from_dict(final_ref.source["source_ref"])
+    checker_refs: dict[str, ArtifactRef] = {
+        "stdout_ref": store.save_bytes(
+            b"checker ok\n",
+            artifact_id=f"checker_stdout_{row.case_id}_{status}",
+            artifact_type="LeanCheckerStdout",
+            media_type="text/plain",
+            artifact_schema_id="lean_proof.checker_log",
+            artifact_schema_version="v1",
+            source={"kind": "lean_checker", "request_id": source_request_id},
+            metadata={},
+            created_at="2026-08-01T00:00:00Z",
+        ),
+        "stderr_ref": store.save_bytes(
+            b"",
+            artifact_id=f"checker_stderr_{row.case_id}_{status}",
+            artifact_type="LeanCheckerStderr",
+            media_type="text/plain",
+            artifact_schema_id="lean_proof.checker_log",
+            artifact_schema_version="v1",
+            source={"kind": "lean_checker", "request_id": source_request_id},
+            metadata={},
+            created_at="2026-08-01T00:00:00Z",
+        ),
+        "generated_source_ref": store.save_bytes(
+            generated_source_bytes
+            or render_lean_source(
+                LeanTheoremPayload.from_dict(theorem_body),
+                store.read_bytes(proof_ref).decode("utf-8"),
+            ).encode("utf-8"),
+            artifact_id=f"checker_generated_{row.case_id}_{status}",
+            artifact_type=generated_source_artifact_type,
+            media_type="text/x-lean",
+            artifact_schema_id="lean_proof.generated_source",
+            artifact_schema_version="v1",
+            source={"kind": "lean_checker", "request_id": source_request_id},
+            metadata={},
+            created_at="2026-08-01T00:00:00Z",
+        ),
+    }
+    proof_digest = str(proof_ref.metadata["proof_digest"])
+    report_body = {
+        "schema_version": "lean_proof.checker_report.v1",
+        "report_id": f"report:{row.case_id}:{status}",
+        "request_id": report_request_id or request_id,
+        "status": status,
+        "exit_code": 0 if status == "accepted" else 1,
+        "stdout_ref": (
+            None if missing_checker_ref == "stdout_ref" else checker_refs["stdout_ref"].to_dict()
+        ),
+        "stderr_ref": (
+            None if missing_checker_ref == "stderr_ref" else checker_refs["stderr_ref"].to_dict()
+        ),
+        "generated_source_ref": (
+            None
+            if missing_checker_ref == "generated_source_ref"
+            else checker_refs["generated_source_ref"].to_dict()
+        ),
+        "proof_artifact_ref": (
+            None
+            if status != "accepted" or missing_checker_ref == "proof_artifact_ref"
+            else proof_ref.to_dict()
+        ),
+        "diagnostics": {},
+        "normalized_theorem_digest": (
+            report_normalized_theorem_digest or normalized_theorem_digest
+        ),
+        "proof_digest": (
+            (report_proof_digest or proof_digest) if status == "accepted" else None
+        ),
+        "environment_ref": environment_ref,
+        "command_summary": {"backend": "test"},
+        "duration_ms": 1,
+    }
+    report_ref = _save_role_artifact(
+        store,
+        label=f"root_checker_{row.case_id}_{status}",
+        role="root_checker_report",
+        execution_id=execution_id,
+        task_id=task_id,
+        body=report_body,
+        source_extra={"request_id": source_request_id},
+    )
+    bound_report_ref = binding_report_ref or report_ref
+    binding_body = {
+        "schema_version": "tokenshare.paper_lean_domain_verdict_binding.v2",
+        "case_id": row.case_id,
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "root_unit_id": root_unit_id,
+        "final_result_ref": (binding_final_ref or final_ref).to_dict(),
+        "root_checker_report_ref": bound_report_ref.to_dict(),
+        "root_theorem_payload_ref": root_theorem_ref.to_dict(),
+        "official_case_digest": row.preregistered_case_ref[
+            "official_case_digest"
+        ],
+        "official_root_theorem_id": row.preregistered_case_ref[
+            "official_root_theorem_id"
+        ],
+        "official_root_theorem_payload_digest": row.preregistered_case_ref[
+            "official_root_theorem_payload_digest"
+        ],
+        "normalized_theorem_digest": normalized_theorem_digest,
+        "environment_digest": (
+            binding_environment_digest or environment_ref["environment_digest"]
+        ),
+        "report_status": binding_status or status,
+        "verifier": {
+            "verifier_id": "lean_proof.checker.validator.v1",
+            "verifier_version": "0.1.0",
+        },
+    }
+    binding_body["binding_digest"] = digest_json(binding_body)
+    binding_ref = _save_role_artifact(
+        store,
+        label=f"lean_domain_binding_{row.case_id}_{status}",
+        role="lean_checker_verdict",
+        execution_id=execution_id,
+        task_id=task_id,
+        body=binding_body,
+        source_extra={
+            "case_id": row.case_id,
+            "root_unit_id": root_unit_id,
+            "final_result_ref": (binding_final_ref or final_ref).to_dict(),
+            "root_checker_report_ref": bound_report_ref.to_dict(),
+            "root_theorem_payload_ref": root_theorem_ref.to_dict(),
+            "official_case_digest": row.preregistered_case_ref[
+                "official_case_digest"
+            ],
+            "official_root_theorem_id": row.preregistered_case_ref[
+                "official_root_theorem_id"
+            ],
+            "official_root_theorem_payload_digest": row.preregistered_case_ref[
+                "official_root_theorem_payload_digest"
+            ],
+            "normalized_theorem_digest": normalized_theorem_digest,
+            "environment_digest": (
+                binding_environment_digest or environment_ref["environment_digest"]
+            ),
+        },
+    )
+    if ledger is not None:
+        attempt_id = f"attempt:{row.case_id}:{status}"
+        submission_id = f"submission:{row.case_id}:{status}"
+        verification_report_id = f"verification:{row.case_id}:{status}"
+        checker_report_ref = report_ref.to_dict()
+        if verification_metadata_tamper == "checker_report_ref":
+            checker_report_ref = final_ref.to_dict()
+        verification_report = {
+            "verification_report_id": verification_report_id,
+            "attempt_id": attempt_id,
+            "submission_id": submission_id,
+            "task_id": task_id,
+            "unit_id": root_unit_id,
+            "plugin_id": "lean_proof",
+            "validator_policy_id": "lean_proof.checker.validator.v1",
+            "status": "passed",
+            "eligible_for_canonical": True,
+            "candidate_output_refs": {"answer": final_ref.to_dict()},
+            "metadata": {
+                "checker_report_ref": checker_report_ref,
+                "plugin_domain_layer": {
+                    "details": {
+                        "environment_digest": environment_ref["environment_digest"],
+                        "proof_digest": report_body["proof_digest"],
+                        "checker_status": report_body["status"],
+                    }
+                },
+            },
+        }
+        verification_payload = {
+            "task_id": task_id,
+            "unit_id": root_unit_id,
+            "attempt_id": attempt_id,
+            "submission_id": submission_id,
+            "plugin_id": "lean_proof",
+            "validator_policy_id": "lean_proof.checker.validator.v1",
+            "status": "passed",
+            "eligible_for_canonical": True,
+            "verification_report": verification_report,
+            "verification_report_digest": digest_json(verification_report),
+        }
+        _append_event(
+            ledger,
+            task_id=task_id,
+            event_type=EventType.VERIFICATION_RECORDED,
+            suffix=f"lean-verification-binding-{status}",
+            payload=verification_payload,
+        )
+        verification_event_seq = ledger.read_all()[-1].event_seq
+        selected_verification_event_seq = verification_event_seq
+        if canonical_selection_tamper == "verification_event_seq":
+            selected_verification_event_seq += 1
+        _append_event(
+            ledger,
+            task_id=task_id,
+            event_type=EventType.CANONICAL_OUTPUTS_BOUND,
+            suffix=f"lean-canonical-binding-{status}",
+            payload={
+                "canonical_selection": {
+                    "canonical_output_refs": {"answer": final_ref.to_dict()},
+                    "selected_verification_event_seq": selected_verification_event_seq,
+                    "selected_verification_report_id": verification_report_id,
+                    "selected_attempt_id": attempt_id,
+                    "selected_submission_id": submission_id,
+                    "task_id": task_id,
+                    "unit_id": root_unit_id,
+                }
+            },
+        )
+    return binding_ref, report_ref
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_correct"),
+    (("accepted", True), ("rejected", False)),
+)
+def test_canonical_lean_domain_verdict_uses_actual_root_checker_status(
+    tmp_path: Path,
+    status: str,
+    expected_correct: bool,
+) -> None:
+    base, _, _ = _inventory_row(root_id=f"inventory:lean:{status}")
+    axes = {**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"}
+    row = _replace_inventory_row(base, condition_axes=axes)
+    kwargs, ledger, store, runtime, final_ref = _canonical_fixture(
+        tmp_path,
+        row,
+        include_verification_event=False,
+    )
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status=status,
+        ledger=ledger,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+    kwargs["runtime_result"] = project_protocol_run(
+        run_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        event_ledger=ledger,
+        artifact_store=store,
+    )
+
+    evidence = build_canonical_direct_evidence(**kwargs)
+
+    assert evidence.paper_evidence_complete is True
+    assert evidence.independently_verified_correct is expected_correct
+
+
+def test_canonical_lean_domain_verdict_binds_selected_verification_event(
+    tmp_path: Path,
+) -> None:
+    base, _, _ = _inventory_row(root_id="inventory:lean:selected-verification")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, ledger, store, runtime, final_ref = _canonical_fixture(
+        tmp_path,
+        row,
+        include_verification_event=False,
+    )
+    kwargs["verifier_checker_refs"] = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+        ledger=ledger,
+        canonical_selection_tamper="verification_event_seq",
+    )
+    kwargs["runtime_result"] = project_protocol_run(
+        run_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        event_ledger=ledger,
+        artifact_store=store,
+    )
+
+    with pytest.raises(ValueError, match="canonical selection"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+def test_canonical_lean_domain_verdict_binds_checker_event_metadata(
+    tmp_path: Path,
+) -> None:
+    base, _, _ = _inventory_row(root_id="inventory:lean:checker-event-metadata")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, ledger, store, runtime, final_ref = _canonical_fixture(
+        tmp_path,
+        row,
+        include_verification_event=False,
+    )
+    kwargs["verifier_checker_refs"] = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+        ledger=ledger,
+        verification_metadata_tamper="checker_report_ref",
+    )
+    kwargs["runtime_result"] = project_protocol_run(
+        run_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        event_ledger=ledger,
+        artifact_store=store,
+    )
+
+    with pytest.raises(ValueError, match="checker event metadata"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("fixture_options", "message"),
+    (
+        pytest.param(
+            {"include_verification_event": False},
+            "authoritative verification event",
+            id="missing",
+        ),
+        pytest.param(
+            {"duplicate_verification_event": True},
+            "authoritative verification event",
+            id="duplicate",
+        ),
+        pytest.param(
+            {"verification_event_tamper": "plugin"},
+            "validator identity",
+            id="plugin-drift",
+        ),
+    ),
+)
+def test_canonical_lean_domain_verdict_requires_authoritative_verification_event(
+    tmp_path: Path,
+    fixture_options: dict[str, Any],
+    message: str,
+) -> None:
+    base, _, _ = _inventory_row(root_id=f"inventory:lean:event:{next(iter(fixture_options))}")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(
+        tmp_path,
+        row,
+        **fixture_options,
+    )
+    kwargs["verifier_checker_refs"] = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        build_canonical_direct_evidence(**kwargs)
+
+
+def test_canonical_lean_domain_verdict_rejects_missing_root_checker_report(
+    tmp_path: Path,
+) -> None:
+    base, _, _ = _inventory_row(root_id="inventory:lean:missing-checker")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    binding_ref, _ = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="rejected",
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref,)
+
+    with pytest.raises(ValueError, match="root checker report"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+def test_canonical_lean_domain_verdict_rejects_wrong_checker_ref(
+    tmp_path: Path,
+) -> None:
+    base, _, _ = _inventory_row(root_id="inventory:lean:wrong-checker")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    wrong_ref = _save_role_artifact(
+        store,
+        label="wrong-root-checker",
+        role="protocol_runtime_artifact",
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+    )
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+        binding_report_ref=wrong_ref,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+
+    with pytest.raises(ValueError, match="checker report identity"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+def test_canonical_lean_domain_verdict_rejects_wrong_final_identity(
+    tmp_path: Path,
+) -> None:
+    base, _, _ = _inventory_row(root_id="inventory:lean:wrong-final")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    wrong_ref = _save_role_artifact(
+        store,
+        label="wrong-lean-final",
+        role="protocol_runtime_artifact",
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+    )
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="rejected",
+        binding_final_ref=wrong_ref,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+
+    with pytest.raises(ValueError, match="final identity"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("binding_overrides", "message"),
+    (
+        ({"binding_status": "timeout"}, "status mismatch"),
+        (
+            {"binding_environment_digest": "sha256:different-lean-environment"},
+            "environment mismatch",
+        ),
+    ),
+)
+def test_canonical_lean_domain_verdict_rejects_checker_binding_tamper(
+    tmp_path: Path,
+    binding_overrides: dict[str, str],
+    message: str,
+) -> None:
+    base, _, _ = _inventory_row(root_id=f"inventory:lean:tamper:{message}")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="rejected",
+        **binding_overrides,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+
+    with pytest.raises(ValueError, match=message):
+        build_canonical_direct_evidence(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "missing_ref",
+    ("stdout_ref", "stderr_ref", "generated_source_ref", "proof_artifact_ref"),
+)
+def test_canonical_lean_accepted_verdict_requires_checker_artifacts(
+    tmp_path: Path,
+    missing_ref: str,
+) -> None:
+    base, _, _ = _inventory_row(root_id=f"inventory:lean:missing:{missing_ref}")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+        missing_checker_ref=missing_ref,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+
+    with pytest.raises(ValueError, match=missing_ref):
+        build_canonical_direct_evidence(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("report_overrides", "message"),
+    (
+        ({"report_request_id": "request:wrong"}, "request identity"),
+        ({"checker_source_request_id": "request:wrong-source"}, "request identity"),
+        ({"report_proof_digest": _digest("wrong-proof")}, "proof digest"),
+        (
+            {"report_normalized_theorem_digest": _digest("wrong-theorem")},
+            "normalized theorem",
+        ),
+    ),
+)
+def test_canonical_lean_accepted_verdict_rejects_checker_artifact_tamper(
+    tmp_path: Path,
+    report_overrides: dict[str, str],
+    message: str,
+) -> None:
+    base, _, _ = _inventory_row(root_id=f"inventory:lean:checker-tamper:{message}")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+        **report_overrides,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+
+    with pytest.raises(ValueError, match=message):
+        build_canonical_direct_evidence(**kwargs)
+
+
+def test_canonical_lean_rejects_same_case_nonofficial_root_theorem(
+    tmp_path: Path,
+) -> None:
+    base, _, _ = _inventory_row(root_id="inventory:lean:nonofficial-theorem")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    alternate = _test_lean_root_theorem_body(row.case_id)
+    alternate["statement_source"] = "False"
+    alternate.pop("payload_digest")
+    alternate["payload_digest"] = digest_json(alternate)
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+        theorem_body_override=alternate,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+
+    with pytest.raises(ValueError, match="official root theorem"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("fixture_overrides", "report_overrides", "message"),
+    (
+        ({"lean_proof_bytes": b"by\n  exact False.elim (by contradiction)\n"}, {}, "proof digest"),
+        ({}, {"generated_source_bytes": b"import Init\n-- tampered\n"}, "generated source"),
+        ({"lean_proof_artifact_type": "AIUsageSummary"}, {}, "proof_artifact_ref type"),
+        ({}, {"generated_source_artifact_type": "AIUsageSummary"}, "generated_source_ref type"),
+    ),
+)
+def test_canonical_lean_rejects_checker_content_or_type_substitution(
+    tmp_path: Path,
+    fixture_overrides: dict[str, Any],
+    report_overrides: dict[str, Any],
+    message: str,
+) -> None:
+    base, _, _ = _inventory_row(root_id=f"inventory:lean:content:{message}")
+    row = _replace_inventory_row(
+        base,
+        condition_axes={**base.condition_axes, "domain": "lean_proof", "topic_family": "pure_logic"},
+    )
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(
+        tmp_path,
+        row,
+        **fixture_overrides,
+    )
+    binding_ref, report_ref = _lean_domain_verdict_refs(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        status="accepted",
+        **report_overrides,
+    )
+    kwargs["verifier_checker_refs"] = (binding_ref, report_ref)
+
+    with pytest.raises(ValueError, match=message):
+        build_canonical_direct_evidence(**kwargs)
+
+
+def test_canonical_factor_domain_verdict_keeps_false_answer_in_denominator(
+    tmp_path: Path,
+) -> None:
+    row, _, _ = _inventory_row(root_id="inventory:factor:false")
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(
+        tmp_path, row, correct=False
+    )
+    verdict_ref = _factor_domain_verdict_ref(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        correct=False,
+    )
+    kwargs["verifier_checker_refs"] = (verdict_ref,)
+
+    evidence = build_canonical_direct_evidence(**kwargs)
+
+    assert evidence.paper_evidence_complete is True
+    assert evidence.independently_verified_correct is False
+
+
+def test_canonical_factor_domain_verdict_rejects_tampered_self_report(
+    tmp_path: Path,
+) -> None:
+    row, _, _ = _inventory_row(root_id="inventory:factor:self-report")
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(
+        tmp_path, row, correct=False
+    )
+    verdict_ref = _factor_domain_verdict_ref(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        correct=True,
+    )
+    kwargs["verifier_checker_refs"] = (verdict_ref,)
+
+    with pytest.raises(ValueError, match="Factor domain verdict"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+def test_canonical_factor_domain_verdict_rejects_wrong_final_identity(
+    tmp_path: Path,
+) -> None:
+    row, _, _ = _inventory_row(root_id="inventory:factor:wrong-final")
+    kwargs, _, store, runtime, final_ref = _canonical_fixture(tmp_path, row)
+    wrong_ref = _save_role_artifact(
+        store,
+        label="wrong-factor-final",
+        role="protocol_runtime_artifact",
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+    )
+    verdict_ref = _factor_domain_verdict_ref(
+        store=store,
+        row=row,
+        execution_id=runtime.run_id,
+        task_id=runtime.task_id,
+        root_unit_id=runtime.root_unit_id,
+        final_ref=final_ref,
+        final_binding_ref=wrong_ref,
+        correct=False,
+    )
+    kwargs["verifier_checker_refs"] = (verdict_ref,)
+
+    with pytest.raises(ValueError, match="final identity"):
+        build_canonical_direct_evidence(**kwargs)
 
 
 def test_merge_unit_canonical_final_projects_through_unique_bound_merge(
@@ -965,6 +1939,33 @@ def test_condition_and_case_refs_are_digest_bound_and_ids_are_opaque() -> None:
             **drifted_values,
             inventory_row_digest=row.inventory_row_digest,
         )
+
+
+def test_catalog_case_difficulty_is_independent_of_condition_difficulty() -> None:
+    row, _original_condition_manifest, catalog = _inventory_row()
+    condition_axes = {**dict(row.condition_axes), "difficulty": "medium"}
+    condition_manifest, condition_ref = _condition_manifest(
+        row.condition_id,
+        condition_axes,
+    )
+    candidate = _replace_inventory_row(
+        row,
+        preregistered_condition_ref=condition_ref,
+        condition_axes=condition_axes,
+    )
+
+    projection = _project(
+        _inventory_manifest(candidate),
+        (condition_manifest,),
+        (catalog,),
+        {},
+    )
+
+    assert projection.rows[0].condition_axes["difficulty"] == "medium"
+    assert catalog["records"][0]["difficulty"] == "hard"
+    assert projection.rows[0].preregistered_case_ref["case_record_digest"] == (
+        catalog["records"][0]["case_record_digest"]
+    )
 
 
 def test_case_id_and_catalog_order_never_reconstruct_position_stratum() -> None:
@@ -1603,19 +2604,8 @@ def test_native_online_direct_builder_persists_exact_identity_bound_artifacts(
         ref.to_dict() for ref in provider_refs
     ]
     assert resource_ref.source["role"] == "actual_resource_book"
-    assert verdict == {
-        "schema_version": "tokenshare.paper_direct_correctness_verdict.v1",
-        "execution_id": execution_id,
-        "task_id": task_id,
-        "root_unit_id": root_unit_id,
-        "final_artifact_id": final_ref.artifact_id,
-        "final_content_hash": final_ref.content_hash,
-        "final_size_bytes": final_ref.size_bytes,
-        "verdict_kind": "independent_verifier",
-        "correct": True,
-    }
-    assert verdict_ref.source["role"] == "independent_verdict"
-    assert verdict_ref.source["oracle_verdict_ref"] == oracle_ref.to_dict()
+    assert verdict == {"accepted": True}
+    assert verdict_ref == oracle_ref
 
 
 def test_native_online_direct_builder_projects_role_books_from_native_sources(

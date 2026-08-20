@@ -330,6 +330,161 @@ def test_early_stop_prunes_unscheduled_sibling_only_after_queue_pop(
     )
 
 
+def test_plugin_ready_does_not_prune_repeated_verification_requeue(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.core.verification import build_verification_report
+    from tokenshare.local_runtime.contracts import WorkerCompletionSchedule
+    from tokenshare.local_runtime.logical_scheduler import (
+        LOGICAL_SOURCE_LATENCY_1X,
+        LogicalSourceLatencyScheduler,
+    )
+    from tokenshare.local_runtime.workers import ThreadWorkerBackend
+
+    target_unit_id: str | None = None
+
+    class RetryBeforeEarlyStopPlugin(_ExpandedPluginRuntime):
+        def __init__(self, config: ProtocolConfig) -> None:
+            super().__init__(config)
+            self.target_rejections = 0
+
+        def evaluate_merge_readiness(self, context):
+            required = tuple(child.unit_id for child in context.children)
+            completed = tuple(
+                child.unit_id
+                for child in context.children
+                if child.state.value == "Completed"
+            )
+            return MergeReadinessDecision(
+                status="ready" if completed else "wait",
+                reason="first_verified_child" if completed else "no_verified_child",
+                policy_id="runtime_test.first_verified.v1",
+                policy_version="v1",
+                required_child_unit_ids=required,
+                selected_child_unit_ids=(completed[:1] if completed else ()),
+            )
+
+        def verify_submission(self, submission, *, unit):
+            report = super().verify_submission(submission, unit=unit)
+            if unit.unit_id != target_unit_id or self.target_rejections >= 2:
+                return report
+            self.target_rejections += 1
+            return build_verification_report(
+                verification_report_id=report.verification_report_id,
+                task_id=submission.task_id,
+                unit_id=submission.unit_id,
+                attempt_id=submission.attempt_id,
+                submission_id=submission.submission_id,
+                submission_event_seq=1,
+                candidate_output_refs=submission.candidate_output_refs,
+                required_output_names=["answer"],
+                output_contract_id="contract_answer",
+                validator_policy_id="structured_report_stub_validator_v1",
+                plugin_id=self.descriptor.plugin_id,
+                plugin_version=self.descriptor.plugin_version,
+                plugin_descriptor_digest=self.descriptor.descriptor_digest,
+                status="rejected",
+                expected_artifact_hashes={
+                    name: ref.content_hash
+                    for name, ref in submission.candidate_output_refs.items()
+                },
+                required_evidence_ref_ids=[],
+                available_evidence_ref_ids=[],
+                plugin_domain_status="rejected",
+                audit_status="passed",
+                verification_environment={"runtime": "pytest"},
+                verifier={"verifier_id": "runtime_spy", "verifier_version": "1"},
+                started_at=submission.submitted_at,
+                completed_at=submission.submitted_at,
+            )
+
+    store = ArtifactStore(tmp_path)
+    ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
+    config = replace(
+        ProtocolConfig.default(
+            config_id="logical_recovery_before_merge_test",
+            artifact_store_uri="file://artifacts",
+            event_log_uri="file://events/task_demo.jsonl",
+        ),
+        max_retries=2,
+    )
+    engine = ProtocolEngine(
+        event_ledger=ledger,
+        protocol_config=config,
+        artifact_store=store,
+    )
+    scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+
+    def completion_schedule(request, _submission, _failure):
+        nonlocal target_unit_id
+        is_child = request.task_unit_snapshot.get("parent_unit_id") == "unit_ready"
+        if not is_child:
+            latency_ms = 1
+        else:
+            if target_unit_id is None:
+                target_unit_id = request.unit_id
+            latency_ms = 200 if request.unit_id == target_unit_id else 100
+        return WorkerCompletionSchedule(
+            source_latency_ms=latency_ms,
+            attempt_ordinal=request.attempt_ordinal,
+        )
+
+    plugin = RetryBeforeEarlyStopPlugin(config)
+    backend = ThreadWorkerBackend(
+        executor=_ArtifactExecutor(store),
+        capacity=2,
+        submitted_at=scheduler.now_timestamp,
+        completion_schedule=completion_schedule,
+    )
+    result = ProtocolRunCoordinator(
+        engine=engine,
+        artifact_store=store,
+        event_ledger=ledger,
+        now=lambda: "2026-08-02T00:00:00Z",
+    ).run_root(
+        ProtocolRunRequest(
+            run_id="run_logical_recovery_before_merge",
+            root_input={"prompt": "finish accepted requeue before early stop"},
+            plugin_runtime=plugin,
+            worker_backend=backend,
+            continue_after_terminal_child_failure=True,
+            trace_delay_policy=LOGICAL_SOURCE_LATENCY_1X,
+            logical_scheduler=scheduler,
+        )
+    )
+
+    assert result.status == "completed"
+    assert target_unit_id is not None
+    assert plugin.target_rejections == 2
+    events = ledger.read_all()
+    target_recoveries = [
+        event
+        for event in events
+        if event.event_type == EventType.RECOVERY_ACTION_RECORDED
+        and event.payload["recovery_action"]["unit_id"] == target_unit_id
+        and event.payload["recovery_action"]["retry_allowed"] is True
+    ]
+    assert len(target_recoveries) == 2
+    target_completed_seq = next(
+        event.event_seq
+        for event in events
+        if event.event_type == EventType.TASK_UNIT_STATE_CHANGED
+        and event.object_id == target_unit_id
+        and event.payload["task_unit_state_change"]["new_state"] == "Completed"
+    )
+    merge_seq = next(
+        event.event_seq
+        for event in events
+        if event.event_type == EventType.MERGE_TASK_LINK_RECORDED
+    )
+    assert target_completed_seq < merge_seq
+    assert not any(
+        event.event_type == EventType.SUBTREE_PRUNED
+        and target_unit_id in event.payload.get("cancelled_unit_ids", ())
+        for event in events
+    )
+
+
 def test_trace_policy_rejects_real_sleep_and_noop_sleeper() -> None:
     for sleeper in (sleep, lambda _seconds: None):
         with pytest.raises(ValueError, match="logical_source_latency_1x.*sleeper"):

@@ -36,6 +36,9 @@ from tokenshare.storage.artifacts import ArtifactStore
 MUTATED_OUTPUT_SCHEMA_VERSION = "tokenshare.paper_fault_mutated_output.v1"
 FAULT_RECORD_SCHEMA_VERSION = "tokenshare.paper_fault_injection.v1"
 FAULT_TARGET_SCHEMA_VERSION = "tokenshare.paper_fault_target.v1"
+_LEAN_FALSE_NEGATIVE_SUPPRESSED_PROOF_SOURCE = (
+    "by\n  exact tokenshare_false_negative_suppressed_candidate"
+)
 
 
 class PaperFaultType(str, Enum):
@@ -1229,7 +1232,7 @@ def _false_negative_payload(original_payload: JsonObject) -> JsonObject:
     elif _is_lean_proof_candidate(payload):
         if not str(payload.get("proof_source") or "").strip():
             raise ValueError("false_negative requires an existing found candidate or proof")
-        payload["proof_source"] = ""
+        payload["proof_source"] = _LEAN_FALSE_NEGATIVE_SUPPRESSED_PROOF_SOURCE
         payload["proof_suppressed"] = True
     else:
         if not _has_generic_candidate(payload):

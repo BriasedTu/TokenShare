@@ -77,6 +77,7 @@ class PaperMetricObservation:
     source_bank_object_locators: tuple[ExternalBankObjectLocator, ...]
     current_trace_wrappers: tuple[Mapping[str, Any], ...]
     trace_source_bindings: tuple[Mapping[str, Any], ...]
+    lineage_source_record_refs: tuple[Mapping[str, str], ...] = ()
     paper_eligible: bool = False
     schema_version: str = "tokenshare.paper_metric_observation.v1"
 
@@ -124,6 +125,23 @@ class PaperMetricObservation:
             self,
             "exclusion_reasons",
             MappingProxyType(dict(self.exclusion_reasons)),
+        )
+        lineage_refs = tuple(self.lineage_source_record_refs)
+        for value in lineage_refs:
+            if (
+                not isinstance(value, Mapping)
+                or set(value) != {"member_id", "record_digest"}
+                or not isinstance(value.get("member_id"), str)
+                or not value["member_id"]
+            ):
+                raise ValueError("metric observation lineage source record ref is invalid")
+            _require_digest(value.get("record_digest"), "record_digest")
+        if len({value["member_id"] for value in lineage_refs}) != len(lineage_refs):
+            raise ValueError("duplicate metric observation lineage source record ref")
+        object.__setattr__(
+            self,
+            "lineage_source_record_refs",
+            tuple(MappingProxyType(dict(value)) for value in lineage_refs),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -248,7 +266,7 @@ def materialize_metric_observations(
             if observation.publish_blocked
         )
     )
-    digest = _digest_json([value.to_dict() for value in canonical])
+    digest = _digest_metric_observations(canonical)
     return MetricObservationPublication(
         observations=canonical,
         numeric_draft_cell_count=numeric_count,
@@ -304,13 +322,32 @@ def _materialize_one(
         raise ValueError("numeric draft value differs from evaluator trace")
 
     source_records = _records_for_bundle(source_index, trace.bundle)
+    typed_lineage_issue = _typed_root_lineage_issue(
+        source_index,
+        trace.bundle,
+    )
     evidence_classes = {value.evidence_class for value in source_records}
     if len(evidence_classes) > 1:
         raise ValueError("metric cell crosses lineage evidence classes")
-    evidence_class = (
-        next(iter(evidence_classes))
-        if evidence_classes
-        else _single_metric_evidence_class(metric.evidence_classes)
+    declared_evidence_class = trace.bundle.row_facts.get("evidence_class")
+    if declared_evidence_class is None:
+        declared_evidence_class = (
+            next(iter(evidence_classes))
+            if evidence_classes
+            else _single_metric_evidence_class(metric.evidence_classes)
+        )
+    if (
+        not isinstance(declared_evidence_class, str)
+        or declared_evidence_class not in metric.evidence_classes
+        or (
+            evidence_classes
+            and evidence_classes != {declared_evidence_class}
+        )
+    ):
+        raise ValueError("metric lineage evidence class route mismatch")
+    evidence_class = declared_evidence_class
+    required_current_provider_roles, required_source_bank_roles = (
+        metric.required_roles_for(evidence_class)
     )
     direct_refs = _unique_mappings(
         item for record in source_records for item in record.direct_result_refs
@@ -333,9 +370,16 @@ def _materialize_one(
         for record in source_records
         for item in record.current_provider_object_refs
     )
+    required_source_identities = _required_source_identities(trace.bundle)
+    source_identity_records = tuple(
+        record
+        for identity in required_source_identities
+        for record in (source_index.get(identity),)
+        if record is not None
+    )
     locators = _unique_typed(
         item
-        for record in source_records
+        for record in source_identity_records
         for item in record.source_bank_object_locators
     )
     wrappers = _unique_mappings(
@@ -352,14 +396,14 @@ def _materialize_one(
         for item in record.trace_source_bindings
     )
     current_roles, current_role_issue = _validate_provider_roles_per_identity(
-        metric.required_current_provider_roles,
+        required_current_provider_roles,
         trace.bundle,
         provider_refs,
         direct_refs=direct_refs,
         current_refs=current_refs,
     )
     source_roles, source_role_issue = _validate_source_roles_per_identity(
-        metric.required_source_bank_roles,
+        required_source_bank_roles,
         trace.bundle,
         locators,
     )
@@ -373,7 +417,11 @@ def _materialize_one(
     elif evidence_class == "real_model_trace_protocol_run":
         if provider_refs:
             raise ValueError("trace observation contains current provider object refs")
-        missing_roles = (() if source_role_issue is None else (source_role_issue,))
+        missing_roles = tuple(
+            value
+            for value in (typed_lineage_issue, source_role_issue)
+            if value is not None
+        )
         not_applicable = ("current_provider_object_refs",)
     else:
         missing_roles = ()
@@ -416,6 +464,13 @@ def _materialize_one(
         "formula_id": trace.formula_id,
     }
     observation_id = _digest_json(identity)
+    lineage_source_record_refs = tuple(
+        {
+            "member_id": record.member_id,
+            "record_digest": record.record_digest,
+        }
+        for record in source_records
+    )
     values = {
         "observation_id": observation_id,
         "metric_contract_id": contract.contract_id,
@@ -444,20 +499,24 @@ def _materialize_one(
         "row_facts": trace.bundle.row_facts,
         "member_facts_by_id": trace.bundle.member_facts_by_id,
         "verified_observations": trace.bundle.verified_observations,
-        "required_current_provider_roles": metric.required_current_provider_roles,
-        "required_source_bank_roles": metric.required_source_bank_roles,
+        "required_current_provider_roles": required_current_provider_roles,
+        "required_source_bank_roles": required_source_bank_roles,
         "covered_current_provider_roles": current_roles,
         "covered_source_bank_roles": source_roles,
         "not_applicable_evidence_roles": not_applicable,
         "evidence_class": evidence_class,
-        "direct_result_refs": direct_refs,
-        "current_task_attempt_event_refs": current_refs,
-        "parser_verifier_checker_canonical_refs": parser_refs,
-        "ledger_refs": ledger_refs,
-        "current_provider_object_refs": provider_refs,
-        "source_bank_object_locators": locators,
-        "current_trace_wrappers": wrappers,
-        "trace_source_bindings": bindings,
+        # 完整 closure 只在 digest-bound lineage index 保存一次。每个 cell
+        # 先在内存中完成角色/identity 校验，再只持久化 record 引用，避免按
+        # cell 复制 root closure 并在 Full 规模形成磁盘笛卡尔膨胀。
+        "direct_result_refs": (),
+        "current_task_attempt_event_refs": (),
+        "parser_verifier_checker_canonical_refs": (),
+        "ledger_refs": (),
+        "current_provider_object_refs": (),
+        "source_bank_object_locators": (),
+        "current_trace_wrappers": (),
+        "trace_source_bindings": (),
+        "lineage_source_record_refs": lineage_source_record_refs,
     }
     provisional = PaperMetricObservation(
         **values,
@@ -474,38 +533,263 @@ def _records_for_bundle(
     bundle: MetricObservationBundle,
 ) -> tuple[LineageSourceRecord, ...]:
     values: list[LineageSourceRecord] = []
-    identity_fields = (
-        "source_bank_entry_id",
-        "current_attempt_id",
-        "original_attempt_id",
-        "replacement_attempt_id",
-        "current_replacement_attempt_id",
-        "provider_attempt_id",
-        "attempt_id",
-        "preregistered_root_run_id",
-        "unit_id",
-    )
+    declared_root_ids: set[str] = set()
+    strict_declared_root_ids: set[str] = set()
     for member_id in bundle.member_ids:
-        aliases = [member_id]
         facts = bundle.member_facts_by_id[member_id]
-        aliases.extend(
-            value
-            for field_name in identity_fields
-            if isinstance((value := facts.get(field_name)), str) and value
-        )
+        if facts.get("member_kind") in {
+            "exp2_preregistered_pair",
+            "exp2_repeat_speedup_summary",
+            "exp4_paired_root",
+        }:
+            root_ids = facts.get("lineage_root_run_ids")
+            if not isinstance(root_ids, Sequence) or isinstance(
+                root_ids, (str, bytes, bytearray)
+            ):
+                raise ValueError("typed metric lineage roots are missing")
+            normalized_root_ids = tuple(root_ids)
+            if (
+                any(
+                    not isinstance(value, str) or not value
+                    for value in normalized_root_ids
+                )
+                or len(set(normalized_root_ids)) != len(normalized_root_ids)
+            ):
+                raise ValueError("typed metric lineage roots are invalid")
+            declared_root_ids.update(normalized_root_ids)
+            strict_declared_root_ids.update(normalized_root_ids)
+        if facts.get("member_kind") not in {
+            "preregistered_root",
+            "exp5_preregistered_root",
+        }:
+            continue
+        explicit = facts.get("preregistered_root_run_id")
+        if isinstance(explicit, str) and explicit:
+            declared_root_ids.add(explicit)
+            continue
+        record = index.get(member_id)
+        if record is not None:
+            roots = _record_root_ids(record)
+            if roots == {member_id}:
+                declared_root_ids.add(member_id)
+
+    for member_id in bundle.member_ids:
+        facts = bundle.member_facts_by_id[member_id]
+        aliases = _stable_lineage_aliases(member_id, facts, declared_root_ids)
         for alias in aliases:
             record = index.get(alias)
             if record is not None and record not in values:
                 values.append(record)
-    # attempt alias record 保留 attempt-scoped event；run-scoped provider artifacts
-    # 由同一 direct snapshot 指向的 root record 提供。
-    for record in tuple(values):
-        for direct_ref in record.direct_result_refs:
-            root_id = direct_ref.get("preregistered_root_run_id")
-            root_record = index.get(root_id) if isinstance(root_id, str) else None
-            if root_record is not None and root_record not in values:
-                values.append(root_record)
+
+    # Root closure 只能由 bundle 明示的 root，或单一 typed alias 已证明的 root
+    # 显式补入；禁止再把 alias 中的任意 direct ref 泛化成跨 root 扩张。
+    for root_id in sorted(declared_root_ids):
+        record = index.get(root_id)
+        if root_id in strict_declared_root_ids:
+            if record is None:
+                # 缺失是 cell 级 lineage blocker，不应让整个 metrics runner
+                # 退化为 runner_internal。已存在但跨 root/歧义仍硬拒绝。
+                continue
+            if _record_root_ids(record) != {root_id}:
+                raise ValueError(
+                    "declared metric lineage root is missing or ambiguous"
+                )
+        elif record is None:
+            # 历史/合成 bundle 可以没有可解析的 root closure；它们会由
+            # 后续 required-role 物化层 fail closed。只有明示 typed pair
+            # 声明的 roots 才在此边界强制存在且唯一。
+            continue
+        if record not in values:
+            values.append(record)
+    resolved_root_ids = {
+        root_id for record in values for root_id in _record_root_ids(record)
+    }
+    if declared_root_ids and not resolved_root_ids <= declared_root_ids:
+        raise ValueError("lineage record crosses metric bundle root scope")
+    if not declared_root_ids and len(resolved_root_ids) > 1:
+        raise ValueError("lineage record has ambiguous metric bundle root scope")
+    if not declared_root_ids and len(resolved_root_ids) == 1:
+        root_id = next(iter(resolved_root_ids))
+        record = index.get(root_id)
+        if record is not None and record not in values:
+            values.append(record)
     return tuple(values)
+
+
+def _stable_lineage_aliases(
+    member_id: str,
+    facts: Mapping[str, Any],
+    declared_root_ids: set[str],
+) -> tuple[str, ...]:
+    """只允许 typed stable identity 参与 lineage join。"""
+
+    kind = facts.get("member_kind")
+    aliases: list[str] = []
+    if kind in {"preregistered_root", "exp5_preregistered_root"}:
+        explicit = facts.get("preregistered_root_run_id")
+        if isinstance(explicit, str) and explicit:
+            aliases.append(explicit)
+        elif member_id in declared_root_ids:
+            aliases.append(member_id)
+        source_entry_ids = facts.get("source_bank_entry_ids")
+        if isinstance(source_entry_ids, Sequence) and not isinstance(
+            source_entry_ids, (str, bytes, bytearray)
+        ):
+            aliases.extend(source_entry_ids)
+    if kind in {
+        "exp2_preregistered_pair",
+        "exp2_repeat_speedup_summary",
+        "exp4_paired_root",
+    }:
+        root_ids = facts.get("lineage_root_run_ids")
+        if isinstance(root_ids, Sequence) and not isinstance(
+            root_ids, (str, bytes, bytearray)
+        ):
+            aliases.extend(root_ids)
+        source_entry_ids = facts.get("source_bank_entry_ids")
+        if isinstance(source_entry_ids, Sequence) and not isinstance(
+            source_entry_ids, (str, bytes, bytearray)
+        ):
+            aliases.extend(source_entry_ids)
+    if kind in {
+        "committed_trace_consumption",
+        "trace_consumption",
+        "exp3_discarded_trace_consumption",
+    }:
+        aliases.append(facts.get("source_bank_entry_id"))
+    if kind in {
+        "actual_provider_attempt",
+        "actual_first_provider_attempt",
+        "exp2_online_first_provider_attempt",
+        "exp5_provider_attempt",
+        "online_recovery_original_attempt",
+        "online_recovery_replacement_attempt",
+    }:
+        # Typed provider member 的 member_id 是允许的稳定 attempt alias；
+        # neutral persisted records 仍不会走这条路径。
+        aliases.append(member_id)
+        for field_name in (
+            "provider_attempt_id",
+            "current_attempt_id",
+            "replacement_attempt_id",
+            "original_attempt_id",
+            "attempt_id",
+        ):
+            aliases.append(facts.get(field_name))
+    return tuple(
+        dict.fromkeys(
+            value for value in aliases if isinstance(value, str) and value
+        )
+    )
+
+
+def _record_root_ids(record: LineageSourceRecord) -> set[str]:
+    return {
+        root_id
+        for direct_ref in record.direct_result_refs
+        if isinstance(
+            (root_id := direct_ref.get("preregistered_root_run_id")), str
+        )
+        and root_id
+    }
+
+
+def _typed_root_lineage_issue(
+    index: LineageSourceIndex,
+    bundle: MetricObservationBundle,
+ ) -> str | None:
+    """Typed pair 的 root/exact-consumption 不完整时返回 cell blocker。"""
+
+    declared_root_ids: set[str] = set()
+    facts_by_root: dict[str, Mapping[str, Any]] = {}
+    requires_exact_root_entries = any(
+        bundle.member_facts_by_id[member_id].get("member_kind")
+        in {
+            "exp2_preregistered_pair",
+            "exp2_repeat_speedup_summary",
+            "exp4_paired_root",
+        }
+        for member_id in bundle.member_ids
+    )
+    if not requires_exact_root_entries:
+        return None
+    for member_id in bundle.member_ids:
+        facts = bundle.member_facts_by_id[member_id]
+        if facts.get("member_kind") in {
+            "exp2_preregistered_pair",
+            "exp2_repeat_speedup_summary",
+            "exp4_paired_root",
+        }:
+            root_ids = facts.get("lineage_root_run_ids")
+            if not isinstance(root_ids, Sequence) or isinstance(
+                root_ids, (str, bytes, bytearray)
+            ):
+                return "missing_declared_root_lineage"
+            declared_root_ids.update(
+                value for value in root_ids if isinstance(value, str) and value
+            )
+    for member_id in bundle.member_ids:
+        facts = bundle.member_facts_by_id[member_id]
+        if facts.get("member_kind") not in {
+            "preregistered_root",
+            "exp5_preregistered_root",
+        } or "source_bank_entry_ids" not in facts:
+            continue
+        root_id = facts.get("preregistered_root_run_id")
+        if not isinstance(root_id, str) or not root_id:
+            root_id = member_id if member_id in declared_root_ids else None
+        if not isinstance(root_id, str) or root_id not in declared_root_ids:
+            return "root_source_lineage_lacks_declared_identity"
+        previous = facts_by_root.setdefault(root_id, facts)
+        if previous != facts:
+            return "conflicting_root_source_lineage_facts"
+
+    if set(facts_by_root) != declared_root_ids:
+        return "missing_exact_root_source_facts"
+
+    for root_id, facts in facts_by_root.items():
+        claimed = facts.get("source_bank_entry_ids")
+        if not isinstance(claimed, Sequence) or isinstance(
+            claimed, (str, bytes, bytearray)
+        ):
+            return "invalid_root_source_lineage_entries"
+        claimed_ids = tuple(claimed)
+        if (
+            any(not isinstance(value, str) or not value for value in claimed_ids)
+            or len(set(claimed_ids)) != len(claimed_ids)
+        ):
+            return "invalid_root_source_lineage_entries"
+        record = index.get(root_id)
+        if record is None:
+            return f"missing_declared_root_lineage:{root_id}"
+        current_ids = tuple(
+            dict.fromkeys(
+                wrapper.entry_id for wrapper in record.current_trace_wrappers
+            )
+        )
+        committed_ids = {
+            consumption.entry_id
+            for consumption in record.committed_trace_consumptions
+        }
+        frozen_binding_ids = {
+            replacement.entry_id
+            for binding in record.trace_source_bindings
+            for replacement in binding.replacements
+        }
+        claimed_set = set(claimed_ids)
+        # current wrappers 只表示每个 unit 的 terminal/current attempt；发生
+        # replacement 时，持久化 usage 还会包含更早已 committed 的 slot。
+        # claimed distinct 必须精确等于 digest-bound committed history；同时
+        # 保持 current⊆committed⊆planned，不能把未消费的 planned slot 扩进分母。
+        if (
+            not current_ids
+            or not committed_ids
+            or claimed_set != committed_ids
+            or not set(current_ids) <= committed_ids
+            or not committed_ids <= frozen_binding_ids
+        ):
+            return f"root_source_lineage_mismatch:{root_id}"
+    return None
 
 
 def _single_metric_evidence_class(values: Sequence[str]) -> str:
@@ -577,11 +861,19 @@ def _required_source_identities(bundle: MetricObservationBundle) -> tuple[str, .
     values = []
     for member_id in bundle.member_ids:
         facts = bundle.member_facts_by_id[member_id]
-        if facts.get("member_kind") not in member_kinds:
-            continue
-        entry_id = facts.get("source_bank_entry_id")
-        if isinstance(entry_id, str) and entry_id:
-            values.append(entry_id)
+        if facts.get("member_kind") in member_kinds:
+            entry_id = facts.get("source_bank_entry_id")
+            if isinstance(entry_id, str) and entry_id:
+                values.append(entry_id)
+        entry_ids = facts.get("source_bank_entry_ids")
+        if isinstance(entry_ids, Sequence) and not isinstance(
+            entry_ids, (str, bytes, bytearray)
+        ):
+            values.extend(
+                entry_id
+                for entry_id in entry_ids
+                if isinstance(entry_id, str) and entry_id
+            )
     return tuple(dict.fromkeys(values))
 
 
@@ -860,6 +1152,28 @@ def _digest_json(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _digest_metric_observations(
+    observations: Sequence[PaperMetricObservation],
+) -> str:
+    """流式计算与既有 canonical JSON array 完全相同的集合摘要。"""
+
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    for index, observation in enumerate(observations):
+        if index:
+            digest.update(b",")
+        digest.update(
+            json.dumps(
+                observation.to_dict(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    digest.update(b"]")
+    return "sha256:" + digest.hexdigest()
 
 
 def _require_digest(value: Any, field_name: str) -> None:

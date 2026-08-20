@@ -39,7 +39,11 @@ from tokenshare.local_runtime import (
     WorkerTerminationPolicy,
 )
 from tokenshare.protocol_engine import ProtocolEngine
-from tokenshare.executors.ai_api import AIAPIExecutor
+from tokenshare.executors.ai_api import (
+    AIAPIExecutor,
+    persist_zero_provider_attempt_provenance,
+    validated_current_provider_attempt_count as validate_provider_attempt_count,
+)
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
     UrlLibDeepSeekTransport,
@@ -60,6 +64,9 @@ from tokenshare.executors.trace_backed import (
     bind_trace_execution_request,
 )
 from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
+from tokenshare.experiments.paper_formal_evidence import (
+    _typed_execution_request_from_dict,
+)
 from tokenshare.experiments.paper_catalog import (
     default_lean_paper_environment_manifest,
     lean_theorem_payload_from_case,
@@ -86,7 +93,11 @@ from tokenshare.experiments.paper_report import scan_artifact_store_for_secrets
 from tokenshare.experiments.paper_direct_results import (
     persist_native_online_direct_artifacts,
 )
-from tokenshare.experiments.paper_projection import project_paper_protocol_run
+from tokenshare.experiments.paper_projection import (
+    CapturedModelExecutionRecordBinding,
+    project_paper_protocol_run,
+    reconcile_captured_model_execution_records,
+)
 from tokenshare.experiments.paper_ablation import runtime_controls_for_mode
 from tokenshare.experiments.paper_unit_commitments import (
     lean_lemma_graph_plugin_payload,
@@ -100,6 +111,7 @@ from tokenshare.local_runtime.logical_scheduler import (
 from tokenshare.local_runtime.contracts import (
     PreparedTraceDelivery,
     TRACE_TERMINAL_EXECUTION_RESULT_KINDS,
+    TraceConsumptionCore,
     WorkerCompletionSchedule,
 )
 from tokenshare.experiments.paper_workers import (
@@ -637,6 +649,7 @@ class _CapturedLeanCall:
     usage_ref: ArtifactRef
     model_execution_record: Any | None
     model_execution_record_ref: ArtifactRef | None
+    model_execution_record_required: bool
     resolved_secret_values: tuple[str, ...] = ()
 
 
@@ -1114,6 +1127,7 @@ class _FixedIdentityLeanExecutor:
         executor_requirements: JsonObject,
         case_id: str,
         transport: Any,
+        model_execution_record_required: bool,
         paper_eligible_transport: bool,
         post_raw_output_hook: Any | None,
         secret_collector: _TransientSecretCollector,
@@ -1125,6 +1139,7 @@ class _FixedIdentityLeanExecutor:
         self.executor_requirements = dict(executor_requirements)
         self.case_id = case_id
         self.transport = transport
+        self.model_execution_record_required = model_execution_record_required
         self.paper_eligible_transport = paper_eligible_transport
         self.post_raw_output_hook = post_raw_output_hook
         self.secret_collector = secret_collector
@@ -1155,11 +1170,17 @@ class _FixedIdentityLeanExecutor:
         submission: ExecutionSubmission,
     ) -> _CapturedLeanCall:
         del submission
-        return next(
+        matches = tuple(
             call
-            for call in reversed(self.calls)
+            for call in self.calls
             if call.request.attempt_id == request.attempt_id
         )
+        if len(matches) != 1:
+            raise ValueError(
+                "Lean process result requires exactly one captured request "
+                f"attempt_id {request.attempt_id!r}; observed {len(matches)}"
+            )
+        return matches[0]
 
     def ingest_process_result(self, captured: _CapturedLeanCall) -> None:
         for secret in captured.resolved_secret_values:
@@ -1169,7 +1190,10 @@ class _FixedIdentityLeanExecutor:
                 call.request.attempt_id == captured.request.attempt_id
                 for call in self.calls
             ):
-                return
+                raise ValueError(
+                    "Lean process result duplicated captured request attempt_id: "
+                    f"{captured.request.attempt_id}"
+                )
             self.calls.append(captured)
 
     def execute(
@@ -1200,6 +1224,15 @@ class _FixedIdentityLeanExecutor:
             expected=self.executor_requirements,
         )
         if mismatches:
+            provenance_ref = persist_zero_provider_attempt_provenance(
+                artifact_store=self.store,
+                config=self.config,
+                executor_id=AI_EXECUTOR_ID,
+                submission_id=submission_id,
+                request=request,
+                final_result_kind="fatal_executor_error",
+                submitted_at=submitted_at,
+            )
             submission = ExecutionSubmission(
                 submission_id=submission_id,
                 request_id=request.request_id,
@@ -1218,7 +1251,7 @@ class _FixedIdentityLeanExecutor:
                 log_ref=None,
                 environment_ref=request.environment_ref,
                 environment_summary={"runtime": "fixed_identity_policy"},
-                provenance_ref=None,
+                provenance_ref=provenance_ref,
                 usage_summary={"provider_attempt_count": 0},
                 error={
                     "kind": "executor_requirement_mismatch",
@@ -1306,6 +1339,10 @@ class _FixedIdentityLeanExecutor:
                     usage_ref=usage_ref,
                     model_execution_record=model_record,
                     model_execution_record_ref=model_record_ref,
+                    model_execution_record_required=(
+                        self.model_execution_record_required
+                        and not mismatches
+                    ),
                     resolved_secret_values=self.secret_collector.snapshot(),
                 )
             )
@@ -1381,9 +1418,33 @@ def _trace_lean_calls_from_events(
     ]
     result: list[_CapturedLeanCall] = []
     for attempt_id in committed_attempt_ids:
-        request = requests[attempt_id]
-        delivery = deliveries[attempt_id]
-        submission = staged_submissions[attempt_id]
+        if (
+            attempt_id in requests
+            and attempt_id in deliveries
+            and attempt_id in staged_submissions
+        ):
+            request = requests[attempt_id]
+            delivery = deliveries[attempt_id]
+            submission = staged_submissions[attempt_id]
+            request_ref = request_refs_by_id[request.request_id]
+        else:
+            request, delivery, submission, request_ref = (
+                _restore_trace_lean_call_from_events(
+                    attempt_id=attempt_id,
+                    runtime_events=runtime_events,
+                    store=store,
+                )
+            )
+            for staged, restored, label in (
+                (requests.get(attempt_id), request, "request"),
+                (deliveries.get(attempt_id), delivery, "delivery"),
+                (staged_submissions.get(attempt_id), submission, "submission"),
+            ):
+                if staged is not None and staged.to_dict() != restored.to_dict():
+                    raise ValueError(f"trace {label} staged/runtime identity mismatch")
+            indexed_ref = request_refs_by_id.get(request.request_id)
+            if indexed_ref is not None and indexed_ref != request_ref:
+                raise ValueError("trace request ref index identity mismatch")
         submission = replace(
             submission,
             usage_summary={
@@ -1411,13 +1472,301 @@ def _trace_lean_calls_from_events(
             _CapturedLeanCall(
                 request=request,
                 submission=submission,
-                request_ref=request_refs_by_id[request.request_id],
+                request_ref=request_ref,
                 usage_ref=usage_ref,
                 model_execution_record=None,
                 model_execution_record_ref=None,
+                model_execution_record_required=False,
             )
         )
     return result
+
+
+def _restore_trace_lean_call_from_events(
+    *,
+    attempt_id: str,
+    runtime_events: Sequence[Any],
+    store: ArtifactStore,
+) -> tuple[ExecutionRequest, PreparedTraceDelivery, ExecutionSubmission, ArtifactRef]:
+    request_events = tuple(
+        event
+        for event in runtime_events
+        if event.event_type == "EXECUTION_REQUEST_RECORDED"
+        and event.payload.get("attempt_id") == attempt_id
+    )
+    commit_events = tuple(
+        event
+        for event in runtime_events
+        if event.event_type == "TRACE_DELIVERY_COMMITTED.v1"
+        and event.payload.get("attempt_id") == attempt_id
+    )
+    submission_events = tuple(
+        event
+        for event in runtime_events
+        if event.event_type == "EXECUTION_SUBMISSION_RECORDED"
+        and event.payload.get("attempt_id") == attempt_id
+        and event.payload.get("acceptance_status") == "accepted"
+    )
+    for label, matches in (
+        ("request", request_events),
+        ("commit", commit_events),
+        ("accepted submission", submission_events),
+    ):
+        if len(matches) != 1:
+            raise ValueError(
+                f"trace {label} runtime event is missing or ambiguous for {attempt_id}"
+            )
+
+    request_event = request_events[0]
+    commit_event = commit_events[0]
+    submission_event = submission_events[0]
+    request_ref, request_body = _verified_lean_trace_json_ref(
+        store, request_event.payload.get("request_ref"), "request"
+    )
+    request = _typed_execution_request_from_dict(request_body)
+    commit = TraceConsumptionCore.from_dict(commit_event.payload)
+    _, delivery_body = _verified_lean_trace_json_ref(
+        store, commit.current_wrapper_ref.to_dict(), "current wrapper"
+    )
+    delivery = PreparedTraceDelivery.from_dict(delivery_body)
+    _, submission_body = _verified_lean_trace_json_ref(
+        store, submission_event.payload.get("submission_ref"), "submission"
+    )
+    submission = _typed_lean_trace_execution_submission(submission_body)
+
+    if any(
+        actual != expected
+        for actual, expected in (
+            (request_event.object_type, "ExecutionRequest"),
+            (request_event.object_id, request.request_id),
+            (request_event.task_id, request.task_id),
+            (request_event.payload.get("request_id"), request.request_id),
+            (request_event.payload.get("attempt_id"), request.attempt_id),
+            (request_event.payload.get("task_id"), request.task_id),
+            (request_event.payload.get("unit_id"), request.unit_id),
+            (request_event.payload.get("lease_id"), request.lease_id),
+            (request_event.payload.get("request_digest"), request_ref.content_hash),
+            (commit_event.object_type, "TraceConsumption"),
+            (commit_event.object_id, request.attempt_id),
+            (commit_event.task_id, request.task_id),
+            (commit.status, "delivered"),
+            (commit.binding_digest, delivery.binding_digest),
+            (commit.current_fencing_token, request.fencing_token),
+            (request.attempt_id, attempt_id),
+            (delivery.attempt_id, request.attempt_id),
+            (delivery.task_id, request.task_id),
+            (delivery.unit_id, request.unit_id),
+            (delivery.attempt_ordinal, request.attempt_ordinal),
+            (delivery.binding_digest, request.source_binding_digest),
+            (
+                delivery.inference_request_digest,
+                (request.soft_hints or {}).get("trace_inference_request_digest"),
+            ),
+            (
+                delivery.entry_id,
+                (request.soft_hints or {}).get("trace_source_entry_id"),
+            ),
+        )
+    ):
+        raise ValueError("trace request/delivery runtime identity mismatch")
+    if any(
+        getattr(submission, field_name) != getattr(request, field_name)
+        for field_name in (
+            "request_id",
+            "task_id",
+            "unit_id",
+            "attempt_id",
+            "lease_id",
+            "fencing_token",
+        )
+    ) or any(
+        actual != expected
+        for actual, expected in (
+            (submission_event.object_type, "ExecutionSubmission"),
+            (submission_event.object_id, submission.submission_id),
+            (submission_event.task_id, submission.task_id),
+            (submission_event.payload.get("request_id"), request.request_id),
+            (submission_event.payload.get("task_id"), request.task_id),
+            (submission_event.payload.get("unit_id"), request.unit_id),
+            (submission_event.payload.get("lease_id"), request.lease_id),
+            (
+                submission_event.payload.get("submission_id"),
+                submission.submission_id,
+            ),
+            (submission_event.payload.get("result_kind"), submission.result_kind),
+            (
+                submission_event.payload.get("submission_digest"),
+                ArtifactRef.from_dict(
+                    submission_event.payload["submission_ref"]
+                ).content_hash,
+            ),
+            (submission.executor_id, request.executor.get("executor_id")),
+            (submission.executor_version, request.executor.get("executor_version")),
+            (submission.environment_ref, request.environment_ref),
+        )
+    ):
+        raise ValueError("trace submission/request runtime identity mismatch")
+    _, parser_result = _verified_lean_trace_json_ref(
+        store,
+        commit.parser_result_ref.to_dict(),
+        "parser result",
+    )
+    error_kind = (
+        submission.error.get("kind")
+        if isinstance(submission.error, Mapping)
+        else None
+    )
+    if delivery.source_terminal_kind == "provider_failure" and (
+        submission.result_kind != "failed"
+        or submission.candidate_output_refs
+        or submission.raw_output_ref != commit.current_wrapper_ref
+        or submission.parsed_output_ref != commit.parser_result_ref
+        or submission.provenance_ref != commit.current_provenance_ref
+        or int((submission.usage_summary or {}).get("provider_attempt_count", -1)) != 0
+        or int((submission.usage_summary or {}).get("current_provider_call_count", -1))
+        != 0
+        or not isinstance(error_kind, str)
+        or not error_kind
+        or parser_result.get("failure_kind") != error_kind
+    ):
+        raise ValueError("trace provider-failure submission identity mismatch")
+    refs_to_verify = [
+        ("parser input", commit.parser_input_ref),
+        *(('verifier/checker', ref) for ref in commit.verifier_checker_refs),
+        *(('trace attribution', ref) for ref in commit.trace_attribution_refs),
+        *((('canonical', commit.canonical_ref),) if commit.canonical_ref is not None else ()),
+        *((('raw output', submission.raw_output_ref),) if submission.raw_output_ref is not None else ()),
+        *((('parsed output', submission.parsed_output_ref),) if submission.parsed_output_ref is not None else ()),
+        *(('candidate output', ref) for ref in submission.candidate_output_refs.values()),
+        *((('parse failure', submission.parse_failure_ref),) if submission.parse_failure_ref is not None else ()),
+        *((('log', submission.log_ref),) if submission.log_ref is not None else ()),
+        *((('submission provenance', submission.provenance_ref),) if submission.provenance_ref is not None else ()),
+    ]
+    for label, ref in refs_to_verify:
+        if not store.verify(ref):
+            raise ValueError(f"trace {label} artifact ref is not current")
+    for ref in commit.trace_attribution_refs:
+        _, attribution = _verified_lean_trace_json_ref(
+            store,
+            ref.to_dict(),
+            "trace attribution",
+        )
+        if int(attribution.get("current_provider_call_count", -1)) != 0:
+            raise ValueError("trace attribution current provider count is nonzero")
+    _, provenance = _verified_lean_trace_json_ref(
+        store,
+        commit.current_provenance_ref.to_dict(),
+        "provenance",
+    )
+    if int(provenance.get("current_provider_call_count", -1)) != 0:
+        raise ValueError("trace provenance current provider count is nonzero")
+    _, parser_input = _verified_lean_trace_json_ref(
+        store,
+        commit.parser_input_ref.to_dict(),
+        "parser input",
+    )
+    if any(
+        actual != expected
+        for actual, expected in (
+            (parser_input.get("schema_version"), "tokenshare.trace_parser_input.v1"),
+            (parser_input.get("media_type"), delivery.parser_input_media_type),
+            (parser_input.get("content_digest"), delivery.parser_input_digest),
+            (
+                parser_input.get("source_bank_object_locators"),
+                [dict(item) for item in delivery.source_bank_object_locators],
+            ),
+        )
+    ):
+        raise ValueError("trace parser input/delivery digest mismatch")
+    return request, delivery, submission, request_ref
+
+
+def _verified_lean_trace_json_ref(
+    store: ArtifactStore,
+    value: Any,
+    label: str,
+) -> tuple[ArtifactRef, JsonObject]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"trace {label} artifact ref is invalid")
+    ref = ArtifactRef.from_dict(dict(value))
+    if not store.verify(ref):
+        raise ValueError(f"trace {label} artifact ref is not current")
+    body = json.loads(store.read_bytes(ref).decode("utf-8"))
+    if not isinstance(body, dict):
+        raise ValueError(f"trace {label} artifact must be a JSON object")
+    return ref, body
+
+
+def _typed_lean_trace_execution_submission(
+    body: Mapping[str, Any],
+) -> ExecutionSubmission:
+    def optional_ref(name: str) -> ArtifactRef | None:
+        value = body.get(name)
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise ValueError(f"persisted trace submission {name} is invalid")
+        return ArtifactRef.from_dict(dict(value))
+
+    environment = body.get("environment_ref")
+    candidates = body.get("candidate_output_refs")
+    if not isinstance(environment, Mapping) or not isinstance(candidates, Mapping):
+        raise ValueError("persisted trace submission typed fields are invalid")
+    parsed = ExecutionSubmission(
+        submission_id=str(body.get("submission_id", "")),
+        request_id=str(body.get("request_id", "")),
+        task_id=str(body.get("task_id", "")),
+        unit_id=str(body.get("unit_id", "")),
+        attempt_id=str(body.get("attempt_id", "")),
+        lease_id=str(body.get("lease_id", "")),
+        fencing_token=str(body.get("fencing_token", "")),
+        executor_id=str(body.get("executor_id", "")),
+        executor_version=str(body.get("executor_version", "")),
+        result_kind=str(body.get("result_kind", "")),
+        raw_output_ref=optional_ref("raw_output_ref"),
+        parsed_output_ref=optional_ref("parsed_output_ref"),
+        candidate_output_refs={
+            str(name): ArtifactRef.from_dict(dict(value))
+            for name, value in candidates.items()
+            if isinstance(value, Mapping)
+        },
+        parse_failure_ref=optional_ref("parse_failure_ref"),
+        log_ref=optional_ref("log_ref"),
+        environment_ref=EnvironmentRef(
+            environment_id=str(environment.get("environment_id", "")),
+            environment_digest=str(environment.get("environment_digest", "")),
+            runtime=str(environment.get("runtime", "")),
+            tool_versions=dict(environment.get("tool_versions", {})),
+            resource_limits=dict(environment.get("resource_limits", {})),
+            fixture_profile_digest=str(environment.get("fixture_profile_digest", "")),
+            seed=environment.get("seed"),
+            clock_policy=str(environment.get("clock_policy", "")),
+            created_at=str(environment.get("created_at", "")),
+            schema_version=str(environment.get("schema_version", "")),
+        ),
+        environment_summary=dict(body.get("environment_summary", {})),
+        provenance_ref=optional_ref("provenance_ref"),
+        usage_summary=dict(body.get("usage_summary", {})),
+        error=(dict(body["error"]) if isinstance(body.get("error"), Mapping) else None),
+        submitted_at=str(body.get("submitted_at", "")),
+        schema_version=str(body.get("schema_version", "")),
+    )
+    if len(parsed.candidate_output_refs) != len(candidates) or parsed.to_dict() != dict(body):
+        raise ValueError("persisted trace submission schema is invalid")
+    return parsed
+
+
+def _protocol_retries_from_provider_attempt_limit(
+    config: AIAPIExecutorConfig,
+) -> int:
+    max_provider_attempts = config.defaults.get("max_provider_attempts")
+    if (
+        isinstance(max_provider_attempts, bool)
+        or not isinstance(max_provider_attempts, int)
+        or max_provider_attempts < 1
+    ):
+        raise ValueError("max_provider_attempts must be a positive integer")
+    return max_provider_attempts - 1
 
 
 def _run_lean_full_via_coordinator(
@@ -1465,8 +1814,11 @@ def _run_lean_full_via_coordinator(
             else 1
             if condition.experiment_id == "exp4_real_ai_protocol_ablation"
             else 2
-            if post_raw_output_hook is not None
-            else 0
+            if (
+                post_raw_output_hook is not None
+                and condition.experiment_id == "exp3_real_ai_fault_recovery"
+            )
+            else _protocol_retries_from_provider_attempt_limit(config)
         ),
     )
     environment_manifest = default_lean_paper_environment_manifest()
@@ -1505,6 +1857,9 @@ def _run_lean_full_via_coordinator(
             executor_requirements=executor_requirements,
             case_id=case_id,
             transport=active_transport,
+            model_execution_record_required=(
+                validated_binding is not None or real_transport
+            ),
             paper_eligible_transport=not _is_offline_capturing_transport(
                 active_transport
             ),
@@ -1846,78 +2201,64 @@ def _run_lean_full_via_coordinator(
         attempt_metadata_by_unit=projection_metadata_by_unit,
     )
     attempts = list(projection.attempt_results)
+    if condition.model_entry_id is not None:
+        attempts = [
+            replace(attempt, entry_id=condition.model_entry_id)
+            for attempt in attempts
+        ]
     fault_records: tuple[JsonObject, ...] = ()
     if worker_termination_policy is not None:
-        actual_unit_id_by_planned = {
-            str(captured.request.soft_hints["planned_ai_unit_id"]): (
-                captured.request.unit_id
-            )
-            for captured in captured_calls
-        }
-        dependency_sources_by_planned: dict[str, tuple[str, ...]] = {}
-        if isinstance(certificate, LeanLemmaGraphCertificate):
-            for planned_ai_unit_id in actual_unit_id_by_planned:
-                dependency_sources_by_planned[planned_ai_unit_id] = tuple(
-                    str(edge["source_node_id"])
-                    for edge in certificate.dependency_edges
-                    if str(edge["target_node_id"]) == planned_ai_unit_id
-                )
-        depth_by_planned: dict[str, int] = {}
-
-        def planned_depth(planned_ai_unit_id: str) -> int:
-            if planned_ai_unit_id in depth_by_planned:
-                return depth_by_planned[planned_ai_unit_id]
-            sources = dependency_sources_by_planned.get(
-                planned_ai_unit_id, ()
-            )
-            depth = (
-                max(planned_depth(source) for source in sources) + 1
-                if sources
-                else 0
-            )
-            depth_by_planned[planned_ai_unit_id] = depth
-            return depth
-
-        ai_units_by_id: dict[str, PaperAIUnit] = {}
+        dispatched_unit_id_by_planned: dict[str, str] = {}
         provider_tokens_by_attempt_id: dict[str, int] = {}
         for captured in captured_calls:
             request = captured.request
             planned_ai_unit_id = str(
                 request.soft_hints["planned_ai_unit_id"]
             )
-            dependency_path = tuple(
-                str(item)
-                for item in request.soft_hints.get("dependency_path", ())
+            previous_unit_id = dispatched_unit_id_by_planned.setdefault(
+                planned_ai_unit_id,
+                request.unit_id,
             )
-            ai_units_by_id[request.unit_id] = PaperAIUnit(
-                task_id=request.task_id,
-                unit_id=request.unit_id,
-                unit_kind=(
-                    "lean_lemma_node"
-                    if isinstance(certificate, LeanLemmaGraphCertificate)
-                    else "lean_subgoal"
-                ),
-                dependencies=tuple(
-                    actual_unit_id_by_planned[source]
-                    for source in dependency_sources_by_planned.get(
-                        planned_ai_unit_id, ()
-                    )
-                ),
-                depth=planned_depth(planned_ai_unit_id),
-                domain="lean_proof",
-                metadata={
-                    "planned_ai_unit_id": planned_ai_unit_id,
-                    "lemma_node_id": request.soft_hints.get("lemma_node_id"),
-                    "dependency_path": list(dependency_path),
-                },
-            )
+            if previous_unit_id != request.unit_id:
+                raise ValueError(
+                    "Lean worker-death planned unit mapped to multiple runtime units"
+                )
             provider_tokens_by_attempt_id[request.attempt_id] = _int_metric(
                 (captured.submission.usage_summary or {}).get("total_tokens")
             )
+        if isinstance(certificate, LeanLemmaGraphCertificate):
+            actual_unit_id_by_planned, ai_units_by_id = (
+                _frozen_lean_worker_death_lemma_graph(
+                    case=case,
+                    split_plan=split_plan,
+                    certificate=certificate,
+                    worker_termination_policy=worker_termination_policy,
+                    dispatched_unit_id_by_planned=dispatched_unit_id_by_planned,
+                )
+            )
+        else:
+            actual_unit_id_by_planned = dict(dispatched_unit_id_by_planned)
+            ai_units_by_id = {
+                captured.request.unit_id: PaperAIUnit(
+                    task_id=captured.request.task_id,
+                    unit_id=captured.request.unit_id,
+                    unit_kind="lean_subgoal",
+                    domain="lean_proof",
+                    metadata={
+                        "planned_ai_unit_id": str(
+                            captured.request.soft_hints["planned_ai_unit_id"]
+                        ),
+                        "dependency_path": list(
+                            captured.request.soft_hints.get("dependency_path", ())
+                        ),
+                    },
+                )
+                for captured in captured_calls
+            }
         missing_targets = [
             planned
             for planned in worker_termination_policy.target_planned_ai_unit_ids
-            if planned not in actual_unit_id_by_planned
+            if planned not in dispatched_unit_id_by_planned
         ]
         if missing_targets:
             raise ValueError(
@@ -1953,6 +2294,23 @@ def _run_lean_full_via_coordinator(
             case_id=case_id,
             paper_metadata=paper_metadata,
         )
+    projection = reconcile_captured_model_execution_records(
+        replace(projection, attempt_results=tuple(attempts)),
+        tuple(
+            CapturedModelExecutionRecordBinding(
+                request_attempt_id=captured.request.attempt_id,
+                record_attempt_id=(
+                    captured.model_execution_record.attempt_id
+                    if captured.model_execution_record is not None
+                    else None
+                ),
+                record_ref=captured.model_execution_record_ref,
+                record_required=captured.model_execution_record_required,
+            )
+            for captured in captured_calls
+        ),
+    )
+    attempts = list(projection.attempt_results)
     run_evidence = _run_evidence(
         store=store,
         real_transport=real_transport,
@@ -1964,6 +2322,7 @@ def _run_lean_full_via_coordinator(
         "run_id": runtime_result.run_id,
         "task_id": runtime_result.task_id,
         "root_unit_id": runtime_result.root_unit_id,
+        "event_ledger_path": "events/event_log.jsonl",
         "status": runtime_result.status,
         "event_count": len(runtime_result.event_refs),
         "lifecycle_coverage": projection.lifecycle_coverage,
@@ -1993,25 +2352,58 @@ def _run_lean_full_via_coordinator(
             runtime_result.summary.get("runtime_hook_observations", ())
         ),
     )
-    final_value = merge_summary.get("merge_result_ref")
+    canonical_final_values = tuple(
+        event.payload["merge_output_refs"]["lean_proof_artifact"]
+        for event in runtime_events
+        if event.event_type == "MERGE_RECORDED"
+        and event.payload.get("parent_unit_id") == runtime_result.root_unit_id
+        and isinstance(event.payload.get("merge_output_refs"), Mapping)
+        and isinstance(
+            event.payload["merge_output_refs"].get("lean_proof_artifact"),
+            Mapping,
+        )
+    )
+    if len(canonical_final_values) > 1:
+        raise ValueError("Lean canonical final proof artifact is ambiguous")
+    final_ref = (
+        ArtifactRef.from_dict(canonical_final_values[0])
+        if canonical_final_values
+        else None
+    )
     checker_value = merge_summary.get("root_checker_report_ref")
     if attempts:
         completed_direct = (
-            isinstance(final_value, Mapping)
+            final_ref is not None
             and isinstance(checker_value, Mapping)
             and accepted_validity is not None
+        )
+        root_checker_ref = (
+            ArtifactRef.from_dict(checker_value) if completed_direct else None
+        )
+        domain_verdict_ref = (
+            _persist_lean_domain_verdict_binding(
+                store=store,
+                case_id=case_id,
+                execution_id=runtime_result.run_id,
+                task_id=runtime_result.task_id,
+                root_unit_id=runtime_result.root_unit_id,
+                final_result_ref=final_ref,
+                root_checker_report_ref=root_checker_ref,
+                root_theorem_payload_ref=(
+                    plugin_runtime.parent_theorem_payload_ref
+                ),
+                case=case,
+            )
+            if completed_direct
+            else None
         )
         direct_bundle = persist_native_online_direct_artifacts(
             artifact_store=store,
             execution_id=runtime_result.run_id,
             task_id=runtime_result.task_id,
             root_unit_id=runtime_result.root_unit_id,
-            final_result_ref=(
-                ArtifactRef.from_dict(final_value) if completed_direct else None
-            ),
-            oracle_verdict_ref=(
-                ArtifactRef.from_dict(checker_value) if completed_direct else None
-            ),
+            final_result_ref=final_ref if completed_direct else None,
+            oracle_verdict_ref=domain_verdict_ref,
             oracle_kind="lean_checker" if completed_direct else None,
             oracle_correct=accepted_validity if completed_direct else None,
             oracle_fact=(
@@ -2028,6 +2420,9 @@ def _run_lean_full_via_coordinator(
                 else None
             ),
             parser_object_refs=_native_parser_sources(attempts),
+            domain_report_refs=(
+                (root_checker_ref,) if root_checker_ref is not None else ()
+            ),
         )
         run_evidence["paper_direct_native_artifacts"] = direct_bundle.to_dict()
     eligibility = _evaluate_lean_paper_eligibility(
@@ -2114,6 +2509,7 @@ def _native_online_provider_sources(
                 raw_value,
                 attempt.provenance_ref,
                 attempt.usage_ref,
+                attempt.model_execution_record_ref,
             )
         )
         if evidence_incomplete and attempt.fault_injection_ref is not None:
@@ -2132,7 +2528,7 @@ def _native_online_provider_sources(
             "pricing": usage_ref,
             "provider_attempt": provenance_ref,
             "model_record": ArtifactRef.from_dict(
-                attempt.model_execution_record_ref or attempt.usage_ref
+                attempt.model_execution_record_ref
             ),
         }
         for role, ref in values.items():
@@ -2188,6 +2584,114 @@ def _lean_worker_death_projection_facts(
     return tuple(result)
 
 
+def _frozen_lean_worker_death_lemma_graph(
+    *,
+    case: Mapping[str, Any],
+    split_plan: Any,
+    certificate: LeanLemmaGraphCertificate,
+    worker_termination_policy: WorkerTerminationPolicy,
+    dispatched_unit_id_by_planned: Mapping[str, str],
+) -> tuple[dict[str, str], dict[str, PaperAIUnit]]:
+    """从已校验的 formal split 冻结完整 graph，不让 runtime prune 改写分母。"""
+
+    try:
+        verified_certificate = LeanLemmaGraphCertificate.from_dict(
+            certificate.to_dict(),
+            expected_environment_digest=certificate.environment_digest,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Lean worker-death certificate graph failed validation"
+        ) from exc
+    merge_plan_shape = case.get("merge_plan_shape")
+    if not isinstance(merge_plan_shape, Mapping):
+        raise ValueError("Lean worker-death merge_plan_shape is required")
+    dependency_order = merge_plan_shape.get("dependency_order")
+    if not isinstance(dependency_order, (list, tuple)):
+        raise ValueError(
+            "Lean worker-death merge_plan_shape dependency_order is required"
+        )
+    planned_ai_unit_ids = tuple(str(item) for item in dependency_order)
+    certificate_node_ids = tuple(
+        str(node["node_id"]) for node in verified_certificate.lemma_nodes
+    )
+    if (
+        not planned_ai_unit_ids
+        or len(set(planned_ai_unit_ids)) != len(planned_ai_unit_ids)
+        or certificate_node_ids != planned_ai_unit_ids
+    ):
+        raise ValueError(
+            "Lean worker-death certificate graph does not match merge_plan_shape"
+        )
+    expected_total = worker_termination_policy.total_planned_ai_unit_count
+    if expected_total != len(planned_ai_unit_ids):
+        raise ValueError(
+            "Lean worker-death formal planned total does not match certificate graph"
+        )
+    raw_unit_ids = getattr(split_plan, "child_unit_ids_by_logical_key", None)
+    if not isinstance(raw_unit_ids, Mapping):
+        raise ValueError("Lean worker-death split plan lacks deterministic unit ids")
+    actual_unit_id_by_planned = {
+        planned: str(raw_unit_ids[planned])
+        for planned in planned_ai_unit_ids
+        if planned in raw_unit_ids
+    }
+    if set(actual_unit_id_by_planned) != set(planned_ai_unit_ids):
+        raise ValueError(
+            "Lean worker-death split plan does not cover the certificate graph"
+        )
+    if len(set(actual_unit_id_by_planned.values())) != len(actual_unit_id_by_planned):
+        raise ValueError("Lean worker-death deterministic unit ids must be unique")
+    for planned, dispatched_unit_id in dispatched_unit_id_by_planned.items():
+        if actual_unit_id_by_planned.get(planned) != dispatched_unit_id:
+            raise ValueError(
+                "Lean worker-death dispatched unit identity drifted from split plan"
+            )
+    dependency_sources_by_planned = {
+        planned: tuple(
+            str(edge["source_node_id"])
+            for edge in verified_certificate.dependency_edges
+            if str(edge["target_node_id"]) == planned
+        )
+        for planned in planned_ai_unit_ids
+    }
+    depth_by_planned: dict[str, int] = {}
+
+    def planned_depth(planned_ai_unit_id: str) -> int:
+        if planned_ai_unit_id in depth_by_planned:
+            return depth_by_planned[planned_ai_unit_id]
+        sources = dependency_sources_by_planned[planned_ai_unit_id]
+        depth = (
+            max(planned_depth(source) for source in sources) + 1
+            if sources
+            else 0
+        )
+        depth_by_planned[planned_ai_unit_id] = depth
+        return depth
+
+    task_id = f"paper_lean_{case['case_id']}"
+    ai_units_by_id: dict[str, PaperAIUnit] = {}
+    for planned_ai_unit_id in planned_ai_unit_ids:
+        unit_id = actual_unit_id_by_planned[planned_ai_unit_id]
+        sources = dependency_sources_by_planned[planned_ai_unit_id]
+        ai_units_by_id[unit_id] = PaperAIUnit(
+            task_id=task_id,
+            unit_id=unit_id,
+            unit_kind="lean_lemma_node",
+            dependencies=tuple(
+                actual_unit_id_by_planned[source] for source in sources
+            ),
+            depth=planned_depth(planned_ai_unit_id),
+            domain="lean_proof",
+            metadata={
+                "planned_ai_unit_id": planned_ai_unit_id,
+                "lemma_node_id": planned_ai_unit_id,
+                "dependency_path": list(sources),
+            },
+        )
+    return actual_unit_id_by_planned, ai_units_by_id
+
+
 def _enrich_lean_worker_death_attempts(
     *,
     attempts: list[PaperAttemptResult],
@@ -2235,7 +2739,11 @@ def _enrich_lean_worker_death_attempts(
                 enriched.append(
                     replace(
                         attempt,
-                        entry_id=str(usage.get("entry_id") or "unknown"),
+                        entry_id=str(
+                            condition.model_entry_id
+                            or usage.get("entry_id")
+                            or "unknown"
+                        ),
                         planned_ai_unit_id=planned_by_unit.get(attempt.unit_id),
                     )
                 )
@@ -3824,6 +4332,12 @@ def _transport_for_provider_family(
         return transport
     resolver = getattr(
         transport,
+        "tokenshare_real_transport_for_provider",
+        None,
+    )
+    if not callable(resolver):
+        resolver = getattr(
+        transport,
         "tokenshare_transport_for_provider",
         None,
     )
@@ -4629,6 +5143,11 @@ def _paper_attempt_result(
     error_kind_override: str | None = None,
 ) -> PaperAttemptResult:
     usage = dict(submission.usage_summary or {})
+    provider_attempt_count = _validated_current_provider_attempt_count(
+        store=store,
+        submission=submission,
+        usage_ref=usage_ref,
+    )
     provenance_attempt = _last_provenance_attempt(store=store, submission=submission)
     prompt_tokens = _int_metric(usage.get("prompt_tokens"))
     completion_tokens = _int_metric(usage.get("completion_tokens"))
@@ -4643,10 +5162,11 @@ def _paper_attempt_result(
         attempt_id=request.attempt_id,
         worker_id=f"worker_lean_paper_{index}",
         provider_attempt_index=0,
+        provider_attempt_count=provider_attempt_count,
         attempt_status=attempt_status,
         provider=str(usage.get("provider_family") or "siliconflow"),
         model=str(usage.get("model") or ""),
-        entry_id=str(usage.get("entry_id") or ""),
+        entry_id=str(condition.model_entry_id or usage.get("entry_id") or ""),
         request_ref=request_ref.to_dict(),
         raw_output_ref=submission.raw_output_ref.to_dict() if submission.raw_output_ref else None,
         parsed_output_ref=(
@@ -4701,6 +5221,20 @@ def _paper_attempt_result(
         lemma_node_id=lemma_node_id,
         slot_key=slot_key,
         dependency_path=dependency_path,
+    )
+
+
+def _validated_current_provider_attempt_count(
+    *,
+    store: ArtifactStore,
+    submission: Any,
+    usage_ref: ArtifactRef | Mapping[str, Any],
+) -> int:
+    """从 current usage/provenance 交叉验证 transport call 计数。"""
+    return validate_provider_attempt_count(
+        store=store,
+        submission=submission,
+        usage_ref=usage_ref,
     )
 
 
@@ -5123,6 +5657,122 @@ def _artifact_ids(store: ArtifactStore) -> list[str]:
 def _read_json_ref(store: ArtifactStore, ref) -> JsonObject:
     artifact_ref = ArtifactRef.from_dict(ref) if isinstance(ref, dict) else ref
     return json.loads(store.read_bytes(artifact_ref).decode("utf-8"))
+
+
+def _persist_lean_domain_verdict_binding(
+    *,
+    store: ArtifactStore,
+    case_id: str,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_result_ref: ArtifactRef,
+    root_checker_report_ref: ArtifactRef,
+    root_theorem_payload_ref: ArtifactRef,
+    case: JsonObject,
+) -> ArtifactRef:
+    """绑定 canonical final 与真实 root-checker report，不复制 checker 结论。"""
+
+    checker_report = _read_json_ref(store, root_checker_report_ref)
+    if checker_report.get("schema_version") != "lean_proof.checker_report.v1":
+        raise ValueError("Lean domain verdict requires a root checker report")
+    environment_ref = checker_report.get("environment_ref")
+    if not isinstance(environment_ref, Mapping):
+        raise ValueError("Lean root checker report environment is missing")
+    report_status = checker_report.get("status")
+    if report_status not in {
+        "accepted",
+        "rejected",
+        "timeout",
+        "environment_error",
+        "helper_error",
+    }:
+        raise ValueError("Lean root checker report status is invalid")
+    root_theorem_payload = _read_json_ref(store, root_theorem_payload_ref)
+    try:
+        root_theorem = LeanTheoremPayload.from_dict(root_theorem_payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Lean domain verdict requires the root theorem payload"
+        ) from exc
+    official_root_theorem = (
+        LeanFixedDecompositionPlan.from_catalog_case(case).parent_theorem_payload()
+        if case.get("schema_version") == LEAN_V2_SCHEMA_VERSION
+        else lean_theorem_payload_from_case(case)
+    )
+    if (
+        root_theorem_payload_ref.metadata.get("case_id") != case_id
+        or root_theorem_payload_ref.metadata.get("output_name")
+        != "lean_theorem_payload"
+        or case.get("case_id") != case_id
+        or root_theorem.to_dict() != official_root_theorem.to_dict()
+    ):
+        raise ValueError("Lean official root theorem payload identity mismatch")
+    official_case_digest = canonical_json_digest(case)
+    normalized_theorem_digest = canonical_json_digest(
+        {
+            "theorem_name": root_theorem.theorem_name,
+            "imports": root_theorem.imports,
+            "namespace": root_theorem.namespace,
+            "parameters_source": root_theorem.parameters_source,
+            "statement_source": root_theorem.statement_source,
+        }
+    )
+    if checker_report.get("normalized_theorem_digest") != normalized_theorem_digest:
+        raise ValueError("Lean root checker theorem identity mismatch")
+    binding_body: JsonObject = {
+        "schema_version": "tokenshare.paper_lean_domain_verdict_binding.v2",
+        "case_id": case_id,
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "root_unit_id": root_unit_id,
+        "final_result_ref": final_result_ref.to_dict(),
+        "root_checker_report_ref": root_checker_report_ref.to_dict(),
+        "root_theorem_payload_ref": root_theorem_payload_ref.to_dict(),
+        "official_case_digest": official_case_digest,
+        "official_root_theorem_id": official_root_theorem.theorem_id,
+        "official_root_theorem_payload_digest": (
+            official_root_theorem.payload_digest
+        ),
+        "normalized_theorem_digest": normalized_theorem_digest,
+        "environment_digest": str(environment_ref["environment_digest"]),
+        "report_status": str(report_status),
+        "verifier": {
+            "verifier_id": CHECKER_VALIDATOR_POLICY_ID,
+            "verifier_version": PLUGIN_VERSION,
+        },
+    }
+    binding_body["binding_digest"] = canonical_json_digest(binding_body)
+    return store.save_json(
+        binding_body,
+        artifact_id=f"paper_lean_domain_verdict_{_safe_id(case_id)}",
+        artifact_type="LeanDomainVerdictBinding",
+        artifact_schema_id="tokenshare.paper_lean_domain_verdict_binding",
+        artifact_schema_version="v2",
+        source={
+            "kind": "lean_root_checker_domain_binding",
+            "role": "lean_checker_verdict",
+            "case_id": case_id,
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "final_result_ref": final_result_ref.to_dict(),
+            "root_checker_report_ref": root_checker_report_ref.to_dict(),
+            "root_theorem_payload_ref": root_theorem_payload_ref.to_dict(),
+            "official_case_digest": official_case_digest,
+            "official_root_theorem_id": official_root_theorem.theorem_id,
+            "official_root_theorem_payload_digest": (
+                official_root_theorem.payload_digest
+            ),
+            "normalized_theorem_digest": normalized_theorem_digest,
+            "environment_digest": environment_ref["environment_digest"],
+        },
+        metadata={
+            "report_status": report_status,
+            "binding_digest": binding_body["binding_digest"],
+        },
+        created_at=root_checker_report_ref.created_at,
+    )
 
 
 def _provider_attempt_count(usage: JsonObject) -> int:

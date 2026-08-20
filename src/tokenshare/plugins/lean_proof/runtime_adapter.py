@@ -504,8 +504,7 @@ class LeanRuntimeAdapter:
                 request=request,
             )
             report = result.checker_report
-            if report.status == LeanCheckerStatus.ACCEPTED:
-                self._proof_inputs_by_logical_key[logical_key] = result
+            self._proof_inputs_by_logical_key[logical_key] = result
         elif unit_type == LEAN_PROOF_SUBGOAL_TASK_TYPE:
             split_plan = self._require_split_plan()
             certificate = split_plan.certificate
@@ -526,8 +525,7 @@ class LeanRuntimeAdapter:
             report = child_result.checker_report
             if report is None:
                 return submission
-            if child_result.merge_ready:
-                self._proof_inputs_by_logical_key[logical_key] = child_result
+            self._proof_inputs_by_logical_key[logical_key] = child_result
         else:
             raise ValueError("normalize_proof_submission requires a Lean proof unit")
         self._checker_reports_by_request_id[submission.request_id] = report
@@ -566,6 +564,54 @@ class LeanRuntimeAdapter:
             submission,
             candidate_output_refs={PROOF_ARTIFACT_OUTPUT_NAME: canonical_ref},
         )
+
+    def prepare_unverified_submission(
+        self,
+        submission: ExecutionSubmission,
+        *,
+        unit: TaskUnit,
+    ) -> ExecutionSubmission:
+        """在 NO_VERIFICATION 边界提升候选类型，但不伪造 checker 接受。"""
+
+        promoted: dict[str, ArtifactRef] = {}
+        for output_name, source_ref in submission.candidate_output_refs.items():
+            if source_ref.artifact_type == "canonical_output":
+                promoted[output_name] = source_ref
+                continue
+            promoted[output_name] = self._require_store().save_bytes(
+                self._require_store().read_bytes(source_ref),
+                artifact_id=(
+                    f"canonical_lean_unverified_{_safe(submission.submission_id)}_"
+                    f"{_safe(output_name)}"
+                ),
+                artifact_type="canonical_output",
+                media_type=source_ref.media_type,
+                artifact_schema_id=source_ref.artifact_schema_id,
+                artifact_schema_version=source_ref.artifact_schema_version,
+                source={
+                    "kind": "lean_runtime_no_verification_promotion",
+                    "source_ref": source_ref.to_dict(),
+                },
+                metadata={
+                    **dict(source_ref.metadata),
+                    "output_name": output_name,
+                    "checker_acceptance_claimed": False,
+                },
+                created_at=submission.submitted_at,
+            )
+        if unit.unit_type in {
+            LEAN_PROOF_SUBGOAL_TASK_TYPE,
+            LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+        }:
+            logical_key = str(unit.metadata["child_logical_key"])
+            if logical_key not in self._proof_inputs_by_logical_key:
+                raise ValueError(
+                    "Lean no-verification promotion requires a candidate-bound proof input"
+                )
+            self._canonical_proof_refs_by_logical_key[logical_key] = promoted[
+                PROOF_ARTIFACT_OUTPUT_NAME
+            ]
+        return replace(submission, candidate_output_refs=promoted)
 
     def verify_submission(
         self,
@@ -609,6 +655,47 @@ class LeanRuntimeAdapter:
                     },
                 )
             validation = verify_lean_checker_report(report)
+            if validation.accepted:
+                logical_key = str(unit.metadata["child_logical_key"])
+                expected_ref = self._canonical_proof_refs_by_logical_key.get(
+                    logical_key
+                )
+                current_ref = submission.candidate_output_refs.get(
+                    PROOF_ARTIFACT_OUTPUT_NAME
+                )
+                if expected_ref is None or current_ref != expected_ref:
+                    return self._verification_report(
+                        submission=submission,
+                        required_output_names=[PROOF_ARTIFACT_OUTPUT_NAME],
+                        output_contract_id=PROOF_ARTIFACT_CONTRACT_ID,
+                        status="rejected",
+                        layer_summary={
+                            "status": "rejected",
+                            "reason_code": (
+                                "lean_checker_candidate_identity_mismatch"
+                            ),
+                            "summary": (
+                                "current proof candidate is not the "
+                                "checker-promoted canonical artifact"
+                            ),
+                            "details": {
+                                "logical_key": logical_key,
+                                "expected_artifact_id": (
+                                    expected_ref.artifact_id
+                                    if expected_ref is not None
+                                    else None
+                                ),
+                                "current_artifact_id": (
+                                    current_ref.artifact_id
+                                    if current_ref is not None
+                                    else None
+                                ),
+                            },
+                            "evidence_refs": [],
+                            "checked_at": self.created_at,
+                        },
+                        checker_report=report,
+                    )
             return self._verification_report(
                 submission=submission,
                 required_output_names=[PROOF_ARTIFACT_OUTPUT_NAME],
@@ -634,6 +721,35 @@ class LeanRuntimeAdapter:
         parent: TaskUnit,
         canonical_children: tuple[TaskUnit, ...],
         slot_integrity_enabled: bool = True,
+    ) -> MergeAction:
+        return self._build_merge(
+            parent=parent,
+            canonical_children=canonical_children,
+            slot_integrity_enabled=slot_integrity_enabled,
+            verification_enabled=True,
+        )
+
+    def build_unverified_merge(
+        self,
+        *,
+        parent: TaskUnit,
+        canonical_children: tuple[TaskUnit, ...],
+        slot_integrity_enabled: bool = True,
+    ) -> MergeAction:
+        return self._build_merge(
+            parent=parent,
+            canonical_children=canonical_children,
+            slot_integrity_enabled=slot_integrity_enabled,
+            verification_enabled=False,
+        )
+
+    def _build_merge(
+        self,
+        *,
+        parent: TaskUnit,
+        canonical_children: tuple[TaskUnit, ...],
+        slot_integrity_enabled: bool,
+        verification_enabled: bool,
     ) -> MergeAction:
         split_plan = self._require_split_plan()
         parent_ref = self._require_parent_payload_ref()
@@ -688,6 +804,7 @@ class LeanRuntimeAdapter:
                 created_at=self.created_at,
                 checker=self.checker,
                 slot_integrity_enabled=slot_integrity_enabled,
+                verification_enabled=verification_enabled,
             )
         else:
             required_slots = list(split_plan.merge_plan.required_slots)
@@ -733,6 +850,7 @@ class LeanRuntimeAdapter:
                 created_at=self.created_at,
                 checker=self.checker,
                 slot_integrity_enabled=slot_integrity_enabled,
+                verification_enabled=verification_enabled,
             )
         self._merge_result = result
         refs: dict[str, ArtifactRef] = {}
@@ -770,6 +888,12 @@ class LeanRuntimeAdapter:
     @property
     def planned_split_plan(self) -> LeanSplitPlanResult:
         return self._require_split_plan()
+
+    @property
+    def parent_theorem_payload_ref(self) -> ArtifactRef:
+        """返回本次 runtime 从官方 case 构造的 root theorem payload。"""
+
+        return self._require_parent_payload_ref()
 
     @property
     def merge_candidate_refs(self) -> dict[str, ArtifactRef]:

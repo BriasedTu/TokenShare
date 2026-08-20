@@ -18,6 +18,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from tokenshare.core.models import ArtifactRef
+from tokenshare.executors.contracts import EnvironmentRef, ExecutionRequest
 from tokenshare.executors.response_bank import CurrentTraceWrapper
 from tokenshare.executors.trace_backed import TraceSourceBinding
 from tokenshare.experiments.paper_direct_results import PaperDirectRootResult
@@ -37,9 +39,12 @@ from tokenshare.experiments.paper_models import (
     VersionedPaperEvidenceEligibilityReport,
     evaluate_versioned_paper_evidence as _evaluate_versioned_paper_evidence,
 )
+from tokenshare.local_runtime.contracts import PreparedTraceDelivery
+from tokenshare.plugins.contracts import OutputContract
 
 
 _CANONICAL_LINEAGE_INPUT_FACTORY_TOKEN = object()
+_CANONICAL_LINEAGE_DIGEST_FACTORY_TOKEN = object()
 
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -83,6 +88,8 @@ _SUITE_RUNTIME_FIELDS = frozenset(
         "ineligibility_reasons",
         "baseline_policy",
         "suite_identity",
+        "last_complete_event_ref",
+        "terminal_failure",
     }
 )
 _ROOT_LOCKS_GUARD = threading.Lock()
@@ -271,6 +278,8 @@ def build_canonical_lineage_inputs(
     current_trace_wrappers_by_root: Mapping[str, Sequence[CurrentTraceWrapper]] | None = None,
     trace_source_bindings_by_root: Mapping[str, Sequence[TraceSourceBinding]] | None = None,
     eligibility_facts_by_root: Mapping[str, PaperEvidenceEligibilityFacts] | None = None,
+    _precomputed_input_identity_digest: str | None = None,
+    _digest_factory_token: object | None = None,
 ) -> tuple[CanonicalLineageInput, ...]:
     """从 Task3 protected evidence 与 publisher 的真实 typed rows 铸造 lineage input。"""
 
@@ -296,7 +305,12 @@ def build_canonical_lineage_inputs(
     direct_by_root: dict[str, list[PaperDirectRootResult]] = {}
     for direct in _typed_direct_results_in_inputs(canonical_inputs):
         direct_by_root.setdefault(direct.preregistered_root_run_id, []).append(direct)
-    input_digest = lineage_input_identity_digest(canonical_inputs)
+    if _precomputed_input_identity_digest is None:
+        input_digest = lineage_input_identity_digest(canonical_inputs)
+    elif _digest_factory_token is not _CANONICAL_LINEAGE_DIGEST_FACTORY_TOKEN:
+        raise ValueError("precomputed lineage input identity requires trusted factory")
+    else:
+        input_digest = _precomputed_input_identity_digest
     wrappers_by_root = current_trace_wrappers_by_root or {}
     bindings_by_root = trace_source_bindings_by_root or {}
     facts_by_root = eligibility_facts_by_root or {}
@@ -475,6 +489,69 @@ def _execution_classification(
 
 
 @dataclass(frozen=True, kw_only=True)
+class CommittedTraceConsumption:
+    """由 commit event + verified PreparedTraceDelivery 铸造的消费身份。"""
+
+    event_id: str
+    attempt_id: str
+    unit_id: str
+    planned_ai_unit_id: str
+    attempt_ordinal: int
+    entry_id: str
+    binding_digest: str
+    delivery_digest: str
+    wrapper_artifact_id: str
+    wrapper_content_hash: str
+    schema_version: str = "tokenshare.committed_trace_consumption.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.committed_trace_consumption.v1":
+            raise ValueError("unsupported committed trace consumption schema")
+        for field_name in (
+            "event_id",
+            "attempt_id",
+            "unit_id",
+            "planned_ai_unit_id",
+            "entry_id",
+            "wrapper_artifact_id",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{field_name} must be a non-empty string")
+        if (
+            isinstance(self.attempt_ordinal, bool)
+            or not isinstance(self.attempt_ordinal, int)
+            or self.attempt_ordinal < 0
+        ):
+            raise ValueError("attempt_ordinal must be a nonnegative integer")
+        for field_name in (
+            "binding_digest",
+            "delivery_digest",
+            "wrapper_content_hash",
+        ):
+            _require_digest(
+                {field_name: getattr(self, field_name)},
+                field_name,
+                "committed trace consumption",
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "event_id": self.event_id,
+            "attempt_id": self.attempt_id,
+            "unit_id": self.unit_id,
+            "planned_ai_unit_id": self.planned_ai_unit_id,
+            "attempt_ordinal": self.attempt_ordinal,
+            "entry_id": self.entry_id,
+            "binding_digest": self.binding_digest,
+            "delivery_digest": self.delivery_digest,
+            "wrapper_artifact_id": self.wrapper_artifact_id,
+            "wrapper_content_hash": self.wrapper_content_hash,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
 class LineageSourceRecord:
     """一个 metric member 可引用的已验证、typed persisted evidence 集合。"""
 
@@ -489,9 +566,10 @@ class LineageSourceRecord:
     current_provider_object_refs: tuple[ArtifactIdentitySnapshot, ...]
     source_bank_object_locators: tuple[ExternalBankObjectLocator, ...]
     current_trace_wrappers: tuple[CurrentTraceWrapper, ...]
+    committed_trace_consumptions: tuple[CommittedTraceConsumption, ...]
     trace_source_bindings: tuple[TraceSourceBinding, ...]
     record_digest: str
-    schema_version: str = "tokenshare.lineage_source_record.v1"
+    schema_version: str = "tokenshare.lineage_source_record.v2"
 
     @classmethod
     def create(
@@ -508,6 +586,7 @@ class LineageSourceRecord:
         current_provider_object_refs: Sequence[ArtifactIdentitySnapshot] = (),
         source_bank_object_locators: Sequence[ExternalBankObjectLocator] = (),
         current_trace_wrappers: Sequence[CurrentTraceWrapper] = (),
+        committed_trace_consumptions: Sequence[CommittedTraceConsumption] = (),
         trace_source_bindings: Sequence[TraceSourceBinding] = (),
     ) -> "LineageSourceRecord":
         values = {
@@ -522,6 +601,7 @@ class LineageSourceRecord:
             "current_provider_object_refs": tuple(current_provider_object_refs),
             "source_bank_object_locators": tuple(source_bank_object_locators),
             "current_trace_wrappers": tuple(current_trace_wrappers),
+            "committed_trace_consumptions": tuple(committed_trace_consumptions),
             "trace_source_bindings": tuple(trace_source_bindings),
         }
         return cls(
@@ -530,7 +610,7 @@ class LineageSourceRecord:
         )
 
     def __post_init__(self) -> None:
-        if self.schema_version != "tokenshare.lineage_source_record.v1":
+        if self.schema_version != "tokenshare.lineage_source_record.v2":
             raise ValueError("unsupported lineage source record schema")
         if not isinstance(self.member_id, str) or not self.member_id:
             raise ValueError("lineage member id must be a non-empty string")
@@ -546,6 +626,7 @@ class LineageSourceRecord:
             ("current_provider_object_refs", ArtifactIdentitySnapshot),
             ("source_bank_object_locators", ExternalBankObjectLocator),
             ("current_trace_wrappers", CurrentTraceWrapper),
+            ("committed_trace_consumptions", CommittedTraceConsumption),
             ("trace_source_bindings", TraceSourceBinding),
         )
         for field_name, expected_type in typed_fields:
@@ -580,6 +661,7 @@ class LineageSourceRecord:
                 current_provider_object_refs=self.current_provider_object_refs,
                 source_bank_object_locators=self.source_bank_object_locators,
                 current_trace_wrappers=self.current_trace_wrappers,
+                committed_trace_consumptions=self.committed_trace_consumptions,
                 trace_source_bindings=self.trace_source_bindings,
             )
         )
@@ -600,6 +682,7 @@ class LineageSourceRecord:
                 current_provider_object_refs=self.current_provider_object_refs,
                 source_bank_object_locators=self.source_bank_object_locators,
                 current_trace_wrappers=self.current_trace_wrappers,
+                committed_trace_consumptions=self.committed_trace_consumptions,
                 trace_source_bindings=self.trace_source_bindings,
             ),
             "record_digest": self.record_digest,
@@ -634,17 +717,16 @@ class LineageSourceIndex:
                 "record_digests": [value.record_digest for value in canonical],
             }
         )
-        body = {
-            "schema_version": "tokenshare.lineage_source_index.v1",
-            "index_id": identity,
-            "input_identity_digest": input_identity_digest,
-            "records": [value.to_dict() for value in canonical],
-        }
         return cls(
             index_id=identity,
             input_identity_digest=input_identity_digest,
             records=canonical,
-            index_digest=_digest_json(body),
+            index_digest=_digest_lineage_source_index(
+                schema_version="tokenshare.lineage_source_index.v1",
+                index_id=identity,
+                input_identity_digest=input_identity_digest,
+                records=canonical,
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -657,6 +739,11 @@ class LineageSourceIndex:
             not isinstance(value, LineageSourceRecord) for value in canonical
         ):
             raise ValueError("lineage source index records are not canonical typed facts")
+        object.__setattr__(
+            self,
+            "_records_by_member",
+            {value.member_id: value for value in canonical},
+        )
         expected_id = _digest_json(
             {
                 "schema_version": "tokenshare.lineage_source_index_identity.v1",
@@ -664,20 +751,17 @@ class LineageSourceIndex:
                 "record_digests": [value.record_digest for value in canonical],
             }
         )
-        expected_digest = _digest_json(
-            {
-                "schema_version": self.schema_version,
-                "index_id": expected_id,
-                "input_identity_digest": self.input_identity_digest,
-                "records": [value.to_dict() for value in canonical],
-            }
+        expected_digest = _digest_lineage_source_index(
+            schema_version=self.schema_version,
+            index_id=expected_id,
+            input_identity_digest=self.input_identity_digest,
+            records=canonical,
         )
         if expected_id != self.index_id or expected_digest != self.index_digest:
             raise ValueError("lineage source index identity mismatch")
 
     def get(self, member_id: str) -> LineageSourceRecord | None:
-        matches = tuple(value for value in self.records if value.member_id == member_id)
-        return matches[0] if len(matches) == 1 else None
+        return getattr(self, "_records_by_member").get(member_id)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -732,12 +816,18 @@ class FormalEvidenceStore:
         request_limits: Any,
         hard_limits: Any,
         capturing: bool,
+        preexisting_paid_output_marker: Mapping[str, Any] | None = None,
     ) -> "FormalEvidenceStore":
         """冻结 suite identity，并原子写入正式执行所需的根 manifests。"""
 
         root = Path(output_root).resolve(strict=False)
         if not isinstance(capturing, bool):
             raise ValueError("capturing must be a boolean")
+        if (
+            preexisting_paid_output_marker is not None
+            and not isinstance(preexisting_paid_output_marker, Mapping)
+        ):
+            raise ValueError("preexisting paid output marker must be a mapping")
         bodies = {
             "suite": _json_value(suite),
             "dispatch": _json_value(dispatch),
@@ -748,7 +838,11 @@ class FormalEvidenceStore:
             "hard_limits": _json_value(hard_limits),
         }
         if root.exists() and any(root.iterdir()):
-            _validate_promotable_plan_only_root(root, bodies=bodies)
+            if not _has_exact_preestablished_paid_output_marker(
+                root=root,
+                marker=preexisting_paid_output_marker,
+            ):
+                _validate_promotable_plan_only_root(root, bodies=bodies)
         root.mkdir(parents=True, exist_ok=True)
         if not isinstance(bodies["suite"], dict):
             raise ValueError("suite body must be a JSON object")
@@ -3273,6 +3367,7 @@ class FormalEvidenceStore:
                     and parts[0] == "experiments"
                     and parts[2] == "runs"
                 )
+                or _is_typed_runtime_ledger_path(relative_path)
                 or _is_adapter_compatibility_path(
                     self.output_root,
                     relative_path,
@@ -3750,6 +3845,9 @@ class FormalEvidenceStore:
                 self.output_root,
                 path.relative_to(self.output_root).as_posix(),
             )
+            and not _is_typed_runtime_ledger_path(
+                path.relative_to(self.output_root).as_posix()
+            )
         }
         if seen.difference(actual):
             raise ValueError("stale evidence manifest references missing files")
@@ -3896,6 +3994,9 @@ class FormalEvidenceStore:
                 self.output_root,
                 path.relative_to(self.output_root).as_posix(),
             )
+            and not _is_typed_runtime_ledger_path(
+                path.relative_to(self.output_root).as_posix()
+            )
         }
         if seen.difference(actual):
             raise ValueError("stale evidence manifest references missing files")
@@ -4037,6 +4138,9 @@ class FormalEvidenceStore:
             and not _is_noncurrent_generation_path(
                 self.output_root,
                 path.relative_to(self.output_root).as_posix(),
+            )
+            and not _is_typed_runtime_ledger_path(
+                path.relative_to(self.output_root).as_posix()
             )
             and not _is_adapter_compatibility_path(
                 self.output_root,
@@ -4781,6 +4885,26 @@ def _dispatch_plans(dispatch: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _has_exact_preestablished_paid_output_marker(
+    *,
+    root: Path,
+    marker: Mapping[str, Any] | None,
+) -> bool:
+    """仅允许 receipt validator 建立的唯一 marker 占用 fresh paid root。"""
+
+    if marker is None:
+        return False
+    entries = tuple(root.iterdir())
+    marker_path = root / "paid_output_binding.v1.json"
+    if len(entries) != 1 or entries[0] != marker_path or not marker_path.is_file():
+        return False
+    try:
+        persisted = _read_json(marker_path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return persisted == dict(marker)
+
+
 def _validate_promotable_plan_only_root(
     root: Path,
     *,
@@ -5479,6 +5603,16 @@ def _is_adapter_compatibility_path(root: Path, relative_path: str) -> bool:
     return (root / "experiments" / parts[0]).is_dir()
 
 
+def _is_typed_runtime_ledger_path(relative_path: str) -> bool:
+    """Exp5 的根级预算 ledger 是独立审计对象，不能作为 immutable static 文件。"""
+
+    return relative_path.replace("\\", "/") in {
+        "exp5_online_budget.v1.sqlite3",
+        "exp5_online_budget.v1.sqlite3-wal",
+        "exp5_online_budget.v1.sqlite3-shm",
+    }
+
+
 def _lock_for_root(root: Path) -> threading.RLock:
     key = os.path.normcase(str(root))
     with _ROOT_LOCKS_GUARD:
@@ -5604,13 +5738,19 @@ def export_lineage_source_index(
     records: list[LineageSourceRecord] = []
     for lineage_input in inputs:
         direct = lineage_input.direct_result
+        direct_result_body = direct.to_dict()
+        committed_trace_consumptions: tuple[CommittedTraceConsumption, ...] = ()
         if direct.execution_binding is not None:
             logical = store.load_logical_run_records(
                 experiment_id=direct.experiment_id,
                 condition_id=direct.condition_id,
                 repeat_id=direct.repeat_id,
             )
-            _validate_persisted_lineage_closure(lineage_input, logical)
+            committed_trace_consumptions = _validate_persisted_lineage_closure(
+                store,
+                lineage_input,
+                logical,
+            )
         wrappers = lineage_input.current_trace_wrappers
         bindings = lineage_input.trace_source_bindings
         if direct.execution_binding is not None and any(
@@ -5645,13 +5785,14 @@ def export_lineage_source_index(
         root_record = LineageSourceRecord.create(
             member_id=direct.preregistered_root_run_id,
             evidence_class=direct.evidence_class,
-            direct_result_refs=(direct.to_dict(),),
+            direct_result_refs=(direct_result_body,),
             current_task_attempt_event_refs=current_refs,
             parser_verifier_checker_canonical_refs=parser_refs,
             ledger_refs=ledger_refs,
             current_provider_object_refs=provider_refs,
             source_bank_object_locators=source_locators,
             current_trace_wrappers=wrappers,
+            committed_trace_consumptions=committed_trace_consumptions,
             trace_source_bindings=bindings,
         )
         records.append(root_record)
@@ -5663,6 +5804,11 @@ def export_lineage_source_index(
             *(value.current_attempt_id for value in wrappers),
             *(value.current_unit_id for value in wrappers),
             *(value.entry_id for value in wrappers),
+            *(value.event_id for value in committed_trace_consumptions),
+            *(value.attempt_id for value in committed_trace_consumptions),
+            *(value.unit_id for value in committed_trace_consumptions),
+            *(value.planned_ai_unit_id for value in committed_trace_consumptions),
+            *(value.entry_id for value in committed_trace_consumptions),
             *(value.planned_ai_unit_id for value in bindings),
             *(
                 replacement.entry_id
@@ -5671,14 +5817,28 @@ def export_lineage_source_index(
             ),
         }
         for alias in sorted(aliases - {direct.preregistered_root_run_id}):
+            alias_wrappers, alias_consumptions, alias_bindings = (
+                _trace_alias_local_closure(
+                    alias=alias,
+                    source_locators=source_locators,
+                    wrappers=wrappers,
+                    committed_trace_consumptions=committed_trace_consumptions,
+                    trace_source_bindings=bindings,
+                )
+            )
             records.append(
                 LineageSourceRecord.create(
                     member_id=alias,
                     evidence_class=direct.evidence_class,
-                    direct_result_refs=(direct.to_dict(),),
-                    current_task_attempt_event_refs=current_refs,
-                    parser_verifier_checker_canonical_refs=parser_refs,
-                    ledger_refs=ledger_refs,
+                    # alias 只保存自身可验证的局部事实；完整 canonical closure
+                    # 只存在于 preregistered root record。否则 run-local event id
+                    # 会在跨 root merge 时把整份 closure 做笛卡尔式复制。
+                    current_task_attempt_event_refs=tuple(
+                        value for value in current_refs if value.object_id == alias
+                    ),
+                    ledger_refs=tuple(
+                        value for value in ledger_refs if value.object_id == alias
+                    ),
                     current_provider_object_refs=tuple(
                         value
                         for value in provider_refs
@@ -5687,22 +5847,9 @@ def export_lineage_source_index(
                     source_bank_object_locators=tuple(
                         value for value in source_locators if value.entry_id == alias
                     ),
-                    current_trace_wrappers=tuple(
-                        value
-                        for value in wrappers
-                        if alias
-                        in {
-                            value.current_attempt_id,
-                            value.current_unit_id,
-                            value.entry_id,
-                        }
-                    ),
-                    trace_source_bindings=tuple(
-                        value
-                        for value in bindings
-                        if alias == value.planned_ai_unit_id
-                        or alias in {item.entry_id for item in value.replacements}
-                    ),
+                    current_trace_wrappers=alias_wrappers,
+                    committed_trace_consumptions=alias_consumptions,
+                    trace_source_bindings=alias_bindings,
                 )
             )
     merged = _merge_lineage_source_records(records)
@@ -5713,9 +5860,10 @@ def export_lineage_source_index(
 
 
 def _validate_persisted_lineage_closure(
+    store: FormalEvidenceStore,
     lineage_input: CanonicalLineageInput,
     logical: Mapping[str, Any],
-) -> None:
+) -> tuple[CommittedTraceConsumption, ...]:
     direct = lineage_input.direct_result
     binding = direct.execution_binding
     if binding is None:
@@ -5762,6 +5910,15 @@ def _validate_persisted_lineage_closure(
             )
         ):
             raise ValueError("persisted closure ledger event identity mismatch")
+    bound_event_ids = {value.event_id for value in binding.events}
+    if any(
+        event.get("event_id") not in bound_event_ids
+        for event in logical["events"]
+        if isinstance(event, Mapping)
+        and event.get("task_id") == binding.task_id
+        and event.get("event_type") == "TRACE_DELIVERY_COMMITTED.v1"
+    ):
+        raise ValueError("persisted trace commit is outside execution binding")
 
     persisted_artifact_records = tuple(
         artifact
@@ -5826,18 +5983,12 @@ def _validate_persisted_lineage_closure(
         ):
             if reference is not None and reference not in event_ids | artifact_ids:
                 raise ValueError("persisted closure wrapper reference is unreachable")
-        wrapper_digest = _digest_json(_current_trace_wrapper_body(wrapper))
-        if not any(
-            isinstance((source_ref := record.get("source_artifact_ref")), Mapping)
-            and source_ref.get("artifact_type") == "CurrentTraceWrapper"
-            and source_ref.get("content_hash") == wrapper_digest
-            for record in persisted_artifact_records
-        ):
-            raise ValueError("persisted closure current trace wrapper is not persisted")
     wrapper_entries = {value.entry_id for value in wrappers}
-    for source_binding in lineage_input.trace_source_bindings:
+    source_bindings = lineage_input.trace_source_bindings
+    all_replacement_entries: set[str] = set()
+    for source_binding in source_bindings:
         replacement_entries = {value.entry_id for value in source_binding.replacements}
-        if not replacement_entries or not replacement_entries <= wrapper_entries:
+        if not replacement_entries:
             raise ValueError("persisted closure trace binding is unreachable")
         for entry_id in replacement_entries:
             if (
@@ -5845,17 +5996,1040 @@ def _validate_persisted_lineage_closure(
                 source_binding.manifest_digest,
             ) != bank_identity_by_entry.get(entry_id):
                 raise ValueError("persisted closure trace source identity mismatch")
+        all_replacement_entries.update(
+            value.entry_id for value in source_binding.replacements
+        )
         if not any(
             attempt.get("source_binding_digest") == source_binding.binding_digest
             or attempt.get("trace_source_binding_digest") == source_binding.binding_digest
             for attempt in attempt_records
         ):
             raise ValueError("persisted closure trace binding is not persisted")
+    locator_entries = set(locators_by_entry)
+    has_typed_trace_closure = bool(wrappers or source_bindings)
+    if has_typed_trace_closure and (
+        not wrappers
+        or not source_bindings
+        or all_replacement_entries != locator_entries
+        or not wrapper_entries <= all_replacement_entries
+    ):
+        raise ValueError("persisted closure trace binding entry closure mismatch")
+    committed_trace_consumptions: tuple[CommittedTraceConsumption, ...] = ()
+    if wrappers:
+        committed_trace_consumptions = _validate_persisted_trace_resource_book(
+            store=store,
+            direct=direct,
+            binding=binding,
+            wrappers=wrappers,
+            trace_source_bindings=source_bindings,
+            attempt_records=attempt_records,
+            events=tuple(logical["events"]),
+            persisted_artifact_records=persisted_artifact_records,
+        )
+        current_entry_ids = {value.entry_id for value in wrappers}
+        committed_entry_ids = {
+            value.entry_id for value in committed_trace_consumptions
+        }
+        if (
+            not committed_entry_ids
+            or not current_entry_ids <= committed_entry_ids
+            or not committed_entry_ids <= all_replacement_entries
+        ):
+            raise ValueError("persisted closure committed trace entry mismatch")
     facts = lineage_input.eligibility_facts
     if facts is not None:
         report = evaluate_versioned_paper_evidence(facts)
         if task.get("versioned_paper_evidence_report") != report.to_dict():
             raise ValueError("persisted closure eligibility report mismatch")
+    return committed_trace_consumptions
+
+
+_ARTIFACT_REF_CORE_FIELDS = (
+    "schema_version",
+    "artifact_id",
+    "artifact_type",
+    "uri",
+    "content_hash",
+    "size_bytes",
+    "media_type",
+    "artifact_schema_id",
+    "artifact_schema_version",
+    "created_at",
+)
+
+
+def _artifact_ref_core_matches(
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+) -> bool:
+    return all(left.get(name) == right.get(name) for name in _ARTIFACT_REF_CORE_FIELDS)
+
+
+def _mapping_identity_matches(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    return _canonical_bytes(left) == _canonical_bytes(right)
+
+
+def _read_verified_persisted_artifact_json(
+    store: FormalEvidenceStore,
+    record: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    relative_path = record.get("path")
+    source_ref = record.get("source_artifact_ref")
+    if not isinstance(relative_path, str) or not relative_path or not isinstance(
+        source_ref, Mapping
+    ):
+        raise ValueError("persisted trace artifact record is incomplete")
+    path = (store.output_root / relative_path).resolve(strict=False)
+    root = store.output_root.resolve(strict=False)
+    if not _is_relative_to(path, root) or path == root or not path.is_file():
+        raise ValueError("persisted trace artifact path is invalid")
+    payload = path.read_bytes()
+    if (
+        record.get("content_hash") != _digest_bytes(payload)
+        or source_ref.get("content_hash") != record.get("content_hash")
+        or record.get("size_bytes") != len(payload)
+        or source_ref.get("size_bytes") != len(payload)
+    ):
+        raise ValueError("persisted trace artifact identity mismatch")
+    try:
+        body = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("persisted trace artifact is invalid JSON") from exc
+    if not isinstance(body, Mapping):
+        raise ValueError("persisted trace artifact body must be an object")
+    return body
+
+
+def _unique_artifact_record_for_snapshot(
+    records: Sequence[Mapping[str, Any]],
+    snapshot: ArtifactIdentitySnapshot,
+) -> Mapping[str, Any]:
+    matches = tuple(
+        record
+        for record in records
+        if isinstance(record.get("source_artifact_ref"), Mapping)
+        and _artifact_snapshot_matches_source_ref(
+            snapshot,
+            record["source_artifact_ref"],
+        )
+    )
+    if len(matches) != 1:
+        raise ValueError("persisted trace resource book is not unique")
+    return matches[0]
+
+
+def _trace_wrapper_commits_by_attempt(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    task_id: str,
+) -> dict[str, tuple[str, Mapping[str, Any]]]:
+    commits: dict[str, tuple[str, Mapping[str, Any]]] = {}
+    for event in events:
+        if event.get("event_type") != "TRACE_DELIVERY_COMMITTED.v1":
+            continue
+        if event.get("task_id") != task_id:
+            continue
+        event_id = event.get("event_id")
+        payload = event.get("payload")
+        if not isinstance(event_id, str) or not event_id or not isinstance(
+            payload, Mapping
+        ):
+            raise ValueError("persisted trace wrapper commit identity is invalid")
+        attempt_id = payload.get("attempt_id")
+        native_ref = payload.get("current_wrapper_ref")
+        if (
+            not isinstance(attempt_id, str)
+            or not attempt_id
+            or not isinstance(native_ref, Mapping)
+        ):
+            raise ValueError("persisted trace wrapper commit identity is invalid")
+        if attempt_id in commits:
+            raise ValueError("persisted trace wrapper commit attempt is ambiguous")
+        commits[attempt_id] = (event_id, native_ref)
+    return commits
+
+
+_ARTIFACT_REF_KEYS = frozenset(ArtifactRef(
+    artifact_id="artifact",
+    artifact_type="Artifact",
+    uri="artifacts/artifact.json",
+    content_hash="sha256:" + "0" * 64,
+    size_bytes=0,
+    media_type="application/json",
+    artifact_schema_id="artifact.v1",
+    artifact_schema_version="v1",
+    source={},
+    metadata={},
+    created_at="1970-01-01T00:00:00Z",
+).to_dict())
+_OUTPUT_CONTRACT_KEYS = frozenset(OutputContract(
+    output_contract_id="output",
+    required_outputs=[],
+    output_schema_refs={},
+    raw_output_policy={},
+).to_dict())
+_ENVIRONMENT_REF_KEYS = frozenset(EnvironmentRef(
+    environment_id="environment",
+    environment_digest="sha256:" + "0" * 64,
+    runtime="runtime",
+    tool_versions={},
+    resource_limits={},
+    fixture_profile_digest="sha256:" + "0" * 64,
+    seed=None,
+    clock_policy="fixed",
+    created_at="1970-01-01T00:00:00Z",
+).to_dict())
+_EXECUTION_REQUEST_KEYS = frozenset(ExecutionRequest(
+    request_id="request",
+    task_id="task",
+    unit_id="unit",
+    attempt_id="attempt",
+    lease_id="lease",
+    fencing_token="fence",
+    plugin={},
+    executor={},
+    registry_snapshot_id="registry",
+    allocation_decision={},
+    capability_snapshot={},
+    task_unit_snapshot={},
+    input_artifact_refs={},
+    output_contract=OutputContract(
+        output_contract_id="output",
+        required_outputs=[],
+        output_schema_refs={},
+        raw_output_policy={},
+    ),
+    hard_requirements={},
+    soft_hints={},
+    environment_ref=EnvironmentRef(
+        environment_id="environment",
+        environment_digest="sha256:" + "0" * 64,
+        runtime="runtime",
+        tool_versions={},
+        resource_limits={},
+        fixture_profile_digest="sha256:" + "0" * 64,
+        seed=None,
+        clock_policy="fixed",
+        created_at="1970-01-01T00:00:00Z",
+    ),
+    execution_instruction_ref=None,
+    prompt_package_ref=None,
+    limits={},
+    created_at="1970-01-01T00:00:00Z",
+).to_dict())
+
+
+def _nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _typed_artifact_ref_from_dict(body: Any) -> ArtifactRef:
+    if not isinstance(body, Mapping) or set(body) != _ARTIFACT_REF_KEYS:
+        raise ValueError("persisted execution request nested artifact ref is invalid")
+    if (
+        body.get("schema_version") != "ArtifactRef.v1"
+        or any(
+            not _nonempty_string(body.get(field_name))
+            for field_name in (
+                "artifact_id",
+                "artifact_type",
+                "uri",
+                "content_hash",
+                "media_type",
+                "artifact_schema_id",
+                "artifact_schema_version",
+                "created_at",
+            )
+        )
+        or isinstance(body.get("size_bytes"), bool)
+        or not isinstance(body.get("size_bytes"), int)
+        or body["size_bytes"] < 0
+        or not isinstance(body.get("source"), Mapping)
+        or not isinstance(body.get("metadata"), Mapping)
+    ):
+        raise ValueError("persisted execution request nested artifact ref is invalid")
+    parsed = ArtifactRef.from_dict(dict(body))
+    if not _mapping_identity_matches(body, parsed.to_dict()):
+        raise ValueError("persisted execution request nested artifact ref is invalid")
+    return parsed
+
+
+def _typed_output_contract_from_dict(body: Any) -> OutputContract:
+    if not isinstance(body, Mapping) or set(body) != _OUTPUT_CONTRACT_KEYS:
+        raise ValueError("persisted execution request output contract is invalid")
+    required = body.get("required_outputs")
+    optional = body.get("optional_outputs")
+    optional_mappings = (
+        body.get("parsed_output_schema_ref"),
+        body.get("candidate_bundle_schema_ref"),
+        body.get("parse_failure_schema_ref"),
+    )
+    if (
+        body.get("schema_version") != "phase3.output_contract.v1"
+        or not _nonempty_string(body.get("output_contract_id"))
+        or not isinstance(required, list)
+        or any(not _nonempty_string(value) for value in required)
+        or not isinstance(optional, list)
+        or any(not _nonempty_string(value) for value in optional)
+        or not isinstance(body.get("output_schema_refs"), Mapping)
+        or not isinstance(body.get("raw_output_policy"), Mapping)
+        or any(value is not None and not isinstance(value, Mapping) for value in optional_mappings)
+    ):
+        raise ValueError("persisted execution request output contract is invalid")
+    parsed = OutputContract(
+        output_contract_id=body["output_contract_id"],
+        required_outputs=list(required),
+        optional_outputs=list(optional),
+        output_schema_refs=dict(body["output_schema_refs"]),
+        raw_output_policy=dict(body["raw_output_policy"]),
+        parsed_output_schema_ref=(
+            dict(optional_mappings[0]) if optional_mappings[0] is not None else None
+        ),
+        candidate_bundle_schema_ref=(
+            dict(optional_mappings[1]) if optional_mappings[1] is not None else None
+        ),
+        parse_failure_schema_ref=(
+            dict(optional_mappings[2]) if optional_mappings[2] is not None else None
+        ),
+        schema_version=body["schema_version"],
+    )
+    if not _mapping_identity_matches(body, parsed.to_dict()):
+        raise ValueError("persisted execution request output contract is invalid")
+    return parsed
+
+
+def _typed_environment_ref_from_dict(body: Any) -> EnvironmentRef:
+    if not isinstance(body, Mapping) or set(body) != _ENVIRONMENT_REF_KEYS:
+        raise ValueError("persisted execution request environment ref is invalid")
+    seed = body.get("seed")
+    if (
+        body.get("schema_version") != "phase3.environment_ref.v1"
+        or any(
+            not _nonempty_string(body.get(field_name))
+            for field_name in (
+                "environment_id",
+                "environment_digest",
+                "runtime",
+                "fixture_profile_digest",
+                "clock_policy",
+                "created_at",
+            )
+        )
+        or not isinstance(body.get("tool_versions"), Mapping)
+        or not isinstance(body.get("resource_limits"), Mapping)
+        or (seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)))
+    ):
+        raise ValueError("persisted execution request environment ref is invalid")
+    parsed = EnvironmentRef(
+        environment_id=body["environment_id"],
+        environment_digest=body["environment_digest"],
+        runtime=body["runtime"],
+        tool_versions=dict(body["tool_versions"]),
+        resource_limits=dict(body["resource_limits"]),
+        fixture_profile_digest=body["fixture_profile_digest"],
+        seed=seed,
+        clock_policy=body["clock_policy"],
+        created_at=body["created_at"],
+        schema_version=body["schema_version"],
+    )
+    if not _mapping_identity_matches(body, parsed.to_dict()):
+        raise ValueError("persisted execution request environment ref is invalid")
+    return parsed
+
+
+def _typed_execution_request_from_dict(body: Mapping[str, Any]) -> ExecutionRequest:
+    if set(body) != _EXECUTION_REQUEST_KEYS:
+        raise ValueError("persisted trace execution request schema is invalid")
+    mapping_fields = (
+        "plugin",
+        "executor",
+        "allocation_decision",
+        "capability_snapshot",
+        "task_unit_snapshot",
+        "input_artifact_refs",
+        "hard_requirements",
+        "soft_hints",
+        "limits",
+    )
+    if (
+        body.get("schema_version") != "phase3.execution_request.v2"
+        or any(
+            not _nonempty_string(body.get(field_name))
+            for field_name in (
+                "request_id",
+                "task_id",
+                "unit_id",
+                "attempt_id",
+                "lease_id",
+                "fencing_token",
+                "registry_snapshot_id",
+                "created_at",
+                "source_binding_digest",
+            )
+        )
+        or any(not isinstance(body.get(field_name), Mapping) for field_name in mapping_fields)
+    ):
+        raise ValueError("persisted trace execution request schema is invalid")
+    ordinal = body.get("attempt_ordinal")
+    if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 0:
+        raise ValueError("persisted trace execution request schema is invalid")
+    input_refs = {
+        key: _typed_artifact_ref_from_dict(value)
+        for key, value in body["input_artifact_refs"].items()
+        if _nonempty_string(key)
+    }
+    if len(input_refs) != len(body["input_artifact_refs"]):
+        raise ValueError("persisted trace execution request input refs are invalid")
+    optional_refs = []
+    for field_name in ("execution_instruction_ref", "prompt_package_ref"):
+        value = body.get(field_name)
+        optional_refs.append(
+            _typed_artifact_ref_from_dict(value) if value is not None else None
+        )
+    parsed = ExecutionRequest(
+        request_id=body["request_id"],
+        task_id=body["task_id"],
+        unit_id=body["unit_id"],
+        attempt_id=body["attempt_id"],
+        lease_id=body["lease_id"],
+        fencing_token=body["fencing_token"],
+        plugin=dict(body["plugin"]),
+        executor=dict(body["executor"]),
+        registry_snapshot_id=body["registry_snapshot_id"],
+        allocation_decision=dict(body["allocation_decision"]),
+        capability_snapshot=dict(body["capability_snapshot"]),
+        task_unit_snapshot=dict(body["task_unit_snapshot"]),
+        input_artifact_refs=input_refs,
+        output_contract=_typed_output_contract_from_dict(body.get("output_contract")),
+        hard_requirements=dict(body["hard_requirements"]),
+        soft_hints=dict(body["soft_hints"]),
+        environment_ref=_typed_environment_ref_from_dict(body.get("environment_ref")),
+        execution_instruction_ref=optional_refs[0],
+        prompt_package_ref=optional_refs[1],
+        limits=dict(body["limits"]),
+        created_at=body["created_at"],
+        attempt_ordinal=ordinal,
+        source_binding_digest=body["source_binding_digest"],
+        schema_version=body["schema_version"],
+    )
+    if not _mapping_identity_matches(body, parsed.to_dict()):
+        raise ValueError("persisted trace execution request schema is invalid")
+    return parsed
+
+
+def _persisted_artifact_records_by_ref(
+    records: Sequence[Mapping[str, Any]],
+) -> dict[bytes, Mapping[str, Any]]:
+    indexed: dict[bytes, Mapping[str, Any]] = {}
+    for record in records:
+        source_ref = record.get("source_artifact_ref")
+        if not isinstance(source_ref, Mapping):
+            continue
+        refs = [source_ref]
+        source = source_ref.get("source")
+        if (
+            isinstance(source, Mapping)
+            and source.get("kind") == "canonical_direct_runtime_projection"
+            and isinstance(source.get("source_artifact_ref"), Mapping)
+        ):
+            refs.append(source["source_artifact_ref"])
+        for value in refs:
+            key = _canonical_bytes(value)
+            if key in indexed:
+                raise ValueError("persisted artifact exact ref is not unique")
+            indexed[key] = record
+    return indexed
+
+
+def _request_events_by_attempt(
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    indexed: dict[str, Mapping[str, Any]] = {}
+    for event in events:
+        if event.get("event_type") != "EXECUTION_REQUEST_RECORDED":
+            continue
+        payload = event.get("payload")
+        attempt_id = payload.get("attempt_id") if isinstance(payload, Mapping) else None
+        if not _nonempty_string(attempt_id) or attempt_id in indexed:
+            raise ValueError("persisted trace execution request event is not unique")
+        indexed[attempt_id] = event
+    return indexed
+
+
+def _canonical_trace_wrapper_record(
+    records_by_ref: Mapping[bytes, Mapping[str, Any]],
+    native_ref: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    record = records_by_ref.get(_canonical_bytes(native_ref))
+    canonical_ref = record.get("source_artifact_ref") if record is not None else None
+    source = canonical_ref.get("source") if isinstance(canonical_ref, Mapping) else None
+    if (
+        not isinstance(canonical_ref, Mapping)
+        or not _artifact_ref_core_matches(canonical_ref, native_ref)
+        or not isinstance(source, Mapping)
+        or source.get("kind") != "canonical_direct_runtime_projection"
+        or not isinstance(source.get("source_artifact_ref"), Mapping)
+        or not _mapping_identity_matches(source["source_artifact_ref"], native_ref)
+    ):
+        raise ValueError("persisted trace wrapper projection is not unique")
+    return record
+
+
+def _unique_persisted_request_record(
+    records_by_ref: Mapping[bytes, Mapping[str, Any]],
+    native_ref: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    record = records_by_ref.get(_canonical_bytes(native_ref))
+    if record is None:
+        raise ValueError("persisted trace execution request artifact is not unique")
+    return record
+
+
+def _validated_persisted_trace_request_ordinal(
+    *,
+    store: FormalEvidenceStore,
+    binding: Any,
+    attempt: Mapping[str, Any],
+    delivery: PreparedTraceDelivery,
+    source_binding: TraceSourceBinding,
+    bound_event_ids: frozenset[str],
+    request_events_by_attempt: Mapping[str, Mapping[str, Any]],
+    artifact_records_by_ref: Mapping[bytes, Mapping[str, Any]],
+) -> int:
+    attempt_id = delivery.attempt_id
+    request_event = request_events_by_attempt.get(attempt_id)
+    if request_event is None:
+        raise ValueError("persisted trace execution request event is not unique")
+    event_id = request_event.get("event_id")
+    if not isinstance(event_id, str) or event_id not in bound_event_ids:
+        raise ValueError("persisted trace execution request event is outside binding")
+    payload = request_event.get("payload")
+    if not isinstance(payload, Mapping):
+        raise ValueError("persisted trace execution request event payload is invalid")
+    event_ref = payload.get("request_ref")
+    attempt_ref = attempt.get("request_ref")
+    if (
+        not isinstance(event_ref, Mapping)
+        or not isinstance(attempt_ref, Mapping)
+        or not _mapping_identity_matches(event_ref, attempt_ref)
+    ):
+        raise ValueError("persisted trace execution request ref identity mismatch")
+    request_record = _unique_persisted_request_record(
+        artifact_records_by_ref,
+        attempt_ref,
+    )
+    canonical_ref = request_record.get("source_artifact_ref")
+    assert isinstance(canonical_ref, Mapping)
+    if any(
+        actual != expected
+        for actual, expected in (
+            (canonical_ref.get("artifact_type"), "ExecutionRequest"),
+            (canonical_ref.get("artifact_schema_id"), "phase3.execution_request"),
+            (canonical_ref.get("artifact_schema_version"), "v1"),
+        )
+    ):
+        raise ValueError("persisted trace execution request artifact schema mismatch")
+    request_body = _read_verified_persisted_artifact_json(store, request_record)
+    request = _typed_execution_request_from_dict(request_body)
+    request_id = request.request_id
+    request_ordinal = request.attempt_ordinal
+    try:
+        replacement = source_binding.replacement(request_ordinal)
+    except KeyError as exc:
+        raise ValueError("persisted trace execution request ordinal is unreachable") from exc
+    soft_hints = request.soft_hints
+    sample_slot = soft_hints.get("sample_slot_index")
+    replacement_slot = soft_hints.get("replacement_slot")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (sample_slot, replacement_slot)
+    ):
+        raise ValueError("persisted trace execution request slot ordinal is invalid")
+    if any(
+        actual != expected
+        for actual, expected in (
+            (request_event.get("event_type"), "EXECUTION_REQUEST_RECORDED"),
+            (request_event.get("object_type"), "ExecutionRequest"),
+            (request_event.get("object_id"), request_id),
+            (request_event.get("task_id"), binding.task_id),
+            (payload.get("schema_version"), "phase3.execution_request_record.v1"),
+            (payload.get("request_id"), request_id),
+            (payload.get("task_id"), request.task_id),
+            (payload.get("unit_id"), request.unit_id),
+            (payload.get("attempt_id"), request.attempt_id),
+            (payload.get("lease_id"), request.lease_id),
+            (payload.get("request_digest"), attempt_ref.get("content_hash")),
+            (payload.get("plugin_id"), request.plugin.get("plugin_id")),
+            (payload.get("executor_id"), request.executor.get("executor_id")),
+            (payload.get("created_at"), request.created_at),
+            (attempt_ref.get("artifact_id"), request_id),
+            (request.task_id, binding.task_id),
+            (request.task_id, delivery.task_id),
+            (request.unit_id, delivery.unit_id),
+            (request.attempt_id, delivery.attempt_id),
+            (request.source_binding_digest, source_binding.binding_digest),
+            (request_ordinal, delivery.attempt_ordinal),
+            (soft_hints.get("planned_ai_unit_id"), source_binding.planned_ai_unit_id),
+            (sample_slot, source_binding.sample_slot_index),
+            (replacement_slot, request_ordinal),
+            (
+                soft_hints.get("trace_source_binding_digest"),
+                source_binding.binding_digest,
+            ),
+            (
+                soft_hints.get("trace_inference_request_digest"),
+                replacement.inference_request_digest,
+            ),
+            (delivery.entry_id, replacement.entry_id),
+            (delivery.inference_request_digest, replacement.inference_request_digest),
+        )
+    ):
+        raise ValueError("persisted trace execution request identity mismatch")
+    if "attempt_ordinal" in attempt:
+        paper_ordinal = attempt["attempt_ordinal"]
+        if (
+            isinstance(paper_ordinal, bool)
+            or not isinstance(paper_ordinal, int)
+            or paper_ordinal != request_ordinal
+        ):
+            raise ValueError("persisted trace attempt ordinal identity mismatch")
+    return request_ordinal
+
+
+def _validate_prepared_trace_delivery(
+    body: Mapping[str, Any],
+    wrapper: CurrentTraceWrapper,
+) -> PreparedTraceDelivery:
+    delivery = PreparedTraceDelivery.from_dict(body)
+    body = delivery.to_dict()
+    locators = body.get("source_bank_object_locators")
+    if not isinstance(locators, list) or any(
+        not isinstance(value, Mapping) for value in locators
+    ):
+        raise ValueError("persisted PreparedTraceDelivery locators are invalid")
+    locator_digests: dict[str, str] = {}
+    for locator in locators:
+        role = locator.get("object_role")
+        digest = locator.get("object_digest")
+        if not isinstance(role, str) or not role or not isinstance(digest, str) or not digest:
+            raise ValueError("persisted PreparedTraceDelivery locator is invalid")
+        if role in locator_digests:
+            raise ValueError("persisted PreparedTraceDelivery locator role is ambiguous")
+        locator_digests[role] = digest
+        if any(
+            locator.get(name) != expected
+            for name, expected in (
+                ("bank_root_id", wrapper.bank_root_id),
+                ("manifest_digest", wrapper.manifest_digest),
+                ("entry_id", wrapper.entry_id),
+            )
+        ):
+            raise ValueError("persisted PreparedTraceDelivery locator identity mismatch")
+    identity_pairs = (
+        (delivery.current_run_id, wrapper.current_run_id),
+        (delivery.task_id, wrapper.current_task_id),
+        (delivery.unit_id, wrapper.current_unit_id),
+        (delivery.attempt_id, wrapper.current_attempt_id),
+        (delivery.attempt_ordinal, wrapper.attempt_ordinal),
+        (delivery.bank_root_id, wrapper.bank_root_id),
+        (delivery.manifest_digest, wrapper.manifest_digest),
+        (delivery.inference_request_digest, wrapper.inference_request_digest),
+        (delivery.entry_id, wrapper.entry_id),
+        (delivery.source_latency_ms, wrapper.source_latency_ms),
+    )
+    if any(actual != expected for actual, expected in identity_pairs):
+        raise ValueError("persisted PreparedTraceDelivery identity mismatch")
+    start_ms = body.get("logical_start_ms")
+    finish_ms = body.get("logical_finish_ms")
+    if (
+        isinstance(start_ms, bool)
+        or not isinstance(start_ms, int)
+        or isinstance(finish_ms, bool)
+        or not isinstance(finish_ms, int)
+        or wrapper.logical_started_at != f"logical:{start_ms}"
+        or wrapper.logical_finished_at != f"logical:{finish_ms}"
+        or _canonical_trace_locator_digest_view(locator_digests)
+        != _canonical_trace_locator_digest_view(wrapper.locator_digests)
+    ):
+        raise ValueError("persisted PreparedTraceDelivery runtime identity mismatch")
+    return delivery
+
+
+def _validate_prepared_trace_delivery_binding(
+    delivery: PreparedTraceDelivery,
+    source_bindings: Sequence[TraceSourceBinding],
+) -> TraceSourceBinding:
+    bindings_by_digest: dict[str, TraceSourceBinding] = {}
+    for source_binding in source_bindings:
+        if not isinstance(source_binding, TraceSourceBinding):
+            raise TypeError("trace source bindings must be typed")
+        if source_binding.binding_digest in bindings_by_digest:
+            raise ValueError("persisted trace source binding digest is ambiguous")
+        bindings_by_digest[source_binding.binding_digest] = source_binding
+    source_binding = bindings_by_digest.get(delivery.binding_digest)
+    if source_binding is None:
+        raise ValueError("persisted trace delivery binding is unreachable")
+    try:
+        replacement = source_binding.replacement(delivery.attempt_ordinal)
+    except KeyError as exc:
+        raise ValueError("persisted trace delivery replacement is unreachable") from exc
+    if any(
+        actual != expected
+        for actual, expected in (
+            (delivery.bank_root_id, source_binding.bank_root_id),
+            (delivery.manifest_digest, source_binding.manifest_digest),
+            (delivery.entry_id, replacement.entry_id),
+            (
+                delivery.inference_request_digest,
+                replacement.inference_request_digest,
+            ),
+        )
+    ):
+        raise ValueError("persisted trace delivery binding identity mismatch")
+    return source_binding
+
+
+_TRACE_RESOURCE_BOOK_V2_KEYS = {
+    "schema_version",
+    "execution_id",
+    "task_id",
+    "preregistered_root_run_id",
+    "replacement_entry_ids",
+    "current_wrappers",
+    "current_wrapper_refs",
+    "source_bank_object_locators",
+}
+
+
+def _validate_trace_resource_book_v2_body(
+    *,
+    body: Mapping[str, Any],
+    resource_ref: Mapping[str, Any],
+    direct: PaperDirectRootResult,
+    binding: Any,
+    wrappers: Sequence[CurrentTraceWrapper],
+    canonical_refs_by_attempt: Mapping[str, Mapping[str, Any]],
+    native_refs_by_attempt: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if len(wrappers) == 1 and len(
+        {value.entry_id for value in direct.source_bank_object_locators}
+    ) == 1:
+        raise ValueError("persisted trace resource book producer version invariant mismatch")
+    typed_by_attempt = {value.current_attempt_id: value for value in wrappers}
+    if len(typed_by_attempt) != len(wrappers):
+        raise ValueError("persisted trace wrapper attempt identity is ambiguous")
+    body_wrappers = body.get("current_wrappers")
+    body_refs = body.get("current_wrapper_refs")
+    locators = body.get("source_bank_object_locators")
+    if (
+        set(body) != _TRACE_RESOURCE_BOOK_V2_KEYS
+        or body.get("schema_version") != "tokenshare.paper_trace_resource_book.v2"
+        or resource_ref.get("artifact_type") != "PaperTraceResourceBook"
+        or resource_ref.get("artifact_schema_id")
+        != "tokenshare.paper_trace_resource_book.v2"
+        or resource_ref.get("artifact_schema_version") != "v2"
+        or body.get("execution_id") != binding.execution_id
+        or body.get("task_id") != binding.task_id
+        or body.get("preregistered_root_run_id") != direct.preregistered_root_run_id
+        or not isinstance(body_wrappers, list)
+        or not isinstance(body_refs, list)
+        or not isinstance(locators, list)
+        or any(not isinstance(value, Mapping) for value in (*body_wrappers, *body_refs, *locators))
+    ):
+        raise ValueError("persisted trace resource book v2 identity mismatch")
+    wrapper_map: dict[str, Mapping[str, Any]] = {}
+    for value in body_wrappers:
+        attempt_id = value.get("current_attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id or attempt_id in wrapper_map:
+            raise ValueError("persisted trace resource book wrapper is ambiguous")
+        wrapper_map[attempt_id] = value
+    if set(wrapper_map) != set(typed_by_attempt) or any(
+        not _mapping_identity_matches(
+            wrapper_map[attempt_id],
+            _current_trace_wrapper_body(wrapper),
+        )
+        for attempt_id, wrapper in typed_by_attempt.items()
+    ):
+        raise ValueError("persisted trace resource book wrapper identity mismatch")
+    expected_wrappers = tuple(
+        _current_trace_wrapper_body(wrapper) for wrapper in wrappers
+    )
+    if not _typed_mapping_sequence_matches(tuple(body_wrappers), expected_wrappers):
+        raise ValueError("persisted trace resource book wrapper order mismatch")
+    ref_map: dict[str, Mapping[str, Any]] = {}
+    for value in body_refs:
+        artifact_id = value.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id or artifact_id in ref_map:
+            raise ValueError("persisted trace resource book wrapper ref is ambiguous")
+        ref_map[artifact_id] = value
+    expected_ref_map = {
+        value.get("artifact_id"): value for value in canonical_refs_by_attempt.values()
+    }
+    if len(expected_ref_map) != len(canonical_refs_by_attempt) or set(ref_map) != set(
+        expected_ref_map
+    ) or any(
+        not _mapping_identity_matches(ref_map[key], expected_ref_map[key])
+        for key in ref_map
+    ):
+        raise ValueError("persisted trace resource book wrapper ref identity mismatch")
+    expected_refs = tuple(
+        canonical_refs_by_attempt[wrapper.current_attempt_id] for wrapper in wrappers
+    )
+    if not _typed_mapping_sequence_matches(tuple(body_refs), expected_refs):
+        raise ValueError("persisted trace resource book wrapper ref order mismatch")
+    expected_locators = tuple(value.to_dict() for value in direct.source_bank_object_locators)
+    if not _typed_mapping_sequence_matches(tuple(locators), expected_locators):
+        raise ValueError("persisted trace resource book locator identity mismatch")
+    entry_ids = body.get("replacement_entry_ids")
+    expected_entry_ids = sorted({value.entry_id for value in direct.source_bank_object_locators})
+    if entry_ids != expected_entry_ids:
+        raise ValueError("persisted trace resource book replacement identity mismatch")
+    source = resource_ref.get("source")
+    native_refs = source.get("source_artifact_refs") if isinstance(source, Mapping) else None
+    if (
+        not isinstance(source, Mapping)
+        or source.get("kind") != "canonical_trace_root_resource_book_projection"
+        or source.get("role") != "trace_resource_book"
+        or source.get("task_id") != binding.task_id
+        or source.get("execution_id") != binding.execution_id
+        or not isinstance(native_refs, list)
+        or any(not isinstance(value, Mapping) for value in native_refs)
+    ):
+        raise ValueError("persisted trace resource book v2 source identity mismatch")
+    native_map: dict[str, Mapping[str, Any]] = {}
+    for value in native_refs:
+        artifact_id = value.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id or artifact_id in native_map:
+            raise ValueError("persisted trace resource book native ref is ambiguous")
+        native_map[artifact_id] = value
+    expected_native_map = {
+        value.get("artifact_id"): value for value in native_refs_by_attempt.values()
+    }
+    if len(expected_native_map) != len(native_refs_by_attempt) or set(native_map) != set(
+        expected_native_map
+    ) or any(
+        not _mapping_identity_matches(native_map[key], expected_native_map[key])
+        for key in native_map
+    ):
+        raise ValueError("persisted trace resource book native ref identity mismatch")
+    expected_native_refs = tuple(
+        native_refs_by_attempt[wrapper.current_attempt_id] for wrapper in wrappers
+    )
+    if not _typed_mapping_sequence_matches(tuple(native_refs), expected_native_refs):
+        raise ValueError("persisted trace resource book native ref order mismatch")
+
+
+def _validate_persisted_trace_resource_book(
+    *,
+    store: FormalEvidenceStore,
+    direct: PaperDirectRootResult,
+    binding: Any,
+    wrappers: Sequence[CurrentTraceWrapper],
+    trace_source_bindings: Sequence[TraceSourceBinding],
+    attempt_records: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+    persisted_artifact_records: Sequence[Mapping[str, Any]],
+) -> tuple[CommittedTraceConsumption, ...]:
+    bound_event_ids = frozenset(
+        value.event_id for value in getattr(binding, "events", ())
+    )
+    request_events_by_attempt = _request_events_by_attempt(events)
+    artifact_records_by_ref = _persisted_artifact_records_by_ref(
+        persisted_artifact_records
+    )
+    snapshot = direct.trace_resource_book_ref
+    if snapshot is None:
+        raise ValueError("persisted trace resource book ref is missing")
+    resource_record = _unique_artifact_record_for_snapshot(
+        persisted_artifact_records,
+        snapshot,
+    )
+    resource_ref = resource_record.get("source_artifact_ref")
+    assert isinstance(resource_ref, Mapping)
+    resource_body = _read_verified_persisted_artifact_json(store, resource_record)
+    commits = _trace_wrapper_commits_by_attempt(events, task_id=binding.task_id)
+    attempts_by_id: dict[str, Mapping[str, Any]] = {}
+    for attempt in attempt_records:
+        attempt_id = attempt.get("attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ValueError("persisted trace attempt identity is invalid")
+        if attempt_id in attempts_by_id:
+            raise ValueError("persisted trace attempt identity is ambiguous")
+        attempts_by_id[attempt_id] = attempt
+    all_canonical_refs_by_attempt: dict[str, Mapping[str, Any]] = {}
+    all_native_refs_by_attempt: dict[str, Mapping[str, Any]] = {}
+    delivery_bodies_by_attempt: dict[str, Mapping[str, Any]] = {}
+    deliveries_by_attempt: dict[str, PreparedTraceDelivery] = {}
+    consumptions: list[CommittedTraceConsumption] = []
+    locator_digests_by_entry: dict[str, dict[str, str]] = {}
+    for entry_id in {value.entry_id for value in direct.source_bank_object_locators}:
+        locator_digests_by_entry[entry_id] = {
+            value.object_role: value.object_digest
+            for value in direct.source_bank_object_locators
+            if value.entry_id == entry_id
+        }
+    for attempt_id, (event_id, native_ref) in commits.items():
+        canonical_record = _canonical_trace_wrapper_record(
+            artifact_records_by_ref,
+            native_ref,
+        )
+        canonical_ref = canonical_record.get("source_artifact_ref")
+        assert isinstance(canonical_ref, Mapping)
+        if (
+            canonical_ref.get("artifact_type") != "CurrentTraceWrapper"
+            or canonical_ref.get("artifact_schema_id")
+            != "tokenshare.current_trace_wrapper"
+            or canonical_ref.get("artifact_schema_version") != "v1"
+        ):
+            raise ValueError("persisted trace wrapper artifact schema mismatch")
+        prepared = _read_verified_persisted_artifact_json(store, canonical_record)
+        delivery = PreparedTraceDelivery.from_dict(prepared)
+        if any(
+            actual != expected
+            for actual, expected in (
+                (delivery.current_run_id, binding.execution_id),
+                (delivery.task_id, binding.task_id),
+                (delivery.attempt_id, attempt_id),
+            )
+        ):
+            raise ValueError("persisted PreparedTraceDelivery commit identity mismatch")
+        expected_locator_digests = locator_digests_by_entry.get(delivery.entry_id)
+        delivery_locator_digests = {
+            str(value.get("object_role")): str(value.get("object_digest"))
+            for value in delivery.source_bank_object_locators
+        }
+        if (
+            expected_locator_digests is None
+            or _canonical_trace_locator_digest_view(delivery_locator_digests)
+            != _canonical_trace_locator_digest_view(expected_locator_digests)
+        ):
+            raise ValueError("persisted PreparedTraceDelivery locator closure mismatch")
+        source_binding = _validate_prepared_trace_delivery_binding(
+            delivery,
+            trace_source_bindings,
+        )
+        attempt = attempts_by_id.get(attempt_id)
+        if attempt is None:
+            raise ValueError("persisted trace attempt is missing")
+        request_ordinal = _validated_persisted_trace_request_ordinal(
+            store=store,
+            binding=binding,
+            attempt=attempt,
+            delivery=delivery,
+            source_binding=source_binding,
+            bound_event_ids=bound_event_ids,
+            request_events_by_attempt=request_events_by_attempt,
+            artifact_records_by_ref=artifact_records_by_ref,
+        )
+        digest_values = tuple(
+            attempt.get(field_name)
+            for field_name in (
+                "source_binding_digest",
+                "trace_source_binding_digest",
+            )
+            if attempt.get(field_name) is not None
+        )
+        if (
+            attempt.get("planned_ai_unit_id")
+            != source_binding.planned_ai_unit_id
+            or attempt.get("unit_id") != delivery.unit_id
+            or request_ordinal != delivery.attempt_ordinal
+        ):
+            raise ValueError("persisted trace attempt planned unit identity mismatch")
+        if not digest_values or any(
+            not isinstance(value, str) or value != delivery.binding_digest
+            for value in digest_values
+        ):
+            raise ValueError("persisted trace attempt binding digest identity mismatch")
+        all_canonical_refs_by_attempt[attempt_id] = canonical_ref
+        all_native_refs_by_attempt[attempt_id] = native_ref
+        delivery_bodies_by_attempt[attempt_id] = prepared
+        deliveries_by_attempt[attempt_id] = delivery
+        wrapper_artifact_id = canonical_ref.get("artifact_id")
+        wrapper_content_hash = canonical_ref.get("content_hash")
+        if not isinstance(wrapper_artifact_id, str) or not wrapper_artifact_id:
+            raise ValueError("persisted trace wrapper artifact identity is invalid")
+        if not isinstance(wrapper_content_hash, str):
+            raise ValueError("persisted trace wrapper content hash is invalid")
+        consumptions.append(
+            CommittedTraceConsumption(
+                event_id=event_id,
+                attempt_id=attempt_id,
+                unit_id=delivery.unit_id,
+                planned_ai_unit_id=source_binding.planned_ai_unit_id,
+                attempt_ordinal=delivery.attempt_ordinal,
+                entry_id=delivery.entry_id,
+                binding_digest=delivery.binding_digest,
+                delivery_digest=delivery.delivery_digest,
+                wrapper_artifact_id=wrapper_artifact_id,
+                wrapper_content_hash=wrapper_content_hash,
+            )
+        )
+
+    canonical_refs_by_attempt: dict[str, Mapping[str, Any]] = {}
+    native_refs_by_attempt: dict[str, Mapping[str, Any]] = {}
+    seen_attempt_ids: set[str] = set()
+    for wrapper in wrappers:
+        attempt_id = wrapper.current_attempt_id
+        if attempt_id in seen_attempt_ids:
+            raise ValueError("persisted trace wrapper attempt identity is ambiguous")
+        seen_attempt_ids.add(attempt_id)
+        delivery = deliveries_by_attempt.get(attempt_id)
+        prepared = delivery_bodies_by_attempt.get(attempt_id)
+        if delivery is None or prepared is None:
+            raise ValueError("persisted trace wrapper commit is missing")
+        event_id, _ = commits[attempt_id]
+        if wrapper.current_ledger_ref != event_id:
+            raise ValueError("persisted trace wrapper commit ledger identity mismatch")
+        _validate_prepared_trace_delivery(prepared, wrapper)
+        canonical_refs_by_attempt[attempt_id] = all_canonical_refs_by_attempt[attempt_id]
+        native_refs_by_attempt[attempt_id] = all_native_refs_by_attempt[attempt_id]
+
+    is_v2 = (
+        resource_ref.get("artifact_type") == "PaperTraceResourceBook"
+        and resource_ref.get("artifact_schema_id")
+        == "tokenshare.paper_trace_resource_book.v2"
+        and resource_ref.get("artifact_schema_version") == "v2"
+    )
+    requires_v1 = len(wrappers) == 1 and len(
+        {value.entry_id for value in direct.source_bank_object_locators}
+    ) == 1
+    if is_v2 == requires_v1:
+        raise ValueError("persisted trace resource book producer version invariant mismatch")
+    if is_v2:
+        _validate_trace_resource_book_v2_body(
+            body=resource_body,
+            resource_ref=resource_ref,
+            direct=direct,
+            binding=binding,
+            wrappers=wrappers,
+            canonical_refs_by_attempt=canonical_refs_by_attempt,
+            native_refs_by_attempt=native_refs_by_attempt,
+        )
+        return _unique_typed(consumptions)
+    if len(wrappers) != 1 or len(canonical_refs_by_attempt) != 1:
+        raise ValueError("persisted trace resource book v1 is ambiguous")
+    wrapper = wrappers[0]
+    native_ref = native_refs_by_attempt[wrapper.current_attempt_id]
+    source = resource_ref.get("source")
+    if (
+        resource_ref.get("artifact_type") != "CurrentTraceWrapper"
+        or resource_ref.get("artifact_schema_id")
+        != "tokenshare.current_trace_wrapper"
+        or resource_ref.get("artifact_schema_version") != "v1"
+        or not _mapping_identity_matches(
+            resource_body, _current_trace_wrapper_body(wrapper)
+        )
+        or not isinstance(source, Mapping)
+        or source.get("kind") != "canonical_trace_wrapper_role_projection"
+        or source.get("role") != "trace_resource_book"
+        or source.get("task_id") != binding.task_id
+        or source.get("execution_id") != binding.execution_id
+        or not isinstance(source.get("source_artifact_ref"), Mapping)
+        or not _mapping_identity_matches(source["source_artifact_ref"], native_ref)
+    ):
+        raise ValueError("persisted trace resource book v1 identity mismatch")
+    return _unique_typed(consumptions)
 
 
 def _artifact_snapshot_matches_source_ref(
@@ -5950,10 +7124,11 @@ def _lineage_source_record_body(
     current_provider_object_refs: Sequence[ArtifactIdentitySnapshot],
     source_bank_object_locators: Sequence[ExternalBankObjectLocator],
     current_trace_wrappers: Sequence[CurrentTraceWrapper],
+    committed_trace_consumptions: Sequence[CommittedTraceConsumption],
     trace_source_bindings: Sequence[TraceSourceBinding],
 ) -> dict[str, Any]:
     return {
-        "schema_version": "tokenshare.lineage_source_record.v1",
+        "schema_version": "tokenshare.lineage_source_record.v2",
         "member_id": member_id,
         "evidence_class": evidence_class,
         "direct_result_refs": [_lineage_json_value(value) for value in direct_result_refs],
@@ -5973,8 +7148,36 @@ def _lineage_source_record_body(
         "current_trace_wrappers": [
             _current_trace_wrapper_body(value) for value in current_trace_wrappers
         ],
+        "committed_trace_consumptions": [
+            value.to_dict() for value in committed_trace_consumptions
+        ],
         "trace_source_bindings": [value.to_dict() for value in trace_source_bindings],
     }
+
+
+def _digest_lineage_source_index(
+    *,
+    schema_version: str,
+    index_id: str,
+    input_identity_digest: str,
+    records: Sequence[LineageSourceRecord],
+) -> str:
+    """流式计算既有 v1 canonical JSON 摘要，避免构造全量 records payload。"""
+
+    digest = hashlib.sha256()
+    digest.update(b'{"index_id":')
+    digest.update(_canonical_bytes(index_id))
+    digest.update(b',"input_identity_digest":')
+    digest.update(_canonical_bytes(input_identity_digest))
+    digest.update(b',"records":[')
+    for index, record in enumerate(records):
+        if index:
+            digest.update(b",")
+        digest.update(_canonical_bytes(record.to_dict()))
+    digest.update(b'],"schema_version":')
+    digest.update(_canonical_bytes(schema_version))
+    digest.update(b"}")
+    return "sha256:" + digest.hexdigest()
 
 
 def _merge_lineage_source_records(
@@ -5986,6 +7189,10 @@ def _merge_lineage_source_records(
     merged: list[LineageSourceRecord] = []
     for member_id in sorted(grouped):
         values = grouped[member_id]
+        _validate_source_entry_alias_locator_identity(member_id, values)
+        if len(values) == 1 and _lineage_source_record_is_canonical(values[0]):
+            merged.append(values[0])
+            continue
         evidence_classes = {value.evidence_class for value in values}
         if len(evidence_classes) != 1:
             raise ValueError("lineage member evidence class identity conflict")
@@ -6024,6 +7231,11 @@ def _merge_lineage_source_records(
                     for value in values
                     for item in value.current_trace_wrappers
                 ),
+                committed_trace_consumptions=_unique_typed(
+                    item
+                    for value in values
+                    for item in value.committed_trace_consumptions
+                ),
                 trace_source_bindings=_unique_typed(
                     item
                     for value in values
@@ -6032,6 +7244,117 @@ def _merge_lineage_source_records(
             )
         )
     return tuple(merged)
+
+
+def _trace_alias_local_closure(
+    *,
+    alias: str,
+    source_locators: Sequence[ExternalBankObjectLocator],
+    wrappers: Sequence[CurrentTraceWrapper],
+    committed_trace_consumptions: Sequence[CommittedTraceConsumption],
+    trace_source_bindings: Sequence[TraceSourceBinding],
+) -> tuple[
+    tuple[CurrentTraceWrapper, ...],
+    tuple[CommittedTraceConsumption, ...],
+    tuple[TraceSourceBinding, ...],
+]:
+    """Source entry alias 只携带 immutable locators；closure 留在 root。"""
+
+    if any(value.entry_id == alias for value in source_locators):
+        return (), (), ()
+    return (
+        tuple(
+            value
+            for value in wrappers
+            if alias
+            in {
+                value.current_attempt_id,
+                value.current_unit_id,
+            }
+        ),
+        tuple(
+            value
+            for value in committed_trace_consumptions
+            if alias
+            in {
+                value.event_id,
+                value.attempt_id,
+                value.unit_id,
+                value.planned_ai_unit_id,
+            }
+        ),
+        tuple(
+            value
+            for value in trace_source_bindings
+            if alias == value.planned_ai_unit_id
+        ),
+    )
+
+
+def _validate_source_entry_alias_locator_identity(
+    member_id: str,
+    records: Sequence[LineageSourceRecord],
+) -> None:
+    """禁止跨 root 用同名 entry alias 拼接不完整 locator roles。"""
+
+    root_records = tuple(
+        any(
+            direct_ref.get("preregistered_root_run_id") == member_id
+            for direct_ref in record.direct_result_refs
+        )
+        for record in records
+    )
+    if all(root_records):
+        return
+    if any(root_records):
+        raise ValueError("source entry locator identity conflict")
+
+    locator_sets = tuple(record.source_bank_object_locators for record in records)
+    if not any(locator_sets):
+        # 只有全部为空时才是可安全合并的 generic event/unit alias。
+        return
+    if any(not locators for locators in locator_sets):
+        raise ValueError("source entry locator identity conflict")
+
+    identities: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
+    for locators in locator_sets:
+        if any(value.entry_id != member_id for value in locators):
+            raise ValueError("source entry locator identity conflict")
+        roles = tuple(
+            sorted((value.object_role, value.object_digest) for value in locators)
+        )
+        if len({role for role, _ in roles}) != len(roles):
+            raise ValueError("source entry locator identity conflict")
+        bank_identities = {
+            (value.bank_root_id, value.manifest_digest) for value in locators
+        }
+        if len(bank_identities) != 1:
+            raise ValueError("source entry locator identity conflict")
+        bank_root_id, manifest_digest = next(iter(bank_identities))
+        identities.add((bank_root_id, manifest_digest, roles))
+    if len(identities) > 1:
+        raise ValueError("source entry locator identity conflict")
+
+
+def _lineage_source_record_is_canonical(record: LineageSourceRecord) -> bool:
+    return (
+        record.direct_result_refs == _unique_mappings(record.direct_result_refs)
+        and record.current_task_attempt_event_refs
+        == _unique_typed(record.current_task_attempt_event_refs)
+        and record.parser_verifier_checker_canonical_refs
+        == _unique_typed(record.parser_verifier_checker_canonical_refs)
+        and record.ledger_refs == _unique_typed(record.ledger_refs)
+        and record.current_provider_object_refs
+        == _unique_typed(record.current_provider_object_refs)
+        and record.source_bank_object_locators
+        == _unique_typed(record.source_bank_object_locators)
+        and record.current_trace_wrappers
+        == _unique_typed(record.current_trace_wrappers)
+        and record.committed_trace_consumptions
+        == _unique_typed(record.committed_trace_consumptions)
+        and record.trace_source_bindings
+        == _unique_typed(record.trace_source_bindings)
+    )
 
 
 def _unique_typed(values: Sequence[Any] | Any) -> tuple[Any, ...]:

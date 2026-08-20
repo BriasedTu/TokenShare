@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -48,6 +48,140 @@ class PaperProtocolProjection:
             "runtime_observation": dict(self.runtime_observation),
             "ineligibility_reasons": list(self.ineligibility_reasons),
         }
+
+
+@dataclass(frozen=True, kw_only=True)
+class CapturedModelExecutionRecordBinding:
+    """执行器 capture 与协议 attempt 的严格 model-record 绑定。"""
+
+    request_attempt_id: str
+    record_attempt_id: str | None
+    record_ref: ArtifactRef | None
+    record_required: bool
+
+
+def reconcile_captured_model_execution_records(
+    projection: PaperProtocolProjection,
+    bindings: Sequence[CapturedModelExecutionRecordBinding],
+) -> PaperProtocolProjection:
+    """用执行后 capture 权威回填 projection，不从 usage 或 artifact 顺序猜测。"""
+
+    projected_by_id: dict[str, PaperAttemptResult] = {}
+    for attempt in projection.attempt_results:
+        attempt_id = attempt.attempt_id
+        if not isinstance(attempt_id, str) or not attempt_id.strip():
+            raise ValueError("projected attempt_id must be non-empty")
+        if attempt_id in projected_by_id:
+            raise ValueError(
+                f"duplicate projected attempt_id: {attempt_id}"
+            )
+        projected_by_id[attempt_id] = attempt
+
+    captured_by_id: dict[str, CapturedModelExecutionRecordBinding] = {}
+    for binding in bindings:
+        request_attempt_id = binding.request_attempt_id
+        if (
+            not isinstance(request_attempt_id, str)
+            or not request_attempt_id.strip()
+        ):
+            raise ValueError("captured request attempt_id must be non-empty")
+        if request_attempt_id in captured_by_id:
+            raise ValueError(
+                "duplicate captured request attempt_id: "
+                f"{request_attempt_id}"
+            )
+        if type(binding.record_required) is not bool:
+            raise ValueError("captured model execution record requirement is invalid")
+        if (binding.record_attempt_id is None) != (binding.record_ref is None):
+            raise ValueError(
+                "captured model execution record identity and ref must be "
+                f"observed together: {request_attempt_id}"
+            )
+        if binding.record_attempt_id is not None:
+            if (
+                not isinstance(binding.record_attempt_id, str)
+                or not binding.record_attempt_id.strip()
+            ):
+                raise ValueError("captured record attempt_id must be non-empty")
+            if binding.record_attempt_id != request_attempt_id:
+                raise ValueError(
+                    "captured record attempt_id does not match request attempt_id: "
+                    f"{binding.record_attempt_id} != {request_attempt_id}"
+                )
+            if not isinstance(binding.record_ref, ArtifactRef):
+                raise ValueError("captured model execution record ref is invalid")
+        captured_by_id[request_attempt_id] = binding
+
+    unknown_ids = sorted(set(captured_by_id) - set(projected_by_id))
+    if unknown_ids:
+        raise ValueError(
+            "captured model execution record references unknown projected "
+            f"attempts: {unknown_ids}"
+        )
+
+    reconciled: list[PaperAttemptResult] = []
+    captured_ref_values: list[JsonObject] = []
+    for attempt in projection.attempt_results:
+        binding = captured_by_id.get(attempt.attempt_id)
+        captured_ref = binding.record_ref if binding is not None else None
+        if binding is None and attempt.provider_attempt_count > 0:
+            raise ValueError(
+                "actual provider attempt is missing captured model execution "
+                "record: "
+                f"{attempt.attempt_id}"
+            )
+        if (
+            binding is not None
+            and binding.record_required
+            and captured_ref is None
+        ):
+            raise ValueError(
+                "required captured model execution record is missing: "
+                f"{attempt.attempt_id}"
+            )
+        if captured_ref is None:
+            reconciled.append(attempt)
+            continue
+        captured_value = captured_ref.to_dict()
+        if (
+            attempt.model_execution_record_ref is not None
+            and attempt.model_execution_record_ref != captured_value
+        ):
+            raise ValueError(
+                "conflicting projected model execution record for attempt: "
+                f"{attempt.attempt_id}"
+            )
+        reconciled.append(
+            replace(attempt, model_execution_record_ref=captured_value)
+        )
+        captured_ref_values.append(captured_value)
+
+    artifact_refs: list[JsonObject] = []
+    artifact_keys: set[tuple[str, str]] = set()
+    for value in (
+        *projection.task_result.artifact_refs,
+        *captured_ref_values,
+    ):
+        if not isinstance(value, Mapping):
+            raise ValueError("paper task artifact ref must be an object")
+        artifact_id = value.get("artifact_id")
+        content_hash = value.get("content_hash")
+        if not isinstance(artifact_id, str) or not isinstance(content_hash, str):
+            raise ValueError("paper task artifact ref identity is incomplete")
+        key = (artifact_id, content_hash)
+        if key in artifact_keys:
+            continue
+        artifact_keys.add(key)
+        artifact_refs.append(dict(value))
+
+    return replace(
+        projection,
+        attempt_results=tuple(reconciled),
+        task_result=replace(
+            projection.task_result,
+            artifact_refs=artifact_refs,
+        ),
+    )
 
 
 def project_paper_protocol_run(

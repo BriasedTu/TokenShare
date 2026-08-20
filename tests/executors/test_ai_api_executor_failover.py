@@ -519,6 +519,7 @@ def test_ai_api_executor_does_not_count_pre_provider_config_failures_as_calls(
     assert submission.usage_summary["provider_attempt_count"] == 0
     assert transport.calls == []
     provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["provider_attempt_count"] == 0
     assert [attempt["result_kind"] for attempt in provenance["attempts"]] == [
         "config_error",
         "config_error",
@@ -564,6 +565,8 @@ def test_ai_api_executor_invalid_provider_envelope_does_not_failover(tmp_path, m
     assert submission.raw_output_ref is None
     assert len(transport.calls) == 1
     assert b"missing assistant message content" in store.read_bytes(submission.parse_failure_ref)
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["provider_attempt_count"] == 1
 
 
 def test_ai_api_executor_skips_missing_secret_entry_and_returns_artifact_backed_error(
@@ -599,7 +602,9 @@ def test_ai_api_executor_skips_missing_secret_entry_and_returns_artifact_backed_
     }
     assert submission.usage_summary["provider_attempt_count"] == 0
     assert len(transport.calls) == 0
-    provenance = store.read_bytes(submission.provenance_ref).decode("utf-8")
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["provider_attempt_count"] == 0
+    provenance = json.dumps(provenance, sort_keys=True)
     assert "SILICONFLOW_API_KEY_A" in provenance
     assert "SILICONFLOW_API_KEY_B" in provenance
 

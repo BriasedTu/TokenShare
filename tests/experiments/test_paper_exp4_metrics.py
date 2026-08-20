@@ -13,7 +13,10 @@ from tokenshare.experiments.paper_exp4_metrics import (
     Exp4PersistedObservation,
     build_exp4_observations,
 )
-from tokenshare.experiments.paper_metric_contract import load_paper_metric_contract
+from tokenshare.experiments.paper_metric_contract import (
+    capture_metric_computation_traces,
+    load_paper_metric_contract,
+)
 
 
 def _observation(observation_id: str, **facts: object) -> Exp4PersistedObservation:
@@ -38,6 +41,7 @@ def _root(
     identity_consistent: bool = True,
     evidence_complete: bool = True,
     infrastructure_valid: bool = True,
+    source_entries: tuple[str, ...] = (),
 ) -> Exp4DirectRootFacts:
     return Exp4DirectRootFacts(
         preregistered_root_run_id=root_id,
@@ -54,6 +58,7 @@ def _root(
         paper_evidence_complete=evidence_complete,
         infrastructure_valid=infrastructure_valid,
         source_bank_roles=TRACE_SOURCE_BANK_ROLES,
+        source_bank_entry_ids=source_entries,
     )
 
 
@@ -86,7 +91,7 @@ def _specific(projection, mode: str):
 
 def test_each_ablation_pairs_one_full_by_case_repeat_sample() -> None:
     full = _root("full")
-    decoy = _root("full-decoy", replacements=("sample-0", "replacement-decoy"))
+    decoy = _root("full-decoy", sample=1, replacements=("sample-1",))
     inputs = [_mode("FULL", full, decoy)]
     inputs.extend(_mode(mode, _root(f"root:{mode}")) for mode in EXP4_MODES if mode != "FULL")
 
@@ -96,6 +101,57 @@ def test_each_ablation_pairs_one_full_by_case_repeat_sample() -> None:
     assert {row.ablation_mode for row in projection.pair_rows} == set(EXP4_MODES[1:])
     assert {row.full_root_run_id for row in projection.pair_rows} == {"full"}
     assert all(row.pair_identity[:4] == ("case-1", 0, 0, ("sample-0", "replacement-1")) for row in projection.pair_rows)
+
+
+def test_exp4_pair_bundle_declares_both_roots_and_exact_source_entries() -> None:
+    contract = load_paper_metric_contract()
+    with capture_metric_computation_traces() as traces:
+        build_exp4_observations(
+            (
+                _mode("FULL", _root("full", source_entries=("entry-full",))),
+                _mode(
+                    "NO_VERIFICATION",
+                    _root("ablation", source_entries=("entry-ablation",)),
+                ),
+            ),
+            contract,
+        )
+
+    trace = next(
+        value
+        for value in traces
+        if value.row_kind == "paired_transition"
+        and value.metric_id == "paired_root_count"
+    )
+    facts = trace.bundle.member_facts_by_id
+    assert facts["full"]["preregistered_root_run_id"] == "full"
+    assert facts["ablation"]["preregistered_root_run_id"] == "ablation"
+    pair_fact = next(
+        value
+        for value in facts.values()
+        if value.get("member_kind") == "exp4_paired_root"
+    )
+    assert pair_fact["lineage_root_run_ids"] == ("full", "ablation")
+    assert pair_fact["source_bank_entry_ids"] == (
+        "entry-full",
+        "entry-ablation",
+    )
+
+
+def test_exp4_pair_identity_does_not_split_on_observed_replacement_consumption() -> None:
+    full = _root("full", replacements=())
+    no_parser = _root("no-parser", replacements=("replacement-observed",))
+
+    projection = _project(
+        _mode("FULL", full),
+        _mode("NO_PARSER_POLICY", no_parser),
+    )
+
+    pair = projection.pair_rows[0]
+    assert pair.full_root_run_id == "full"
+    assert pair.ablation_root_run_id == "no-parser"
+    assert pair.ineligibility_reasons == ()
+    assert pair.require_cell("paired_root_count").value == 1
 
     duplicate = _project(
         _mode("FULL", _root("duplicate-full")),

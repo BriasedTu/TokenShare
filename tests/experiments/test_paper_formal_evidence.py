@@ -26,6 +26,7 @@ from tokenshare.executors.trace_backed import (
     TraceReplacementBinding,
     TraceSourceBinding,
 )
+from tokenshare.local_runtime.contracts import PreparedTraceDelivery
 from tokenshare.experiments.paper_formal_checkpoint import (
     iter_v3_delta_chain,
     validate_v3_delta_chain,
@@ -42,6 +43,121 @@ EXPERIMENT_A = "exp-a"
 EXPERIMENT_B = "exp-b"
 CONDITION_A = "condition-a"
 CONDITION_B = "condition-b"
+
+
+def _prepared_trace_delivery_and_wrapper(
+    *,
+    version: str,
+) -> tuple[PreparedTraceDelivery, CurrentTraceWrapper]:
+    """构造同一条 current trace 的 v1/v2 交付，供持久化闭包校验使用。"""
+
+    manifest_digest = "sha256:" + "1" * 64
+    request_digest = "sha256:" + "2" * 64
+    binding_digest = "sha256:" + "3" * 64
+    parser_input_digest = "sha256:" + "4" * 64
+    object_digest = "sha256:" + "5" * 64
+    locator = {
+        "bank_root_id": "bank-root-1",
+        "manifest_digest": manifest_digest,
+        "entry_id": "entry-1",
+        "object_role": "raw_output",
+        "object_digest": object_digest,
+    }
+    wrapper = CurrentTraceWrapper(
+        current_run_id="run-1",
+        current_task_id="task-1",
+        current_unit_id="unit-1",
+        current_attempt_id="attempt-1",
+        attempt_ordinal=0,
+        bank_root_id="bank-root-1",
+        manifest_digest=manifest_digest,
+        root_binding_marker_digest="sha256:" + "6" * 64,
+        inference_request_digest=request_digest,
+        entry_id="entry-1",
+        locator_digests={"raw_output": object_digest},
+        logical_started_at="logical:100",
+        logical_finished_at="logical:107",
+        source_latency_ms=7,
+        current_parse_ref="parse-1",
+        current_verifier_ref="verifier-1",
+        current_checker_ref=None,
+        current_canonical_ref="canonical-1",
+        current_ledger_ref="ledger-1",
+    )
+    common = {
+        "current_run_id": wrapper.current_run_id,
+        "task_id": wrapper.current_task_id,
+        "unit_id": wrapper.current_unit_id,
+        "attempt_id": wrapper.current_attempt_id,
+        "attempt_ordinal": wrapper.attempt_ordinal,
+        "binding_digest": binding_digest,
+        "inference_request_digest": wrapper.inference_request_digest,
+        "bank_root_id": wrapper.bank_root_id,
+        "manifest_digest": wrapper.manifest_digest,
+        "entry_id": wrapper.entry_id,
+        "source_terminal_kind": "success",
+        "source_bank_object_locators": (locator,),
+        "logical_start_ms": 100,
+        "parser_input_media_type": "application/json",
+        "parser_input_digest": parser_input_digest,
+        "child_worker_id": "trace-child-1",
+        "child_completion_sequence": 0,
+    }
+    if version == "v1":
+        delivery = PreparedTraceDelivery.create(
+            **common,
+            source_latency_ms=wrapper.source_latency_ms,
+        )
+    elif version == "v2":
+        delivery = PreparedTraceDelivery.create(
+            **common,
+            source_api_latency_ms=3,
+            source_api_latency_missing=False,
+            source_api_latency_missing_count=0,
+            source_api_latency_ref="response-bank:bank-root-1:entry-1:latency",
+            protocol_operational_delay_ms=wrapper.source_latency_ms,
+        )
+    else:
+        raise ValueError("unsupported test prepared trace delivery version")
+    return delivery, wrapper
+
+
+@pytest.mark.parametrize("version", ("v1", "v2"))
+def test_validate_prepared_trace_delivery_accepts_v1_and_v2_current_trace_identity(
+    version: str,
+) -> None:
+    delivery, wrapper = _prepared_trace_delivery_and_wrapper(version=version)
+
+    validated = formal_evidence._validate_prepared_trace_delivery(
+        delivery.to_dict(),
+        wrapper,
+    )
+
+    assert validated == delivery
+    assert validated.source_latency_ms == wrapper.source_latency_ms
+
+
+def test_validate_prepared_trace_delivery_rejects_v2_operational_delay_identity_drift() -> None:
+    delivery, wrapper = _prepared_trace_delivery_and_wrapper(version="v2")
+    mismatched_wrapper = replace(
+        wrapper,
+        source_latency_ms=8,
+    )
+
+    with pytest.raises(ValueError, match="identity mismatch"):
+        formal_evidence._validate_prepared_trace_delivery(
+            delivery.to_dict(),
+            mismatched_wrapper,
+        )
+
+
+def test_prepared_trace_delivery_rejects_tampered_v2_digest() -> None:
+    delivery, _wrapper = _prepared_trace_delivery_and_wrapper(version="v2")
+    tampered = delivery.to_dict()
+    tampered["source_api_latency_ref"] = "response-bank:tampered"
+
+    with pytest.raises(ValueError, match="prepared trace delivery_digest mismatch"):
+        PreparedTraceDelivery.from_dict(tampered)
 
 
 def _trace_classification_body() -> dict[str, object]:
@@ -289,6 +405,39 @@ def test_initialize_writes_required_formal_capturing_manifests(
     )
 
 
+def test_load_accepts_runtime_terminal_fields_outside_frozen_suite_identity(
+    tmp_path: Path,
+) -> None:
+    """runner 终态写入的运行时字段不得改变 frozen suite identity。"""
+
+    bodies = _suite_bodies()
+    FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **bodies,
+        capturing=False,
+    )
+    suite_path = tmp_path / "suite_manifest.json"
+    suite_manifest = _read_json(suite_path)
+    suite_manifest["last_complete_event_ref"] = {
+        "event_id": "event-task-1",
+        "event_type": "TASK_COMPLETED",
+    }
+    suite_manifest["terminal_failure"] = {
+        "outcome_status": "blocked",
+        "failure_stage": "post_check",
+        "failure_kind": "fixture_failure",
+    }
+    _write_json(suite_path, suite_manifest)
+    _rebuild_evidence_manifest(tmp_path)
+
+    loaded = FormalEvidenceStore.load(
+        output_root=tmp_path,
+        **_expected_bodies(bodies),
+    )
+
+    assert loaded.completed_task_ids == ()
+
+
 def test_resume_archives_uncheckpointed_adapter_evidence_before_load(
     tmp_path: Path,
 ) -> None:
@@ -391,6 +540,36 @@ def test_initialize_rejects_non_plan_entries_without_overwriting_them(
 
     assert marker.read_text(encoding="utf-8") == "preserve me"
     assert not (tmp_path / "evidence_manifest.json").exists()
+
+
+def test_initialize_accepts_only_exact_preestablished_paid_output_marker(
+    tmp_path: Path,
+) -> None:
+    marker = {
+        "schema_version": "tokenshare.paid_output_binding.v1",
+        "marker_digest": "sha256:" + "1" * 64,
+        "receipt_digest": "sha256:" + "2" * 64,
+    }
+    _write_json(tmp_path / "paid_output_binding.v1.json", marker)
+
+    FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **_suite_bodies(),
+        capturing=False,
+        preexisting_paid_output_marker=marker,
+    )
+
+    assert (tmp_path / "evidence_manifest.json").is_file()
+
+    rejected_root = tmp_path / "rejected"
+    _write_json(rejected_root / "paid_output_binding.v1.json", marker)
+    with pytest.raises(ValueError, match="non-plan entries"):
+        FormalEvidenceStore.initialize(
+            output_root=rejected_root,
+            **_suite_bodies(),
+            capturing=False,
+            preexisting_paid_output_marker={**marker, "marker_digest": "sha256:" + "3" * 64},
+        )
 
 
 def test_checkpoint_preserves_artifact_and_loads_completed_task(
@@ -3193,3 +3372,25 @@ def _evidence_entry(root: Path, path: Path) -> dict[str, object]:
             else _sha256(_canonical_json(records).encode("utf-8"))
         ),
     }
+
+
+def test_exp5_runtime_ledger_is_excluded_only_from_static_evidence_inventory(
+    tmp_path: Path,
+) -> None:
+    """Exp5 的 typed runtime ledger 可变，不能污染 immutable static 清单。"""
+
+    (tmp_path / "exp5_online_budget.v1.sqlite3").write_bytes(b"runtime-ledger")
+    (tmp_path / "exp5_online_budget.v1.sqlite3-wal").write_bytes(b"runtime-wal")
+    (tmp_path / "exp5_online_budget.v1.sqlite3-shm").write_bytes(b"runtime-shm")
+    other = tmp_path / "unrelated.sqlite3"
+    other.write_bytes(b"must-remain-static")
+
+    paths = {
+        path.relative_to(tmp_path).as_posix()
+        for path in FormalEvidenceStore(tmp_path)._v2_static_paths()
+    }
+
+    assert "exp5_online_budget.v1.sqlite3" not in paths
+    assert "exp5_online_budget.v1.sqlite3-wal" not in paths
+    assert "exp5_online_budget.v1.sqlite3-shm" not in paths
+    assert other.name in paths

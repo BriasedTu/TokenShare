@@ -738,8 +738,14 @@ class ProcessWorkerBackend:
                             else None
                         ),
                     )
-                    if prepared_delivery is None:
-                        self._record_completed_planned_ai_unit(request, payload)
+                    self._record_completed_planned_ai_unit(
+                        request,
+                        (
+                            prepared_delivery
+                            if prepared_delivery is not None
+                            else submission
+                        ),
+                    )
                     outcome = WorkerBatchOutcome(
                         request=request,
                         submission=submission,
@@ -852,9 +858,13 @@ class ProcessWorkerBackend:
     def _record_completed_planned_ai_unit(
         self,
         request: ExecutionRequest,
-        submission: object,
+        result: object,
     ) -> None:
-        if getattr(submission, "result_kind", None) != "succeeded":
+        completed = (
+            isinstance(result, PreparedTraceDelivery)
+            or getattr(result, "result_kind", None) == "succeeded"
+        )
+        if not completed:
             return
         planned_ai_unit_id = request.soft_hints.get("planned_ai_unit_id")
         if isinstance(planned_ai_unit_id, str) and planned_ai_unit_id:

@@ -16,10 +16,17 @@ from tokenshare.experiments.paper_exp5_model_comparison import (
     build_exp5_model_execution_rows,
 )
 from tokenshare.experiments.paper_models import digest_json
+from tokenshare.experiments.paper_experiment_contracts import (
+    formal_runtime_task_id,
+)
 from tokenshare.experiments.paper_budget_ledger import (
     InventoryIdentityError,
     PaperBudgetLedger,
     ReservationRequest,
+)
+from tokenshare.experiments.paper_budget import (
+    EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT,
+    PaperBudgetLimits,
 )
 from tokenshare.experiments.paper_resource_accounting import ProviderUsage
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
@@ -28,6 +35,10 @@ from tokenshare.executors.response_bank import (
     inventory_entry_id,
     response_bank_inventory_digest,
     semantic_slot_key,
+)
+from tokenshare.executors.ai_api_request_identity import (
+    PreparedOutboundRequest,
+    validate_prepared_request,
 )
 from tokenshare.experiments.paper_online_checks import (
     CapabilityCallPlan,
@@ -76,6 +87,135 @@ class RuntimeTimingPolicy:
     current_provider_call_count: int
 
 
+@dataclass(frozen=True, kw_only=True)
+class PaperProviderExceptionAccounting:
+    """Adapter 异常时由当前 root 的 durable budget rows 投影的用量。"""
+
+    provider_attempt_count: int
+    total_tokens: int | None
+    total_cost_estimate: Decimal | None
+    cost_estimate_currency: str | None
+    cost_estimate_status: str
+    usage_missing_count: int
+    ambiguous_count: int
+    conservative_total_tokens: int
+    conservative_total_cost_estimate: Decimal
+    state_counts: Mapping[str, int]
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("provider_attempt_count", self.provider_attempt_count),
+            ("usage_missing_count", self.usage_missing_count),
+            ("ambiguous_count", self.ambiguous_count),
+            ("conservative_total_tokens", self.conservative_total_tokens),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a nonnegative integer")
+        if self.total_tokens is not None and (
+            isinstance(self.total_tokens, bool)
+            or not isinstance(self.total_tokens, int)
+            or self.total_tokens < 0
+        ):
+            raise ValueError("total_tokens must be null or a nonnegative integer")
+        for name, value in (
+            ("total_cost_estimate", self.total_cost_estimate),
+            (
+                "conservative_total_cost_estimate",
+                self.conservative_total_cost_estimate,
+            ),
+        ):
+            if value is None:
+                if name == "conservative_total_cost_estimate":
+                    raise ValueError(
+                        "conservative_total_cost_estimate must be nonnegative"
+                    )
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float, Decimal))
+                or value < 0
+            ):
+                raise ValueError(f"{name} must be a nonnegative number")
+            object.__setattr__(self, name, Decimal(str(value)))
+        if self.cost_estimate_currency is not None and (
+            not isinstance(self.cost_estimate_currency, str)
+            or not self.cost_estimate_currency
+        ):
+            raise ValueError("cost estimate currency is invalid")
+        if self.cost_estimate_status not in {
+            "single_currency_estimate",
+            "explicit_zero_preprovider",
+            "usage_missing",
+        }:
+            raise ValueError("exception accounting status is invalid")
+        if self.ambiguous_count > self.provider_attempt_count:
+            raise ValueError("ambiguous count exceeds provider attempts")
+        if self.usage_missing_count > self.provider_attempt_count:
+            raise ValueError("usage-missing count exceeds provider attempts")
+        if self.cost_estimate_status == "usage_missing":
+            if (
+                self.total_tokens is not None
+                or self.total_cost_estimate is not None
+                or self.usage_missing_count < 1
+            ):
+                raise ValueError("usage-missing accounting must keep totals nullable")
+        elif (
+            self.total_tokens is None
+            or self.total_cost_estimate is None
+            or self.usage_missing_count
+            or self.ambiguous_count
+        ):
+            raise ValueError("complete exception accounting is internally inconsistent")
+        normalized_counts: dict[str, int] = {}
+        allowed_states = {"released", "ambiguous", "settled"}
+        for state, count in self.state_counts.items():
+            if (
+                not isinstance(state, str)
+                or not state
+                or state not in allowed_states
+                or isinstance(count, bool)
+                or not isinstance(count, int)
+                or count < 0
+            ):
+                raise ValueError("exception accounting state counts are invalid")
+            normalized_counts[state] = count
+        if normalized_counts.get("ambiguous", 0) != self.ambiguous_count or (
+            normalized_counts.get("ambiguous", 0)
+            + normalized_counts.get("settled", 0)
+            != self.provider_attempt_count
+        ):
+            raise ValueError("exception accounting state totals are inconsistent")
+        if self.ambiguous_count > self.usage_missing_count:
+            raise ValueError("ambiguous accounting must remain usage-missing")
+        if self.cost_estimate_status == "explicit_zero_preprovider":
+            if (
+                self.provider_attempt_count != 0
+                or self.total_tokens != 0
+                or self.total_cost_estimate != 0
+                or self.conservative_total_tokens != 0
+                or self.conservative_total_cost_estimate != 0
+            ):
+                raise ValueError("pre-provider accounting must be an explicit zero")
+        elif (
+            self.cost_estimate_status == "single_currency_estimate"
+            and (
+                self.provider_attempt_count < 1
+                or self.cost_estimate_currency is None
+            )
+        ):
+            raise ValueError("provider accounting requires a single frozen currency")
+        if self.total_tokens is not None and (
+            self.total_tokens > self.conservative_total_tokens
+        ):
+            raise ValueError("exception accounting token upper bound is invalid")
+        if self.total_cost_estimate is not None and (
+            self.total_cost_estimate
+            > self.conservative_total_cost_estimate
+        ):
+            raise ValueError("exception accounting cost upper bound is invalid")
+        object.__setattr__(self, "state_counts", normalized_counts)
+
+
 class PaperOnlineProviderEvidenceCallback:
     """在 AI executor 已持久化 raw/provenance/usage 后保存 typed projection objects。"""
 
@@ -113,6 +253,41 @@ class PaperOnlineProviderEvidenceCallback:
         self._rejection_ref: TypedEvidenceRef | None = None
         self._requeue_ref: TypedEvidenceRef | None = None
         self._replacement_attempt_ref: TypedEvidenceRef | None = None
+        self._exception_accounting: PaperProviderExceptionAccounting | None = None
+        self._root_hard_limit_authority: Exp5RootHardLimitAuthority | None = None
+
+    @property
+    def root_hard_limit_authority(self) -> Exp5RootHardLimitAuthority | None:
+        return self._root_hard_limit_authority
+
+    def bind_root_hard_limit_authority(
+        self,
+        *,
+        condition: Any,
+        selection: Any,
+        case_id: str,
+        inventory_digest: str,
+        authority: Exp5RootHardLimitAuthority,
+    ) -> None:
+        """仅接收与当前 callback root identity 完全一致的 typed authority。"""
+
+        if not isinstance(authority, Exp5RootHardLimitAuthority):
+            raise TypeError("Exp5 root hard-limit authority type is invalid")
+        if self._root_hard_limit_authority is not None:
+            raise ValueError("Exp5 root hard-limit authority is already bound")
+        if (
+            authority.condition_id != getattr(condition, "condition_id", None)
+            or authority.condition_digest
+            != getattr(condition, "condition_digest", None)
+            or authority.case_id != case_id
+            or authority.selection_digest
+            != getattr(selection, "selection_digest", None)
+            or authority.model_endpoint_identity_digest
+            != getattr(condition, "model_endpoint_identity_digest", None)
+            or authority.inventory_digest != inventory_digest
+        ):
+            raise ValueError("Exp5 root hard-limit authority identity drift")
+        self._root_hard_limit_authority = authority
 
     @classmethod
     def for_capability_call(
@@ -451,6 +626,17 @@ class PaperOnlineProviderEvidenceCallback:
         usage_summary = usage_body.get("usage_summary")
         if not isinstance(usage_summary, Mapping):
             raise ValueError("official callback usage snapshot is invalid")
+        provenance_count = provenance_body.get("provider_attempt_count")
+        usage_count = usage_summary.get("provider_attempt_count")
+        if (
+            isinstance(provenance_count, bool)
+            or not isinstance(provenance_count, int)
+            or provenance_count < 1
+            or isinstance(usage_count, bool)
+            or not isinstance(usage_count, int)
+            or usage_count != provenance_count
+        ):
+            raise ValueError("official callback provider attempt count evidence drift")
         prompt_ref = getattr(request, "prompt_package_ref", None)
         if not isinstance(prompt_ref, ArtifactRef) or not store.verify(prompt_ref):
             raise ValueError("official callback requires verified prompt package")
@@ -633,6 +819,120 @@ class PaperOnlineProviderEvidenceCallback:
         if record.state == "settled":
             return "settled"
         raise ValueError(f"unsupported official callback budget state: {record.state}")
+
+    def reconcile_exception_accounting(
+        self,
+        *,
+        artifact_store: ArtifactStore,
+    ) -> PaperProviderExceptionAccounting:
+        """只按本 callback 显式 reservation 对账异常，不扫描 artifact inventory。"""
+
+        if self._exception_accounting is not None:
+            return self._exception_accounting
+        if self._budget_ledger is None:
+            raise ValueError("official callback exception accounting has no budget ledger")
+        if not isinstance(artifact_store, ArtifactStore):
+            raise TypeError("official callback exception accounting requires ArtifactStore")
+        reservations = tuple(self._reservation_by_submission.values())
+        identities = tuple(
+            (item.inventory_digest, item.inventory_entry_id)
+            for item in reservations
+        )
+        if len(set(identities)) != len(identities):
+            raise ValueError("official callback exception reservations are duplicate")
+        request_by_identity = {
+            (item.inventory_digest, item.inventory_entry_id): item
+            for item in reservations
+        }
+        records = []
+        state_counts = {
+            "released": 0,
+            "ambiguous": 0,
+            "settled": 0,
+        }
+        for reservation in reservations:
+            state = self.reconcile_budget_resume(
+                reservation=reservation,
+                artifact_store=artifact_store,
+            )
+            if state in {"ready", "released"}:
+                state_counts["released"] += 1
+                continue
+            record = self._budget_ledger.get_reservation(
+                reservation.inventory_digest,
+                reservation.inventory_entry_id,
+            )
+            if record.state not in {"ambiguous", "settled"}:
+                raise ValueError(
+                    "official callback exception accounting is not terminal or ambiguous"
+                )
+            state_counts[record.state] += 1
+            records.append(record)
+
+        currencies = {
+            request_by_identity[
+                (record.inventory_digest, record.inventory_entry_id)
+            ].frozen_pricing.currency
+            for record in records
+        }
+        if not records:
+            currencies = {
+                reservation.frozen_pricing.currency
+                for reservation in reservations
+            }
+        if len(currencies) > 1:
+            raise ValueError(
+                "official callback exception accounting spans multiple currencies"
+            )
+        currency = next(iter(currencies), None)
+        ambiguous_count = state_counts["ambiguous"]
+        usage_missing_count = ambiguous_count + sum(
+            record.state == "settled" and bool(record.usage_missing)
+            for record in records
+        )
+        conservative_tokens = 0
+        conservative_cost = Decimal("0")
+        for record in records:
+            reservation = request_by_identity[
+                (record.inventory_digest, record.inventory_entry_id)
+            ]
+            if record.state == "settled":
+                if record.charged_tokens is None or record.cost_estimate is None:
+                    raise ValueError(
+                        "settled official callback accounting is incomplete"
+                    )
+                conservative_tokens += record.charged_tokens
+                conservative_cost += record.cost_estimate
+            else:
+                conservative_tokens += reservation.token_upper_bound
+                conservative_cost += reservation.cost_upper_bound
+
+        if usage_missing_count:
+            total_tokens = None
+            total_cost = None
+            status = "usage_missing"
+        else:
+            total_tokens = conservative_tokens
+            total_cost = conservative_cost
+            status = (
+                "single_currency_estimate"
+                if records
+                else "explicit_zero_preprovider"
+            )
+        accounting = PaperProviderExceptionAccounting(
+            provider_attempt_count=len(records),
+            total_tokens=total_tokens,
+            total_cost_estimate=total_cost,
+            cost_estimate_currency=currency,
+            cost_estimate_status=status,
+            usage_missing_count=usage_missing_count,
+            ambiguous_count=ambiguous_count,
+            conservative_total_tokens=conservative_tokens,
+            conservative_total_cost_estimate=conservative_cost,
+            state_counts=state_counts,
+        )
+        self._exception_accounting = accounting
+        return accounting
 
 
     def require_capture(self, submission_id: str) -> CurrentProviderAttemptEvidence:
@@ -846,6 +1146,732 @@ class PaperOnlineProviderEvidenceCallback:
 
     def on_unit_progress(self, context: Any) -> None:
         return None
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Exp5LedgerSlotAuthority:
+    record: Any
+    row: ResponseBankInventoryRow
+    token_upper_bound: int
+    cost_upper_bound: Decimal
+    frozen_pricing: FrozenPricing
+
+
+@dataclass(frozen=True, kw_only=True)
+class Exp5RootHardLimitAuthority:
+    """一个 selected Exp5 root 从 prepared slots 精确聚合的 hard 上界。"""
+
+    condition_id: str
+    condition_digest: str
+    case_id: str
+    selection_digest: str
+    model_endpoint_identity_digest: str
+    inventory_digest: str
+    provider_attempt_count: int
+    total_tokens: int
+    total_cost_estimate: Decimal
+    currency: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "condition_id",
+            "condition_digest",
+            "case_id",
+            "selection_digest",
+            "model_endpoint_identity_digest",
+            "inventory_digest",
+            "currency",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError("Exp5 root hard-limit authority identity is invalid")
+        if (
+            isinstance(self.provider_attempt_count, bool)
+            or not isinstance(self.provider_attempt_count, int)
+            or self.provider_attempt_count < 1
+            or isinstance(self.total_tokens, bool)
+            or not isinstance(self.total_tokens, int)
+            or self.total_tokens < 1
+            or not isinstance(self.total_cost_estimate, Decimal)
+            or self.total_cost_estimate <= 0
+        ):
+            raise ValueError("Exp5 root hard-limit authority bounds are invalid")
+
+
+@dataclass(frozen=True, kw_only=True)
+class Exp5LedgerUsageAudit:
+    current_provider_calls: int
+    total_provider_calls: int
+    current_spend: Decimal | None
+    current_spend_missing_reason: str | None
+    total_spend: Decimal | None
+    total_spend_missing_reason: str | None
+    ambiguous_count: int
+    usage_missing_count: int
+    cost_upper_bound_at_risk: Decimal
+    state_counts: Mapping[str, int]
+    expected_provider_calls_by_condition: Mapping[str, int]
+    current_provider_calls_by_condition: Mapping[str, int]
+    total_provider_calls_by_condition: Mapping[str, int]
+    current_terminal_provider_calls_by_condition: Mapping[str, int]
+    total_terminal_provider_calls_by_condition: Mapping[str, int]
+    prepared_canonical_slots: tuple[tuple[str, str, str], ...]
+    current_terminal_slots: tuple[tuple[str, str, str], ...]
+    total_terminal_slots: tuple[tuple[str, str, str], ...]
+
+
+def bind_condition_to_frozen_case_metadata(
+    *,
+    prepared_condition: Any,
+    frozen_case: Mapping[str, Any],
+) -> Any:
+    """从冻结 plan condition 与逐题 case 重建唯一运行时 condition。"""
+
+    domain = getattr(prepared_condition, "domain", None)
+    if domain == "factorization":
+        difficulty = frozen_case.get("difficulty")
+        paper_difficulty = frozen_case.get("paper_difficulty")
+        if not isinstance(difficulty, str) or not difficulty:
+            raise ValueError("frozen factorization case difficulty is required")
+        if not isinstance(paper_difficulty, str) or not paper_difficulty:
+            raise ValueError(
+                "frozen factorization case paper_difficulty is required"
+            )
+        return replace(
+            prepared_condition,
+            difficulty=difficulty,
+            paper_difficulty=paper_difficulty,
+        )
+    if domain != "lean_proof":
+        raise ValueError("Exp5 runtime condition domain is unsupported")
+    updates: dict[str, Any] = {}
+    for field_name in (
+        "paper_difficulty",
+        "topic_family",
+        "topic_family_version",
+        "construction_rule_id",
+        "oracle_package_group",
+        "proof_assembly_shape",
+    ):
+        prepared_value = getattr(prepared_condition, field_name)
+        case_value = frozen_case.get(field_name)
+        if prepared_value is not None and prepared_value != case_value:
+            raise ValueError(
+                f"prepared condition {field_name} must match frozen Lean case"
+            )
+        if prepared_value is None:
+            updates[field_name] = case_value
+    return replace(prepared_condition, **updates) if updates else prepared_condition
+
+
+class PaperExp5LedgerRootCallbackFactory:
+    """把 selected Exp5 roots 绑定到 full prepared inventory 与一个原子 ledger。"""
+
+    serialize_roots = False
+
+    def __init__(
+        self,
+        *,
+        ledger_path: str | Path,
+        full_prepared_inventory: Any,
+        coverage: Any,
+        ai_api_configs: Mapping[str, Any],
+    ) -> None:
+        from tokenshare.experiments.paper_formal_plan import (
+            FormalExecutionCoverage,
+            FormalPreparedRequestInventory,
+        )
+
+        if type(full_prepared_inventory) is not FormalPreparedRequestInventory:
+            raise TypeError("Exp5 ledger requires FormalPreparedRequestInventory")
+        if type(coverage) is not FormalExecutionCoverage:
+            raise TypeError("Exp5 ledger requires FormalExecutionCoverage")
+        if (
+            full_prepared_inventory.provider_calls_made != 0
+            or coverage.provider_calls_made != 0
+            or full_prepared_inventory.source_snapshot_digest
+            != coverage.source_snapshot_digest
+            or full_prepared_inventory.record_count
+            != len(full_prepared_inventory.records)
+            or full_prepared_inventory.unique_inference_request_count
+            != len(
+                {
+                    record.inference_request_digest
+                    for record in full_prepared_inventory.records
+                }
+            )
+        ):
+            raise ValueError("Exp5 ledger full prepared inventory lineage drift")
+        selected_roots = tuple(
+            root
+            for root in coverage.roots
+            if root.condition.experiment_id
+            == "exp5_real_ai_model_endpoint_comparison"
+        )
+        if not selected_roots:
+            raise ValueError("Exp5 ledger coverage selected no Exp5 roots")
+        records_by_key: dict[tuple[str, str, str], Any] = {}
+        for record in full_prepared_inventory.records:
+            key = (
+                record.condition.condition_id,
+                record.case_id,
+                record.planned_ai_unit_id,
+            )
+            if key in records_by_key:
+                raise ValueError("Exp5 ledger full inventory contains duplicate records")
+            # 触发 nested prepared/provider identity 的正式重算。
+            record.request_identity_digest
+            records_by_key[key] = record
+        expected_keys = tuple(
+            (root.condition.condition_id, root.case_id, planned_ai_unit_id)
+            for root in selected_roots
+            for planned_ai_unit_id in root.planned_ai_unit_ids
+        )
+        try:
+            selected_records = tuple(records_by_key[key] for key in expected_keys)
+        except KeyError as exc:
+            raise ValueError("Exp5 ledger selected prepared inventory is incomplete") from exc
+        if len(set(expected_keys)) != len(expected_keys):
+            raise ValueError("Exp5 ledger selected prepared identity is duplicate")
+
+        slots: dict[tuple[str, str, str], _Exp5LedgerSlotAuthority] = {}
+        rows: list[ResponseBankInventoryRow] = []
+        for key, root, record in zip(
+            expected_keys,
+            (
+                root
+                for root in selected_roots
+                for _planned_ai_unit_id in root.planned_ai_unit_ids
+            ),
+            selected_records,
+            strict=True,
+        ):
+            slot = self._bind_slot(
+                root=root,
+                record=record,
+                ai_api_configs=ai_api_configs,
+            )
+            slots[key] = slot
+            rows.append(slot.row)
+        canonical_rows = tuple(
+            sorted(rows, key=lambda row: (row.semantic_slot_key, row.inventory_entry_id))
+        )
+        inventory_digest = response_bank_inventory_digest(canonical_rows)
+        total_tokens = sum(slot.token_upper_bound for slot in slots.values())
+        total_cost = sum(
+            (slot.cost_upper_bound for slot in slots.values()),
+            start=Decimal("0"),
+        )
+        self._ledger = PaperBudgetLedger(
+            ledger_path,
+            limits=PaperBudgetLimits(
+                calls=len(slots),
+                tokens=total_tokens,
+                cny=total_cost,
+                deepseek_cumulative_cny=total_cost,
+            ),
+        )
+        self._ledger.preregister_inventory(
+            inventory_digest=inventory_digest,
+            rows=canonical_rows,
+        )
+        self._baseline_states = {
+            record.inventory_entry_id: record.state
+            for record in self._ledger.list_reservations()
+            if record.inventory_digest == inventory_digest
+        }
+        self._inventory_digest = inventory_digest
+        self._inventory_rows = canonical_rows
+        self._slots = slots
+        self._coverage_digest = coverage.coverage_digest
+        self._callbacks: list[PaperOnlineProviderEvidenceCallback] = []
+        self._lock = Lock()
+
+    @staticmethod
+    def _bind_slot(
+        *,
+        root: Any,
+        record: Any,
+        ai_api_configs: Mapping[str, Any],
+    ) -> _Exp5LedgerSlotAuthority:
+        condition = root.condition
+        prepared = validate_prepared_request(record.prepared_request)
+        source_config = ai_api_configs.get(record.provider_config_id)
+        if source_config is None:
+            raise ValueError("Exp5 ledger source provider config is absent")
+        entries = tuple(getattr(source_config, "entries", ()))
+        source_entry = next(
+            (entry for entry in entries if entry.entry_id == record.model_entry_id),
+            None,
+        )
+        endpoint = root.endpoint_controls
+        # prepared.case_id 保存正式执行器的运行时 task identity；catalog case_id
+        # 则保留在 inventory record 中，两者必须按 domain 做精确、封闭的绑定。
+        try:
+            expected_runtime_task_id = formal_runtime_task_id(
+                condition.domain,
+                record.case_id,
+            )
+        except ValueError:
+            expected_runtime_task_id = None
+        if (
+            record.condition is not condition
+            or record.binding is not root.binding
+            or record.case_id != root.case_id
+            or record.case_record_digest != root.case_record_digest
+            or record.planned_ai_unit_id not in root.planned_ai_unit_ids
+            or record.sample_slot_index != root.repeat_id
+            or record.base_replacement_slot != 0
+            or record.replacement_slot_ids != (0,)
+            or record.replacement_policy_id != "formal_attempt_budget.v1"
+            or record.provider_calls_made != 0
+            or getattr(source_config, "config_digest", None)
+            != record.source_provider_config_digest
+            or source_entry is None
+            or getattr(source_config, "provider_family", None)
+            != record.provider_family
+            or source_entry.model != record.provider_model_id
+            or condition.source_provider_config_digest
+            != record.source_provider_config_digest
+            or condition.provider_config_id != record.provider_config_id
+            or condition.model_entry_id != record.model_entry_id
+            or condition.provider_family != record.provider_family
+            or condition.provider_model_id != record.provider_model_id
+            or condition.reasoning_profile_id != record.reasoning_profile_id
+            or condition.model_endpoint_identity_digest
+            != record.model_endpoint_identity_digest
+            or endpoint.provider_config_id != record.provider_config_id
+            or endpoint.model_entry_id != record.model_entry_id
+            or endpoint.provider_family != record.provider_family
+            or endpoint.provider_model_id != record.provider_model_id
+            or endpoint.reasoning_profile_id != record.reasoning_profile_id
+            or endpoint.model_endpoint_identity_digest
+            != record.model_endpoint_identity_digest
+            or endpoint.max_tokens != record.request_max_tokens
+            or endpoint.timeout_seconds != record.request_timeout_seconds
+            or endpoint.max_provider_attempts
+            != record.request_max_provider_attempts
+            or endpoint.request_controls_digest != record.request_controls_digest
+            or prepared.provider_config_digest
+            != record.prepared_execution_config_digest
+            or prepared.entry_id != record.model_entry_id
+            or prepared.configured_model != record.provider_model_id
+            or expected_runtime_task_id is None
+            or prepared.case_id != expected_runtime_task_id
+            or prepared.planned_ai_unit_id != record.planned_ai_unit_id
+            or prepared.sample_slot_index != record.sample_slot_index
+            or prepared.replacement_slot != record.base_replacement_slot
+        ):
+            raise ValueError("Exp5 ledger prepared/model/provider authority drift")
+        slot_key = semantic_slot_key(
+            case_record_digest=record.case_record_digest,
+            planned_ai_unit_id=record.planned_ai_unit_id,
+            sample_slot_index=record.sample_slot_index,
+            replacement_slot=record.base_replacement_slot,
+            provider_config_digest=prepared.provider_config_digest,
+            prompt_profile_digest=record.prompt_profile_digest,
+            prompt_admission_profile_digest=prepared.prompt_admission_profile_digest,
+            plugin_version=prepared.plugin_version,
+        )
+        provisional = ResponseBankInventoryRow(
+            inventory_entry_id="",
+            semantic_slot_key=slot_key,
+            case_record_digest=record.case_record_digest,
+            planned_ai_unit_id=record.planned_ai_unit_id,
+            sample_slot_index=record.sample_slot_index,
+            replacement_slot=record.base_replacement_slot,
+            provider_config_digest=prepared.provider_config_digest,
+            prompt_profile_digest=record.prompt_profile_digest,
+            prompt_admission_profile_digest=(
+                prepared.prompt_admission_profile_digest
+            ),
+            plugin_version=prepared.plugin_version,
+            entry_id=record.model_entry_id,
+            body_digest=prepared.body_digest,
+            inference_request_digest=prepared.inference_request_digest,
+        )
+        row = ResponseBankInventoryRow.from_dict(
+            replace(
+                provisional,
+                inventory_entry_id=inventory_entry_id(provisional),
+            ).to_dict()
+        )
+        pricing = dict(source_entry.pricing)
+        input_field = (
+            "uncached_input_per_million_tokens"
+            if "uncached_input_per_million_tokens" in pricing
+            else "input_per_million_tokens"
+        )
+        if input_field not in pricing or "output_per_million_tokens" not in pricing:
+            raise ValueError("Exp5 ledger pricing snapshot is incomplete")
+        input_rate = Decimal(str(pricing[input_field]))
+        output_rate = Decimal(str(pricing["output_per_million_tokens"]))
+        thinking_budget = prepared.body_obj.get("thinking_budget", 0)
+        if isinstance(thinking_budget, bool) or not isinstance(thinking_budget, int):
+            raise ValueError("Exp5 ledger thinking budget is invalid")
+        completion_tokens = record.request_max_tokens + thinking_budget
+        token_upper_bound = (
+            EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+            + completion_tokens
+        )
+        cost_upper_bound = (
+            Decimal(EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT)
+            * input_rate
+            + Decimal(completion_tokens) * output_rate
+        ) / Decimal(1_000_000)
+        if input_rate < 0 or output_rate < 0 or cost_upper_bound <= 0:
+            raise ValueError("Exp5 ledger pricing upper bound must be positive")
+        return _Exp5LedgerSlotAuthority(
+            record=record,
+            row=row,
+            token_upper_bound=token_upper_bound,
+            cost_upper_bound=cost_upper_bound,
+            frozen_pricing=FrozenPricing(
+                currency=str(pricing["currency"]),
+                input_per_million_tokens=input_rate,
+                output_per_million_tokens=output_rate,
+            ),
+        )
+
+    def __call__(self, **root_context: Any) -> PaperOnlineProviderEvidenceCallback:
+        condition = root_context.get("condition")
+        selection = root_context.get("selection")
+        case_id = str(root_context.get("case_id") or "")
+        matching = tuple(
+            (key, slot)
+            for key, slot in self._slots.items()
+            if key[0] == getattr(condition, "condition_id", None)
+            and key[1] == case_id
+        )
+        if not matching:
+            raise ValueError("Exp5 runtime root is outside selected coverage")
+        first = matching[0][1].record
+        frozen_case = root_context.get("case")
+        runtime_config = root_context.get("ai_api_config")
+        request_limits = root_context.get("request_limits")
+        try:
+            if not isinstance(frozen_case, Mapping):
+                raise TypeError("Exp5 runtime case must be a mapping")
+            if (
+                frozen_case.get("case_id") != first.case_id
+                or digest_json(dict(frozen_case)) != first.case_record_digest
+            ):
+                raise ValueError("Exp5 runtime frozen case identity drift")
+            expected_condition = bind_condition_to_frozen_case_metadata(
+                prepared_condition=first.condition,
+                frozen_case=frozen_case,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Exp5 runtime root/config/request authority drift"
+            ) from exc
+        if (
+            type(condition) is not type(expected_condition)
+            or getattr(condition, "condition_digest", None)
+            != expected_condition.condition_digest
+            or condition != expected_condition
+            or (
+                first.condition.domain == "factorization"
+                and getattr(condition, "condition_digest", None)
+                != first.condition.condition_digest
+            )
+            or getattr(condition, "model_endpoint_identity_digest", None)
+            != first.model_endpoint_identity_digest
+            or getattr(selection, "selection_digest", None)
+            != first.binding.selection.selection_digest
+            or getattr(runtime_config, "config_digest", None)
+            != first.source_provider_config_digest
+            or not isinstance(request_limits, Mapping)
+            or request_limits.get("max_tokens") != first.request_max_tokens
+            or request_limits.get("timeout_seconds")
+            != first.request_timeout_seconds
+            or request_limits.get("max_provider_attempts")
+            != first.request_max_provider_attempts
+        ):
+            raise ValueError("Exp5 runtime root/config/request authority drift")
+
+        def resolve(context: Mapping[str, Any]) -> ReservationRequest:
+            prepared = context.get("prepared_request")
+            if type(prepared) is not PreparedOutboundRequest:
+                raise TypeError("Exp5 ledger requires PreparedOutboundRequest")
+            key = (
+                str(getattr(condition, "condition_id", "")),
+                case_id,
+                prepared.planned_ai_unit_id,
+            )
+            slot = self._slots.get(key)
+            if slot is None:
+                raise ValueError("Exp5 prepared unit is outside selected coverage")
+            record = slot.record
+            expected_identity = {
+                **dict(record.provider_request_identity),
+                "prepared_request": record.prepared_request.provenance_dict(),
+            }
+            if (
+                validate_prepared_request(prepared) != record.prepared_request
+                or dict(context.get("provider_request_identity") or {})
+                != expected_identity
+                or context.get("provider_family") != record.provider_family
+                or context.get("model") != record.provider_model_id
+                or context.get("entry_id") != record.model_entry_id
+            ):
+                raise ValueError("Exp5 prepared request identity drift before transport")
+            return ReservationRequest(
+                inventory_digest=self._inventory_digest,
+                inventory_entry_id=slot.row.inventory_entry_id,
+                semantic_slot_key=slot.row.semantic_slot_key,
+                inference_request_digest=slot.row.inference_request_digest,
+                prompt_admission_profile_digest=(
+                    slot.row.prompt_admission_profile_digest
+                ),
+                token_upper_bound=slot.token_upper_bound,
+                cost_upper_bound=slot.cost_upper_bound,
+                provider_family=record.provider_family,
+                frozen_pricing=slot.frozen_pricing,
+            )
+
+        callback = PaperOnlineProviderEvidenceCallback(
+            attempt_ordinal=0,
+            scope_identity={
+                "scope_kind": "exp5_online",
+                "coverage_digest": self._coverage_digest,
+                "condition_id": first.condition.condition_id,
+                "condition_digest": first.condition.condition_digest,
+                "case_id": case_id,
+                "model_endpoint_identity_digest": (
+                    first.model_endpoint_identity_digest
+                ),
+            },
+            budget_ledger=self._ledger,
+            reservation_request_resolver=resolve,
+        )
+        currencies = {slot.frozen_pricing.currency for _key, slot in matching}
+        if len(currencies) != 1:
+            raise ValueError("Exp5 root hard-limit authority currency is not unique")
+        callback.bind_root_hard_limit_authority(
+            condition=condition,
+            selection=selection,
+            case_id=case_id,
+            inventory_digest=self._inventory_digest,
+            authority=Exp5RootHardLimitAuthority(
+                condition_id=condition.condition_id,
+                condition_digest=condition.condition_digest,
+                case_id=case_id,
+                selection_digest=selection.selection_digest,
+                model_endpoint_identity_digest=(
+                    condition.model_endpoint_identity_digest
+                ),
+                inventory_digest=self._inventory_digest,
+                provider_attempt_count=len(matching),
+                total_tokens=sum(slot.token_upper_bound for _key, slot in matching),
+                total_cost_estimate=sum(
+                    (slot.cost_upper_bound for _key, slot in matching),
+                    start=Decimal("0"),
+                ),
+                currency=next(iter(currencies)),
+            ),
+        )
+        with self._lock:
+            self._callbacks.append(callback)
+        return callback
+
+    @property
+    def ledger(self) -> PaperBudgetLedger:
+        return self._ledger
+
+    @property
+    def inventory_digest(self) -> str:
+        return self._inventory_digest
+
+
+    @property
+    def inventory_rows(self) -> tuple[ResponseBankInventoryRow, ...]:
+        return self._inventory_rows
+
+    @property
+    def callbacks(self) -> tuple[PaperOnlineProviderEvidenceCallback, ...]:
+        with self._lock:
+            return tuple(self._callbacks)
+
+    def audit_usage(self) -> Exp5LedgerUsageAudit:
+        records = tuple(
+            record
+            for record in self._ledger.list_reservations()
+            if record.inventory_digest == self._inventory_digest
+        )
+        dispatched_states = {
+            "dispatch_intent",
+            "ambiguous",
+            "terminal_published",
+            "settled",
+        }
+        dispatched = tuple(
+            record for record in records if record.state in dispatched_states
+        )
+        baseline_dispatched = {
+            entry_id
+            for entry_id, state in self._baseline_states.items()
+            if state in dispatched_states
+        }
+        current = tuple(
+            record
+            for record in dispatched
+            if record.inventory_entry_id not in baseline_dispatched
+        )
+        condition_by_entry_id = {
+            slot.row.inventory_entry_id: key[0]
+            for key, slot in self._slots.items()
+        }
+        slot_by_entry_id = {
+            slot.row.inventory_entry_id: key for key, slot in self._slots.items()
+        }
+        expected_by_condition: dict[str, int] = {}
+        for condition_id, _case_id, _planned_ai_unit_id in self._slots:
+            expected_by_condition[condition_id] = (
+                expected_by_condition.get(condition_id, 0) + 1
+            )
+
+        def counts_by_condition(values: Sequence[Any]) -> dict[str, int]:
+            counts = {condition_id: 0 for condition_id in expected_by_condition}
+            for value in values:
+                try:
+                    condition_id = condition_by_entry_id[value.inventory_entry_id]
+                except KeyError as exc:
+                    raise ValueError(
+                        "Exp5 ledger reservation is outside canonical slot authority"
+                    ) from exc
+                counts[condition_id] += 1
+            return counts
+
+        def canonical_slots(values: Sequence[Any]) -> tuple[tuple[str, str, str], ...]:
+            slots: list[tuple[str, str, str]] = []
+            for value in values:
+                try:
+                    slots.append(slot_by_entry_id[value.inventory_entry_id])
+                except KeyError as exc:
+                    raise ValueError(
+                        "Exp5 ledger reservation is outside canonical slot authority"
+                    ) from exc
+            return tuple(slots)
+
+        terminal_states = {"terminal_published", "settled"}
+        total_terminal = tuple(
+            record for record in records if record.state in terminal_states
+        )
+        current_terminal = tuple(
+            record
+            for record in total_terminal
+            if record.inventory_entry_id not in baseline_dispatched
+        )
+
+        def spend_for(
+            values: Sequence[Any],
+        ) -> tuple[Decimal | None, str | None]:
+            if not values:
+                return Decimal("0"), None
+            if any(record.state == "ambiguous" for record in values):
+                return None, "exp5_ledger_ambiguous"
+            if any(record.state != "settled" for record in values):
+                return None, "exp5_ledger_terminal_incomplete"
+            if any(
+                record.cost_estimate is None or bool(record.usage_missing)
+                for record in values
+            ):
+                return None, "exp5_ledger_usage_missing"
+            return (
+                sum(
+                    (record.cost_estimate for record in values),
+                    start=Decimal("0"),
+                ),
+                None,
+            )
+
+        current_spend, current_reason = spend_for(current)
+        total_spend, total_reason = spend_for(dispatched)
+        state_counts = {
+            state: sum(record.state == state for record in records)
+            for state in (
+                "reserved",
+                "dispatch_intent",
+                "ambiguous",
+                "terminal_published",
+                "settled",
+            )
+        }
+        at_risk = sum(
+            (
+                record.cost_upper_bound
+                for record in dispatched
+                if record.state != "settled" or bool(record.usage_missing)
+            ),
+            start=Decimal("0"),
+        )
+        return Exp5LedgerUsageAudit(
+            current_provider_calls=len(current),
+            total_provider_calls=len(dispatched),
+            current_spend=current_spend,
+            current_spend_missing_reason=current_reason,
+            total_spend=total_spend,
+            total_spend_missing_reason=total_reason,
+            ambiguous_count=state_counts["ambiguous"],
+            usage_missing_count=sum(bool(record.usage_missing) for record in records),
+            cost_upper_bound_at_risk=at_risk,
+            state_counts=state_counts,
+            expected_provider_calls_by_condition=expected_by_condition,
+            current_provider_calls_by_condition=counts_by_condition(current),
+            total_provider_calls_by_condition=counts_by_condition(dispatched),
+            current_terminal_provider_calls_by_condition=counts_by_condition(
+                current_terminal
+            ),
+            total_terminal_provider_calls_by_condition=counts_by_condition(
+                total_terminal
+            ),
+            prepared_canonical_slots=tuple(self._slots),
+            current_terminal_slots=canonical_slots(current_terminal),
+            total_terminal_slots=canonical_slots(total_terminal),
+        )
+
+
+class DeferredPaperExp5LedgerRootCallbackFactory:
+    """在 formal evidence root 初始化后才创建 Exp5 的持久预算 ledger。"""
+
+    serialize_roots = False
+
+    def __init__(
+        self,
+        *,
+        ledger_path: str | Path,
+        full_prepared_inventory: Any,
+        coverage: Any,
+        ai_api_configs: Mapping[str, Any],
+    ) -> None:
+        self._ledger_path = ledger_path
+        self._full_prepared_inventory = full_prepared_inventory
+        self._coverage = coverage
+        self._ai_api_configs = dict(ai_api_configs)
+        self._factory: PaperExp5LedgerRootCallbackFactory | None = None
+        self._factory_lock = Lock()
+
+    def _resolved_factory(self) -> PaperExp5LedgerRootCallbackFactory:
+        with self._factory_lock:
+            if self._factory is None:
+                self._factory = PaperExp5LedgerRootCallbackFactory(
+                    ledger_path=self._ledger_path,
+                    full_prepared_inventory=self._full_prepared_inventory,
+                    coverage=self._coverage,
+                    ai_api_configs=self._ai_api_configs,
+                )
+            return self._factory
+
+    @property
+    def inventory_digest(self) -> str:
+        return self._resolved_factory().inventory_digest
+
+    def audit_usage(self) -> Exp5LedgerUsageAudit:
+        return self._resolved_factory().audit_usage()
+
+    def __call__(self, **root_context: Any) -> PaperOnlineProviderEvidenceCallback:
+        return self._resolved_factory()(**root_context)
 
 
 class PaperOnlineRootCallbackFactory:

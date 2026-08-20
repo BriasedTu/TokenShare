@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import base64
 from hashlib import sha256
 import json
 
@@ -13,6 +14,7 @@ from tokenshare.executors.ai_api_config import AIAPIProviderEntry, load_ai_api_c
 from tokenshare.executors.ai_api_request_identity import (
     PROMPT_ADMISSION_PROFILE_DIGEST,
     PROMPT_ADMISSION_PROFILE_ID,
+    PreparedOutboundRequest,
     PreparedOutboundRequestFactory,
     validate_prepared_request,
 )
@@ -59,6 +61,48 @@ def test_artifact_digest_and_wire_share_same_prepared_bytes_object() -> None:
     assert prepared.body_digest == f"sha256:{sha256(prepared.body_bytes).hexdigest()}"
     assert validate_prepared_request(prepared) is prepared
     assert prepared.normalized_absolute_endpoint == "https://api.example.test/v1/chat/completions"
+
+
+def test_prepared_outbound_request_persistence_is_strict_and_canonical() -> None:
+    prepared = _prepare()
+
+    persisted = prepared.to_dict()
+
+    assert PreparedOutboundRequest.from_dict(persisted) == prepared
+    assert persisted == prepared.to_dict()
+    with pytest.raises(ValueError, match="fields"):
+        PreparedOutboundRequest.from_dict({**persisted, "unexpected": True})
+    with pytest.raises(ValueError, match="sample_slot_index"):
+        PreparedOutboundRequest.from_dict(
+            {**persisted, "sample_slot_index": True}
+        )
+    with pytest.raises(ValueError, match="body bytes"):
+        PreparedOutboundRequest.from_dict(
+            {**persisted, "body_bytes_base64": persisted["body_bytes_base64"] + "="}
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("body_obj", {"model": "drift", "messages": []}, "body bytes"),
+        (
+            "body_bytes_base64",
+            base64.b64encode(b"{}").decode("ascii"),
+            "body bytes",
+        ),
+        ("inference_request_digest", "sha256:" + "0" * 64, "inference"),
+    ),
+)
+def test_prepared_outbound_request_persistence_rejects_identity_tamper(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    persisted = _prepare().to_dict()
+
+    with pytest.raises(ValueError, match=message):
+        PreparedOutboundRequest.from_dict({**persisted, field: value})
 
 
 def test_body_obj_bytes_digest_recompute_mismatch_fails_closed() -> None:

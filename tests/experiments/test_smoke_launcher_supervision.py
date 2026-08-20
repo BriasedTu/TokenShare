@@ -340,13 +340,13 @@ def test_exp5_v4_selection_and_smoke_digest_layers_are_distinct_and_bound() -> N
         semantic_selection_digest
     )
     assert semantic_profile_digest == (
-        "sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6"
+        "sha256:697b4218243a22f5fd2838bbc88baf7f6354491921970e4cf9beb0b5c1c37b1e"
     )
     assert "sha256:" + hashlib.sha256(canonical_profile).hexdigest() == (
         semantic_profile_digest
     )
     assert "sha256:" + hashlib.sha256(profile_bytes).hexdigest() == (
-        "sha256:8378ce5c5a3c76339344088a36f995eda5c862059b9c9eecf5e34347985de5df"
+        "sha256:2e6fb71c799339bff9bfded5ae3fd0a856c3d5066e7f3b8ffe40c0635b6bd67e"
     )
 
     # eb1a... 是 identity-only 输出对 8-item inventory 的 digest，不属于 v4 selection。

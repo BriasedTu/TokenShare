@@ -16,6 +16,7 @@ from tokenshare.plugins.lean_proof.environment import (
 from tokenshare.plugins.lean_proof.fixtures import default_lean_fixture_project_path
 from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
 from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.experiments.paper_faults import _false_negative_payload
 
 
 CREATED_AT = "2026-06-29T00:00:00Z"
@@ -146,6 +147,64 @@ def test_lean_checker_rejects_invalid_proof_and_persists_logs(tmp_path: Path) ->
     report_body = json.loads(store.read_bytes(report.report_ref).decode("utf-8"))
     assert report_body["status"] == "rejected"
     assert "error" in report_body["diagnostics"]["combined_excerpt"].lower()
+
+
+def test_lean_checker_rejects_schema_valid_false_negative_suppression(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    manifest = _environment_manifest()
+    theorem_payload = _theorem_payload(statement_source="1 = 1")
+    theorem_ref = store.save_json(
+        theorem_payload.to_dict(),
+        artifact_id="lean_theorem_false_negative",
+        artifact_type="LeanTheoremPayload",
+        artifact_schema_id="lean_proof.theorem_payload",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={"theorem_name": "one_eq_one"},
+        created_at=CREATED_AT,
+    )
+    original = {
+        "schema_version": "lean_proof.proof_candidate.v1",
+        "proof_candidate_id": "proof_candidate:false_negative",
+        "theorem_payload_digest": theorem_payload.payload_digest,
+        "proof_source": "by\n  rfl",
+        "created_at": CREATED_AT,
+    }
+    mutated = _false_negative_payload(original)
+    assert mutated["proof_source"]
+    assert mutated["proof_source"] != original["proof_source"]
+    assert mutated["proof_suppressed"] is True
+    proof_ref = store.save_json(
+        mutated,
+        artifact_id="proof_candidate_false_negative",
+        artifact_type="LeanProofCandidate",
+        artifact_schema_id="lean_proof.proof_candidate",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={"theorem_name": "one_eq_one"},
+        created_at=CREATED_AT,
+    )
+
+    report = check_lean_proof(
+        LeanCheckerRequest(
+            request_id="lean_checker_request:false_negative",
+            theorem_payload_ref=theorem_ref,
+            proof_candidate_ref=proof_ref,
+            environment_ref=build_lean_environment_ref(manifest),
+            checker_mode=LeanCheckerMode.DIRECT_PROOF,
+            timeout_seconds=30,
+            max_output_bytes=65536,
+            created_at=CREATED_AT,
+        ),
+        artifact_store=store,
+        environment_manifest=manifest,
+    )
+
+    assert report.status == LeanCheckerStatus.REJECTED
+    assert report.exit_code != 0
+    assert report.proof_artifact_ref is None
 
 
 def test_lean_checker_rejects_sorry_even_when_lean_returns_zero(tmp_path: Path) -> None:

@@ -1037,7 +1037,11 @@ class PreparedTraceDelivery:
     source_terminal_kind: Literal["success", "provider_failure"]
     source_bank_object_locators: tuple[Mapping[str, object], ...]
     logical_start_ms: int
-    source_latency_ms: int
+    source_api_latency_ms: int | None
+    source_api_latency_missing: bool
+    source_api_latency_missing_count: int
+    source_api_latency_ref: str
+    protocol_operational_delay_ms: int
     logical_finish_ms: int
     parser_input_media_type: str
     parser_input_digest: str
@@ -1046,7 +1050,10 @@ class PreparedTraceDelivery:
     delivery_digest: str
 
     def __post_init__(self) -> None:
-        if self.schema_version != "PreparedTraceDelivery.v1":
+        if self.schema_version not in {
+            "PreparedTraceDelivery.v1",
+            "PreparedTraceDelivery.v2",
+        }:
             raise ValueError("unsupported prepared trace delivery schema")
         for field_name in (
             "current_run_id",
@@ -1057,6 +1064,7 @@ class PreparedTraceDelivery:
             "entry_id",
             "parser_input_media_type",
             "child_worker_id",
+            "source_api_latency_ref",
         ):
             _require_non_empty_string(field_name, getattr(self, field_name))
         for field_name in (
@@ -1069,15 +1077,43 @@ class PreparedTraceDelivery:
         for field_name in (
             "attempt_ordinal",
             "logical_start_ms",
-            "source_latency_ms",
+            "source_api_latency_missing_count",
+            "protocol_operational_delay_ms",
             "logical_finish_ms",
             "child_completion_sequence",
         ):
             _require_exact_int(field_name, getattr(self, field_name), minimum=0)
+        if not isinstance(self.source_api_latency_missing, bool):
+            raise TypeError("source_api_latency_missing must be a boolean")
+        if self.source_api_latency_ms is None:
+            if not self.source_api_latency_missing:
+                raise ValueError("missing source API latency must be explicit")
+            if self.source_api_latency_missing_count not in {0, 1}:
+                raise ValueError("source API latency missing count must be zero or one")
+        else:
+            _require_exact_int(
+                "source_api_latency_ms", self.source_api_latency_ms, minimum=0
+            )
+            if self.source_api_latency_missing:
+                raise ValueError("observed source API latency cannot be marked missing")
+            if self.source_api_latency_missing_count != 0:
+                raise ValueError("observed source API latency has no missing count")
         if self.source_terminal_kind not in {"success", "provider_failure"}:
             raise ValueError("source_terminal_kind is unsupported")
-        if self.logical_finish_ms != self.logical_start_ms + self.source_latency_ms:
-            raise ValueError("logical_finish_ms must equal start plus latency")
+        if (
+            self.logical_finish_ms
+            != self.logical_start_ms + self.protocol_operational_delay_ms
+        ):
+            raise ValueError(
+                "logical_finish_ms must equal start plus protocol operational delay"
+            )
+        if self.schema_version == "PreparedTraceDelivery.v1" and (
+            self.source_api_latency_ms is None
+            or self.source_api_latency_missing
+            or self.source_api_latency_missing_count != 0
+            or self.protocol_operational_delay_ms != self.source_api_latency_ms
+        ):
+            raise ValueError("legacy prepared trace delivery requires observed latency")
         locators = _freeze_trace_locators(
             self.source_bank_object_locators,
             bank_root_id=self.bank_root_id,
@@ -1088,6 +1124,12 @@ class PreparedTraceDelivery:
         expected = _json_digest(self._digest_body())
         if self.delivery_digest != expected:
             raise ValueError("prepared trace delivery_digest mismatch")
+
+    @property
+    def source_latency_ms(self) -> int:
+        """兼容旧调度器；该值只表示current protocol的operational delay。"""
+
+        return self.protocol_operational_delay_ms
 
     def __reduce__(self):
         """跨process时通过规范JSON形态重建，避免序列化只读mapping view。"""
@@ -1111,12 +1153,48 @@ class PreparedTraceDelivery:
         source_terminal_kind: Literal["success", "provider_failure"],
         source_bank_object_locators: tuple[Mapping[str, object], ...],
         logical_start_ms: int,
-        source_latency_ms: int,
+        source_latency_ms: int | None = None,
+        source_api_latency_ms: int | None = None,
+        source_api_latency_missing: bool | None = None,
+        source_api_latency_missing_count: int | None = None,
+        source_api_latency_ref: str | None = None,
+        protocol_operational_delay_ms: int | None = None,
         parser_input_media_type: str,
         parser_input_digest: str,
         child_worker_id: str,
         child_completion_sequence: int,
     ) -> "PreparedTraceDelivery":
+        legacy_shape = (
+            source_latency_ms is not None
+            and source_api_latency_ms is None
+            and source_api_latency_missing is None
+            and source_api_latency_missing_count is None
+            and source_api_latency_ref is None
+            and protocol_operational_delay_ms is None
+        )
+        if source_latency_ms is not None:
+            if (
+                source_api_latency_ms is not None
+                and source_api_latency_ms != source_latency_ms
+            ):
+                raise ValueError("legacy and observed source latency disagree")
+            source_api_latency_ms = source_latency_ms
+        if source_api_latency_missing is None:
+            source_api_latency_missing = source_api_latency_ms is None
+        if source_api_latency_missing_count is None:
+            source_api_latency_missing_count = (
+                1 if source_api_latency_missing else 0
+            )
+        if source_api_latency_ref is None:
+            source_api_latency_ref = (
+                f"response-bank:{bank_root_id}:{entry_id}:latency"
+            )
+        if protocol_operational_delay_ms is None:
+            if source_api_latency_ms is None:
+                raise ValueError(
+                    "missing source API latency requires protocol operational delay"
+                )
+            protocol_operational_delay_ms = source_api_latency_ms
         locators = _freeze_trace_locators(
             source_bank_object_locators,
             bank_root_id=bank_root_id,
@@ -1124,7 +1202,11 @@ class PreparedTraceDelivery:
             entry_id=entry_id,
         )
         body: JsonObject = {
-            "schema_version": "PreparedTraceDelivery.v1",
+            "schema_version": (
+                "PreparedTraceDelivery.v1"
+                if legacy_shape
+                else "PreparedTraceDelivery.v2"
+            ),
             "current_run_id": current_run_id,
             "task_id": task_id,
             "unit_id": unit_id,
@@ -1138,20 +1220,49 @@ class PreparedTraceDelivery:
             "source_terminal_kind": source_terminal_kind,
             "source_bank_object_locators": [dict(item) for item in locators],
             "logical_start_ms": logical_start_ms,
-            "source_latency_ms": source_latency_ms,
-            "logical_finish_ms": logical_start_ms + source_latency_ms,
-            "parser_input_media_type": parser_input_media_type,
-            "parser_input_digest": parser_input_digest,
-            "child_worker_id": child_worker_id,
-            "child_completion_sequence": child_completion_sequence,
         }
+        if legacy_shape:
+            body["source_latency_ms"] = source_api_latency_ms
+        else:
+            body.update(
+                {
+                    "source_api_latency_ms": source_api_latency_ms,
+                    "source_api_latency_missing": source_api_latency_missing,
+                    "source_api_latency_missing_count": (
+                        source_api_latency_missing_count
+                    ),
+                    "source_api_latency_ref": source_api_latency_ref,
+                    "protocol_operational_delay_ms": protocol_operational_delay_ms,
+                }
+            )
+        body.update(
+            {
+                "logical_finish_ms": (
+                    logical_start_ms + protocol_operational_delay_ms
+                ),
+                "parser_input_media_type": parser_input_media_type,
+                "parser_input_digest": parser_input_digest,
+                "child_worker_id": child_worker_id,
+                "child_completion_sequence": child_completion_sequence,
+            }
+        )
         constructor = dict(body)
+        constructor.pop("source_latency_ms", None)
+        constructor.update(
+            {
+                "source_api_latency_ms": source_api_latency_ms,
+                "source_api_latency_missing": source_api_latency_missing,
+                "source_api_latency_missing_count": source_api_latency_missing_count,
+                "source_api_latency_ref": source_api_latency_ref,
+                "protocol_operational_delay_ms": protocol_operational_delay_ms,
+            }
+        )
         constructor["source_bank_object_locators"] = locators
         return cls(**constructor, delivery_digest=_json_digest(body))
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "PreparedTraceDelivery":
-        expected = {
+        common = {
             "schema_version",
             "current_run_id",
             "task_id",
@@ -1166,7 +1277,6 @@ class PreparedTraceDelivery:
             "source_terminal_kind",
             "source_bank_object_locators",
             "logical_start_ms",
-            "source_latency_ms",
             "logical_finish_ms",
             "parser_input_media_type",
             "parser_input_digest",
@@ -1174,8 +1284,34 @@ class PreparedTraceDelivery:
             "child_completion_sequence",
             "delivery_digest",
         }
+        schema_version = value.get("schema_version")
+        if schema_version == "PreparedTraceDelivery.v1":
+            expected = common | {"source_latency_ms"}
+        elif schema_version == "PreparedTraceDelivery.v2":
+            expected = common | {
+                "source_api_latency_ms",
+                "source_api_latency_missing",
+                "source_api_latency_missing_count",
+                "source_api_latency_ref",
+                "protocol_operational_delay_ms",
+            }
+        else:
+            raise ValueError("unsupported prepared trace delivery schema")
         _require_exact_keys(value, expected, "prepared trace delivery")
         body = dict(value)
+        if schema_version == "PreparedTraceDelivery.v1":
+            source_latency_ms = body.pop("source_latency_ms")
+            body.update(
+                {
+                    "source_api_latency_ms": source_latency_ms,
+                    "source_api_latency_missing": False,
+                    "source_api_latency_missing_count": 0,
+                    "source_api_latency_ref": (
+                        f"response-bank:{body['bank_root_id']}:{body['entry_id']}:latency"
+                    ),
+                    "protocol_operational_delay_ms": source_latency_ms,
+                }
+            )
         body["source_bank_object_locators"] = tuple(
             body["source_bank_object_locators"]
         )
@@ -1206,7 +1342,36 @@ class PreparedTraceDelivery:
             source_terminal_kind=self.source_terminal_kind,
             source_bank_object_locators=self.source_bank_object_locators,
             logical_start_ms=self.logical_start_ms,
-            source_latency_ms=self.source_latency_ms,
+            source_latency_ms=(
+                self.source_api_latency_ms
+                if self.schema_version == "PreparedTraceDelivery.v1"
+                else None
+            ),
+            source_api_latency_ms=(
+                None
+                if self.schema_version == "PreparedTraceDelivery.v1"
+                else self.source_api_latency_ms
+            ),
+            source_api_latency_missing=(
+                None
+                if self.schema_version == "PreparedTraceDelivery.v1"
+                else self.source_api_latency_missing
+            ),
+            source_api_latency_missing_count=(
+                None
+                if self.schema_version == "PreparedTraceDelivery.v1"
+                else self.source_api_latency_missing_count
+            ),
+            source_api_latency_ref=(
+                None
+                if self.schema_version == "PreparedTraceDelivery.v1"
+                else self.source_api_latency_ref
+            ),
+            protocol_operational_delay_ms=(
+                None
+                if self.schema_version == "PreparedTraceDelivery.v1"
+                else self.protocol_operational_delay_ms
+            ),
             parser_input_media_type=self.parser_input_media_type,
             parser_input_digest=self.parser_input_digest,
             child_worker_id=child_worker_id,
@@ -1214,7 +1379,7 @@ class PreparedTraceDelivery:
         )
 
     def to_dict(self) -> JsonObject:
-        return {
+        body: JsonObject = {
             "schema_version": self.schema_version,
             "current_run_id": self.current_run_id,
             "task_id": self.task_id,
@@ -1231,14 +1396,34 @@ class PreparedTraceDelivery:
                 dict(item) for item in self.source_bank_object_locators
             ],
             "logical_start_ms": self.logical_start_ms,
-            "source_latency_ms": self.source_latency_ms,
-            "logical_finish_ms": self.logical_finish_ms,
-            "parser_input_media_type": self.parser_input_media_type,
-            "parser_input_digest": self.parser_input_digest,
-            "child_worker_id": self.child_worker_id,
-            "child_completion_sequence": self.child_completion_sequence,
-            "delivery_digest": self.delivery_digest,
         }
+        if self.schema_version == "PreparedTraceDelivery.v1":
+            body["source_latency_ms"] = self.source_api_latency_ms
+        else:
+            body.update(
+                {
+                    "source_api_latency_ms": self.source_api_latency_ms,
+                    "source_api_latency_missing": self.source_api_latency_missing,
+                    "source_api_latency_missing_count": (
+                        self.source_api_latency_missing_count
+                    ),
+                    "source_api_latency_ref": self.source_api_latency_ref,
+                    "protocol_operational_delay_ms": (
+                        self.protocol_operational_delay_ms
+                    ),
+                }
+            )
+        body.update(
+            {
+                "logical_finish_ms": self.logical_finish_ms,
+                "parser_input_media_type": self.parser_input_media_type,
+                "parser_input_digest": self.parser_input_digest,
+                "child_worker_id": self.child_worker_id,
+                "child_completion_sequence": self.child_completion_sequence,
+                "delivery_digest": self.delivery_digest,
+            }
+        )
+        return body
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -59,6 +59,70 @@ def test_tracked_contract_loads_against_current_pipeline_profile() -> None:
     assert contract.pipeline_profile_digest == profile.profile_digest
 
 
+def test_exp1_contract_freezes_online_and_trace_role_routes() -> None:
+    contract = load_paper_metric_contract()
+    table = contract.require_table("exp1_feasibility")
+    metric = contract.require_metric("exp1_feasibility", "completion_rate")
+
+    assert table.evidence_classes == (
+        "online_real_provider",
+        "real_model_trace_protocol_run",
+    )
+    assert metric.evidence_classes == table.evidence_classes
+    assert metric.required_current_provider_roles == ()
+    assert metric.required_source_bank_roles == ()
+    assert metric.required_roles_for("online_real_provider") == (
+        ONLINE_ROLES,
+        (),
+    )
+    assert metric.required_roles_for("real_model_trace_protocol_run") == (
+        (),
+        TRACE_ROLES,
+    )
+    with pytest.raises(ValueError, match="unsupported metric evidence class"):
+        metric.required_roles_for("unknown_evidence")
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    (
+        ("route_role_drift", "evidence role route matrix drift"),
+        ("metric_class_drift", "metric evidence class differs from table"),
+        ("flat_role_reintroduced", "mixed evidence role matrix drift"),
+        ("unknown_table_class", "unsupported evidence class for table"),
+    ),
+)
+def test_exp1_mixed_evidence_contract_mutations_fail_closed(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    body = _contract_body()
+    table = next(
+        item for item in body["tables"] if item["table_id"] == "exp1_feasibility"
+    )
+    metric = next(
+        item
+        for item in body["metrics"]
+        if item["table"] == "exp1_feasibility"
+        and item["metric_id"] == "completion_rate"
+    )
+    if mutation == "route_role_drift":
+        table["evidence_role_routes"][1]["required_source_bank_roles"].pop()
+    elif mutation == "metric_class_drift":
+        metric["evidence_classes"] = ["online_real_provider"]
+    elif mutation == "flat_role_reintroduced":
+        metric["required_current_provider_roles"] = list(ONLINE_ROLES)
+    else:
+        table["evidence_classes"].append("unknown_evidence")
+    _reseal(body)
+    path = tmp_path / f"{mutation}.json"
+    _write(path, body)
+
+    with pytest.raises(ValueError, match=expected_error):
+        load_paper_metric_contract(path)
+
+
 EXPECTED_TABLE_FIELDS = {
     "exp1_feasibility": (
         "preregistered_root_count",
@@ -413,11 +477,13 @@ GOLDEN_EXTRA_NULL_POLICIES = """
 incomplete_pair|null_and_publish_blocked|incomplete_pair|exp2_trace_scalability.trace_replay_paired_speedup exp2_trace_scalability.trace_replay_parallel_efficiency exp2_trace_scalability.paired_trace_token_multiplier exp2_trace_scalability.paired_trace_cost_multiplier exp2_trace_scalability.paired_speedup_eligible_pair_count exp2_trace_scalability.paired_speedup_ineligible_pair_count exp2_trace_scalability.trace_replay_paired_speedup_median exp4_ablation.paired_root_count exp4_ablation.full_success_ablation_success exp4_ablation.full_success_ablation_failure exp4_ablation.full_failure_ablation_success exp4_ablation.full_failure_ablation_failure exp4_ablation.end_to_end_success_loss_vs_full exp4_ablation.completion_loss_vs_full exp4_ablation.trace_replay_wall_clock_delta_vs_full exp4_ablation.trace_attributed_token_delta_vs_full exp4_ablation.trace_attributed_cost_delta_vs_full exp4_ablation.independently_labeled_invalid_candidate_count exp4_ablation.wrong_canonical_acceptance_count exp4_ablation.wrong_canonical_acceptance_rate exp4_ablation.raw_only_exposure_count exp4_ablation.raw_only_acceptance_count exp4_ablation.raw_only_acceptance_rate exp4_ablation.stuck_task_count exp4_ablation.stuck_task_rate exp4_ablation.premature_merge_attempt_count exp4_ablation.premature_merge_failure_count exp4_ablation.premature_merge_failure_rate
 insufficient_values|null_and_publish_blocked|insufficient_values|exp2_trace_scalability.trace_replay_paired_speedup_median exp2_trace_scalability.trace_replay_paired_speedup_repeat_min exp2_trace_scalability.trace_replay_paired_speedup_repeat_max exp3_trace_robustness.kill_progress_error_signed_mean_pp exp3_trace_robustness.kill_progress_error_signed_max_pp exp5_resources.model_wall_clock_median_ms exp5_resources.model_wall_clock_min_ms exp5_resources.model_wall_clock_max_ms exp5_resources.model_wall_clock_range_ms
 membership_excluded|null_with_recorded_exclusion|membership_excluded|exp1_feasibility.failure_root_count exp2_trace_scalability.trace_replay_paired_speedup exp2_trace_scalability.trace_replay_parallel_efficiency exp2_trace_scalability.paired_trace_token_multiplier exp2_trace_scalability.paired_trace_cost_multiplier exp2_trace_scalability.paired_speedup_eligible_pair_count exp2_trace_scalability.paired_speedup_ineligible_pair_count exp2_trace_scalability.trace_replay_paired_speedup_median exp2_trace_scalability.trace_replay_paired_speedup_repeat_min exp2_trace_scalability.trace_replay_paired_speedup_repeat_max exp2_trace_scalability.trace_replay_paired_speedup_relative_difference exp3_trace_robustness.controlled_wrong_candidate_count exp3_trace_robustness.controlled_wrong_candidate_interception_count exp3_trace_robustness.controlled_wrong_candidate_interception_rate exp3_trace_robustness.controlled_wrong_candidate_escape_count exp3_trace_robustness.controlled_wrong_candidate_escape_rate exp3_trace_robustness.started_replacement_attempt_count exp3_trace_robustness.successful_replacement_attempt_count exp3_trace_robustness.replacement_attempt_success_rate exp3_trace_robustness.reassignment_count exp3_trace_robustness.trace_replay_wall_clock_overhead_ms exp3_trace_robustness.trace_attributed_token_overhead exp3_trace_robustness.trace_attributed_cost_overhead exp3_online_recovery.replacement_chain_count exp3_online_recovery.worker_death_reassignment_chain_count exp3_online_recovery.wasted_actual_tokens exp4_ablation.paired_root_count exp4_ablation.full_success_ablation_success exp4_ablation.full_success_ablation_failure exp4_ablation.full_failure_ablation_success exp4_ablation.full_failure_ablation_failure exp4_ablation.end_to_end_success_loss_vs_full exp4_ablation.completion_loss_vs_full exp4_ablation.trace_replay_wall_clock_delta_vs_full exp4_ablation.trace_attributed_token_delta_vs_full exp4_ablation.trace_attributed_cost_delta_vs_full exp4_ablation.independently_labeled_invalid_candidate_count exp4_ablation.wrong_canonical_acceptance_count exp4_ablation.wrong_canonical_acceptance_rate exp4_ablation.raw_only_exposure_count exp4_ablation.raw_only_acceptance_count exp4_ablation.raw_only_acceptance_rate exp4_ablation.stuck_task_count exp4_ablation.stuck_task_rate exp4_ablation.premature_merge_attempt_count exp4_ablation.premature_merge_failure_count exp4_ablation.premature_merge_failure_rate exp5_quality.first_attempt_provider_transport_failure_count exp5_quality.first_attempt_parse_schema_unusable_count exp5_quality.first_attempt_verification_checker_rejection_count
+inconsistent_worker_time_evidence|null_and_publish_blocked|inconsistent_worker_time_evidence|exp2_trace_scalability.worker_utilization
 not_applicable|null_with_explicit_reason|not_applicable|exp1_feasibility.no_final_failure_count exp1_feasibility.incorrect_final_failure_count exp1_feasibility.infra_invalid_failure_count exp2_trace_scalability.paired_speedup_planned_pair_count exp5_resources.repeat0_wall_clock_ms exp5_resources.repeat1_wall_clock_ms exp5_resources.repeat2_wall_clock_ms
 not_applicable|null_with_explicit_reason|not_applicable_non_false_positive|exp3_trace_robustness.controlled_wrong_candidate_count exp3_trace_robustness.controlled_wrong_candidate_interception_count exp3_trace_robustness.controlled_wrong_candidate_interception_rate exp3_trace_robustness.controlled_wrong_candidate_escape_count exp3_trace_robustness.controlled_wrong_candidate_escape_rate
 not_applicable|null_with_explicit_reason|not_applicable_rate_fault|exp3_trace_robustness.kill_progress_error_pp exp3_trace_robustness.kill_progress_error_signed_mean_pp exp3_trace_robustness.kill_progress_error_signed_max_pp exp3_trace_robustness.recovered_valid_canonical_required_slots exp3_trace_robustness.preregistered_required_slots exp3_trace_robustness.result_completeness_rate
 not_applicable|null_with_explicit_reason|not_applicable_wrong_mode|exp4_ablation.paired_root_count exp4_ablation.full_success_ablation_success exp4_ablation.full_success_ablation_failure exp4_ablation.full_failure_ablation_success exp4_ablation.full_failure_ablation_failure exp4_ablation.end_to_end_success_loss_vs_full exp4_ablation.completion_loss_vs_full exp4_ablation.trace_replay_wall_clock_delta_vs_full exp4_ablation.trace_attributed_token_delta_vs_full exp4_ablation.trace_attributed_cost_delta_vs_full exp4_ablation.independently_labeled_invalid_candidate_count exp4_ablation.wrong_canonical_acceptance_count exp4_ablation.wrong_canonical_acceptance_rate exp4_ablation.raw_only_exposure_count exp4_ablation.raw_only_acceptance_count exp4_ablation.raw_only_acceptance_rate exp4_ablation.stuck_task_count exp4_ablation.stuck_task_rate exp4_ablation.premature_merge_attempt_count exp4_ablation.premature_merge_failure_count exp4_ablation.premature_merge_failure_rate
-zero_denominator|null_and_publish_blocked|zero_denominator|exp1_feasibility.completion_rate exp1_feasibility.end_to_end_verified_success_rate exp2_trace_scalability.completion_rate exp2_trace_scalability.end_to_end_verified_success_rate exp2_trace_scalability.trace_replay_paired_speedup exp2_trace_scalability.trace_replay_parallel_efficiency exp2_trace_scalability.paired_trace_token_multiplier exp2_trace_scalability.paired_trace_cost_multiplier exp2_trace_scalability.trace_replay_paired_speedup_median exp2_trace_scalability.trace_replay_paired_speedup_relative_difference exp2_trace_scalability.worker_utilization exp2_online_concurrency.completion_rate exp2_online_concurrency.end_to_end_verified_success_rate exp2_online_concurrency.provider_429_or_timeout_union_fraction exp3_trace_robustness.completion_rate exp3_trace_robustness.end_to_end_verified_success_rate exp3_trace_robustness.controlled_wrong_candidate_interception_rate exp3_trace_robustness.controlled_wrong_candidate_escape_rate exp3_trace_robustness.result_completeness_rate exp3_online_recovery.completion_rate exp3_online_recovery.end_to_end_verified_success_rate exp4_ablation.completion_rate exp4_ablation.end_to_end_verified_success_rate exp5_quality.completion_rate exp5_quality.end_to_end_verified_success_rate exp5_quality.first_attempt_nonpass_rate exp5_quality.first_attempt_verification_rejection_rate exp5_resources.first_attempt_call_coverage
+zero_denominator|null_and_publish_blocked|zero_denominator|exp1_feasibility.completion_rate exp1_feasibility.end_to_end_verified_success_rate exp2_trace_scalability.completion_rate exp2_trace_scalability.end_to_end_verified_success_rate exp2_trace_scalability.trace_replay_paired_speedup exp2_trace_scalability.trace_replay_parallel_efficiency exp2_trace_scalability.paired_trace_token_multiplier exp2_trace_scalability.paired_trace_cost_multiplier exp2_trace_scalability.trace_replay_paired_speedup_median exp2_trace_scalability.trace_replay_paired_speedup_relative_difference exp2_online_concurrency.completion_rate exp2_online_concurrency.end_to_end_verified_success_rate exp2_online_concurrency.provider_429_or_timeout_union_fraction exp3_trace_robustness.completion_rate exp3_trace_robustness.end_to_end_verified_success_rate exp3_trace_robustness.controlled_wrong_candidate_interception_rate exp3_trace_robustness.controlled_wrong_candidate_escape_rate exp3_trace_robustness.result_completeness_rate exp3_online_recovery.completion_rate exp3_online_recovery.end_to_end_verified_success_rate exp4_ablation.completion_rate exp4_ablation.end_to_end_verified_success_rate exp5_quality.completion_rate exp5_quality.end_to_end_verified_success_rate exp5_quality.first_attempt_nonpass_rate exp5_quality.first_attempt_verification_rejection_rate exp5_resources.first_attempt_call_coverage
+zero_denominator|null_with_explicit_reason|zero_denominator|exp2_trace_scalability.worker_utilization
 zero_denominator|null_with_explicit_reason|not_applicable_no_started_replacement|exp3_trace_robustness.replacement_attempt_success_rate
 zero_denominator|null_with_explicit_reason|zero_denominator|exp4_ablation.wrong_canonical_acceptance_rate exp4_ablation.raw_only_acceptance_rate exp4_ablation.stuck_task_rate exp4_ablation.premature_merge_failure_rate
 """.strip()
@@ -666,7 +732,10 @@ def _execution_bundle_for_metric(
         for item in body["metrics"]
         if item["table"] == table_id and item["metric_id"] == metric_id
     )
-    row_facts = {"infra_invalid": False}
+    row_facts = {
+        "infra_invalid": False,
+        "evidence_class": metric["evidence_classes"][0],
+    }
     row_gate = next(
         item
         for item in body["memberships"]
@@ -1034,6 +1103,65 @@ def test_recompute_accepts_only_one_nonempty_observation_bundle() -> None:
     assert blocked.reason == "empty_observation_bundle"
 
 
+@pytest.mark.parametrize(
+    "metric_id",
+    (
+        "trace_replay_paired_speedup_repeat_min",
+        "trace_replay_paired_speedup_repeat_max",
+        "trace_replay_paired_speedup_relative_difference",
+    ),
+)
+def test_exp2_condition_repeat_null_distinguishes_exclusion_from_missing_evidence(
+    metric_id: str,
+) -> None:
+    contract = load_paper_metric_contract()
+    root = {
+        "member_kind": "preregistered_root",
+        "preregistered_root_run_id": "root-1",
+        "final_result_reference_complete": True,
+        "end_to_end_verified_success": False,
+    }
+    excluded = recompute_metric(
+        contract,
+        "exp2_trace_scalability",
+        metric_id,
+        row_kind="condition_summary",
+        bundle=_bundle(
+            member_facts={
+                "root-1": root,
+                "repeat-1": {
+                    "member_kind": "exp2_repeat_speedup_exclusion",
+                    "closed_exclusion_reason": "membership_excluded",
+                    "lineage_root_run_ids": ("root-1",),
+                },
+            }
+        ),
+    )
+    assert excluded.value is None
+    assert excluded.reason == "membership_excluded"
+    assert excluded.publish_blocked is False
+
+    blocked = recompute_metric(
+        contract,
+        "exp2_trace_scalability",
+        metric_id,
+        row_kind="condition_summary",
+        bundle=_bundle(
+            member_facts={
+                "root-1": root,
+                "repeat-1": {
+                    "member_kind": "exp2_repeat_speedup_summary",
+                    "upstream_blocked_reason": "missing_repeat_speedup_evidence",
+                    "lineage_root_run_ids": ("root-1",),
+                },
+            }
+        ),
+    )
+    assert blocked.value is None
+    assert blocked.reason == "missing_required_member_evidence"
+    assert blocked.publish_blocked is True
+
+
 def test_bundle_rejects_empty_duplicate_unbound_or_shared_member_facts() -> None:
     with pytest.raises(ValueError, match="non-empty string"):
         MetricObservationBundle(
@@ -1135,6 +1263,7 @@ def test_count_observation_rejects_negative_float_and_bool(value: Any) -> None:
 def test_proportion_rejects_numerator_greater_than_denominator() -> None:
     contract = load_paper_metric_contract()
     bundle = _bundle(
+        row_facts={"evidence_class": "online_real_provider"},
         observations=(
             _observation("exp1_feasibility", "final_result_root_count", 7),
             _observation("exp1_feasibility", "preregistered_root_count", 4),
@@ -1720,6 +1849,7 @@ def test_exp1_enclosing_elapsed_usage_and_failure_partition_block_on_missing_evi
             "paper_difficulty": "hard",
             "topic_family": None,
             "repeat_id": 0,
+            "evidence_class": "online_real_provider",
         },
         member_facts=members,
         observations=observations,
@@ -1746,7 +1876,11 @@ def test_exp1_enclosing_elapsed_usage_and_failure_partition_block_on_missing_evi
         "exp1_feasibility",
         "actual_total_tokens",
         row_kind="condition_summary",
-        bundle=_bundle(member_facts=partial, observations=observations),
+        bundle=_bundle(
+            row_facts={"evidence_class": "online_real_provider"},
+            member_facts=partial,
+            observations=observations,
+        ),
     )
     assert missing_usage.value is None and missing_usage.publish_blocked
 
@@ -1757,7 +1891,11 @@ def test_exp1_enclosing_elapsed_usage_and_failure_partition_block_on_missing_evi
         "exp1_feasibility",
         "actual_total_tokens",
         row_kind="condition_summary",
-        bundle=_bundle(member_facts=missing_roles, observations=observations),
+        bundle=_bundle(
+            row_facts={"evidence_class": "online_real_provider"},
+            member_facts=missing_roles,
+            observations=observations,
+        ),
     )
     assert role_blocked.value is None and role_blocked.publish_blocked
     assert role_blocked.reason == "missing_current_provider_roles:attempt-2"
@@ -1769,7 +1907,11 @@ def test_exp1_enclosing_elapsed_usage_and_failure_partition_block_on_missing_evi
         "exp1_feasibility",
         "actual_end_to_end_wall_clock_ms",
         row_kind="condition_summary",
-        bundle=_bundle(member_facts=missing_time, observations=observations),
+        bundle=_bundle(
+            row_facts={"evidence_class": "online_real_provider"},
+            member_facts=missing_time,
+            observations=observations,
+        ),
     )
     assert elapsed.value is None and elapsed.publish_blocked
 
@@ -1779,7 +1921,10 @@ def test_exp1_enclosing_elapsed_usage_and_failure_partition_block_on_missing_evi
         "failure_root_count",
         row_kind="condition_summary",
         bundle=_bundle(
-            row_facts={"infra_invalid": True},
+            row_facts={
+                "infra_invalid": True,
+                "evidence_class": "online_real_provider",
+            },
             member_facts=members,
             observations=observations,
         ),
@@ -2180,7 +2325,14 @@ def test_heterogeneous_bundle_preserves_root_candidate_attempt_and_slot_identity
             metric_id,
             row_kind=row_kind,
             bundle=_bundle(
-                row_facts={"fault_type": fault_type} if fault_type else {},
+                row_facts={
+                    **({"fault_type": fault_type} if fault_type else {}),
+                    **(
+                        {"evidence_class": "online_real_provider"}
+                        if table_id == "exp1_feasibility"
+                        else {}
+                    ),
+                },
                 member_facts=facts,
             ),
         )
@@ -2280,6 +2432,7 @@ def test_observation_alignment_and_metric_output_decisions_are_immutable() -> No
         "completion_rate",
         row_kind="condition_summary",
         bundle=_bundle(
+            row_facts={"evidence_class": "online_real_provider"},
             observations=(
                 wrong_row,
                 _observation("exp1_feasibility", "final_result_root_count", 1),
@@ -2304,6 +2457,7 @@ def test_observation_alignment_and_metric_output_decisions_are_immutable() -> No
         "completion_rate",
         row_kind="condition_summary",
         bundle=_bundle(
+            row_facts={"evidence_class": "online_real_provider"},
             observations=(
                 wrong_domain,
                 _observation("exp1_feasibility", "final_result_root_count", 1),
@@ -2562,7 +2716,10 @@ def test_exp1_failure_root_is_independent_and_unclassified_failure_blocks_partit
         "exp1_feasibility",
         "failure_root_count",
         row_kind="condition_summary",
-        bundle=_bundle(member_facts={"root": unclassified}),
+        bundle=_bundle(
+            row_facts={"evidence_class": "online_real_provider"},
+            member_facts={"root": unclassified},
+        ),
     )
     assert result.value is None and result.publish_blocked
 

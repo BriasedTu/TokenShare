@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from dataclasses import replace
 
 import pytest
 
+from tokenshare.experiments import paper_exp2_metrics
 from tests.experiments.test_paper_direct_results import (
     _canonical_fixture,
     _catalog,
@@ -30,7 +32,10 @@ from tokenshare.experiments.paper_exp2_metrics import (
     build_exp2_online_observations,
     build_exp2_trace_observations,
 )
-from tokenshare.experiments.paper_metric_contract import load_paper_metric_contract
+from tokenshare.experiments.paper_metric_contract import (
+    capture_metric_computation_traces,
+    load_paper_metric_contract,
+)
 
 
 def _direct_row(
@@ -230,9 +235,87 @@ def test_speedup_requires_same_case_repeat_success_positive_times(tmp_path) -> N
     assert summary.require_cell("trace_replay_paired_speedup_relative_difference").value == Decimal("0.5")
 
 
+def test_pair_and_condition_summary_carry_exact_trace_lineage_aliases(tmp_path) -> None:
+    roots = tuple(
+        replace(
+            root,
+            trace_consumptions=tuple(
+                replace(
+                    value,
+                    source_bank_entry_id=f"entry:{value.consumption_id}",
+                )
+                for value in root.trace_consumptions or ()
+            ),
+        )
+        for root in (
+            *_trace_pair(tmp_path),
+            *_trace_pair(tmp_path, compared_ms=300, repeat=1),
+        )
+    )
+    contract = load_paper_metric_contract()
+
+    with capture_metric_computation_traces() as traces:
+        build_exp2_trace_observations(roots, contract)
+
+    pair_trace = next(
+        value
+        for value in traces
+        if value.row_kind == "paired_worker_comparison"
+        and value.metric_id == "trace_replay_paired_speedup"
+        and value.bundle.member_facts_by_id[next(
+            member_id
+            for member_id in value.bundle.member_ids
+            if value.bundle.member_facts_by_id[member_id].get("member_kind")
+            == "exp2_preregistered_pair"
+        )]["baseline_repeat_id"]
+        == 0
+    )
+    pair_fact = next(
+        facts
+        for facts in pair_trace.bundle.member_facts_by_id.values()
+        if facts.get("member_kind") == "exp2_preregistered_pair"
+    )
+    assert pair_fact["lineage_root_run_ids"] == ("trace:w1", "trace:w3")
+    assert pair_fact["source_bank_entry_ids"] == (
+        "entry:consumption:trace:w1",
+        "entry:consumption:trace:w3",
+    )
+
+    condition_trace = next(
+        value
+        for value in traces
+        if value.row_kind == "condition_summary"
+        and value.metric_id == "trace_replay_paired_speedup_relative_difference"
+    )
+    repeat_facts = tuple(
+        facts
+        for facts in condition_trace.bundle.member_facts_by_id.values()
+        if facts.get("member_kind") == "exp2_repeat_speedup_summary"
+    )
+    assert {value["repeat_speedup_value"] for value in repeat_facts} == {
+        Decimal(2),
+        Decimal(3),
+    }
+    assert {frozenset(value["lineage_root_run_ids"]) for value in repeat_facts} == {
+        frozenset(("trace:w1", "trace:w3")),
+        frozenset(("trace:w1:r1", "trace:w3:r1")),
+    }
+    assert {frozenset(value["source_bank_entry_ids"]) for value in repeat_facts} == {
+        frozenset((
+            "entry:consumption:trace:w1",
+            "entry:consumption:trace:w3",
+        )),
+        frozenset((
+            "entry:consumption:trace:w1:r1",
+            "entry:consumption:trace:w3:r1",
+        )),
+    }
+
+
 def test_failed_fast_root_remains_and_speedup_is_null(tmp_path) -> None:
     rows = _trace_pair(tmp_path, compared_correct=False, compared_ms=1)
-    projection = build_exp2_trace_observations(rows, load_paper_metric_contract())
+    with capture_metric_computation_traces() as traces:
+        projection = build_exp2_trace_observations(rows, load_paper_metric_contract())
 
     assert {
         root_id
@@ -242,11 +325,41 @@ def test_failed_fast_root_remains_and_speedup_is_null(tmp_path) -> None:
         "trace:w1",
         "trace:w3",
     }
-    assert projection.pair_rows[0].require_cell("trace_replay_paired_speedup").value is None
+    excluded_speedup = projection.pair_rows[0].require_cell(
+        "trace_replay_paired_speedup"
+    )
+    assert excluded_speedup.value is None
+    assert excluded_speedup.reason == "membership_excluded"
+    assert excluded_speedup.publish_blocked is False
     summary = projection.repeat_summary_rows[0]
     assert summary.require_cell("paired_speedup_planned_pair_count").value == 1
     assert summary.require_cell("paired_speedup_eligible_pair_count").value == 0
     assert summary.require_cell("paired_speedup_ineligible_pair_count").value == 1
+    condition = projection.condition_summary_rows[0]
+    assert all(cell.value is None for cell in condition.cells)
+    assert all(cell.reason == "membership_excluded" for cell in condition.cells)
+    assert all(cell.publish_blocked is False for cell in condition.cells)
+    condition_trace = next(
+        trace for trace in traces if trace.row_kind == "condition_summary"
+    )
+    condition_facts = tuple(condition_trace.bundle.member_facts_by_id.values())
+    assert all(
+        facts.get("member_kind") != "exp2_repeat_speedup_summary"
+        for facts in condition_facts
+    )
+    exclusion = next(
+        facts
+        for facts in condition_facts
+        if facts.get("member_kind") == "exp2_repeat_speedup_exclusion"
+    )
+    assert exclusion["closed_exclusion_reason"] == "membership_excluded"
+    assert "repeat_speedup_value" not in exclusion
+    assert set(exclusion["lineage_root_run_ids"]) == {"trace:w1", "trace:w3"}
+    assert {
+        facts["preregistered_root_run_id"]
+        for facts in condition_facts
+        if facts.get("member_kind") == "preregistered_root"
+    } == {"trace:w1", "trace:w3"}
 
     invalid = _direct_row(
         tmp_path,
@@ -263,6 +376,102 @@ def test_failed_fast_root_remains_and_speedup_is_null(tmp_path) -> None:
         cell.audit_denominator_member_ids == ("trace:infra-invalid",)
         for cell in invalid_row.cells
     )
+
+
+def test_exact_zero_persisted_trace_duration_is_unblocked_null_utilization(
+    tmp_path,
+) -> None:
+    direct = _direct_row(
+        tmp_path,
+        root_id="trace:zero-duration",
+        worker=3,
+        evidence_class="real_model_trace_protocol_run",
+    )
+    row = build_exp2_trace_observations(
+        (
+            _trace(
+                direct,
+                makespan=0,
+                units=tuple(
+                    replace(unit, busy_worker_time_ms=0)
+                    for unit in _units("zero-duration", planned=2, executed=2)
+                ),
+            ),
+        ),
+        load_paper_metric_contract(),
+    ).worker_repeat_rows[0]
+
+    assert row.require_cell("trace_replay_wall_clock_ms").value == 0
+    utilization = row.require_cell("worker_utilization")
+    assert utilization.value is None
+    assert utilization.reason == "zero_denominator"
+    assert utilization.publish_blocked is False
+
+
+def test_zero_elapsed_with_positive_busy_time_blocks_inconsistent_utilization(
+    tmp_path,
+) -> None:
+    direct = _direct_row(
+        tmp_path,
+        root_id="trace:inconsistent-worker-time",
+        worker=3,
+        evidence_class="real_model_trace_protocol_run",
+    )
+    row = build_exp2_trace_observations(
+        (
+            _trace(
+                direct,
+                makespan=0,
+                units=_units("inconsistent-worker-time", planned=2, executed=2),
+            ),
+        ),
+        load_paper_metric_contract(),
+    ).worker_repeat_rows[0]
+
+    assert row.require_cell("trace_replay_wall_clock_ms").value == 0
+    utilization = row.require_cell("worker_utilization")
+    assert utilization.value is None
+    assert utilization.reason == "inconsistent_worker_time_evidence"
+    assert utilization.publish_blocked is True
+
+
+def test_blocked_repeat_speedup_remains_blocked_in_condition_summary(tmp_path) -> None:
+    baseline, _ = _trace_pair(tmp_path)
+    invalid = _direct_row(
+        tmp_path,
+        root_id="trace:blocked-condition",
+        worker=3,
+        evidence_class="real_model_trace_protocol_run",
+        verdict=False,
+    )
+    with capture_metric_computation_traces() as traces:
+        projection = build_exp2_trace_observations(
+            (baseline, _trace(invalid, makespan=200)),
+            load_paper_metric_contract(),
+        )
+
+    repeat_median = projection.repeat_summary_rows[0].require_cell(
+        "trace_replay_paired_speedup_median"
+    )
+    assert repeat_median.value is None and repeat_median.publish_blocked
+    assert all(
+        cell.value is None and cell.publish_blocked
+        for cell in projection.condition_summary_rows[0].cells
+    )
+    condition_trace = next(
+        trace for trace in traces if trace.row_kind == "condition_summary"
+    )
+    blocked_summary = next(
+        facts
+        for facts in condition_trace.bundle.member_facts_by_id.values()
+        if facts.get("member_kind") == "exp2_repeat_speedup_summary"
+    )
+    assert "repeat_speedup_value" not in blocked_summary
+    assert blocked_summary["upstream_blocked_reason"] == repeat_median.reason
+    assert set(blocked_summary["lineage_root_run_ids"]) == {
+        "trace:w1",
+        "trace:blocked-condition",
+    }
 
 
 def test_hard50_strata_come_only_from_digest_bound_case_refs(tmp_path) -> None:
@@ -433,6 +642,56 @@ def test_paired_trace_token_and_cost_multipliers_use_w1_denominators(tmp_path) -
 
     assert pair.require_cell("paired_trace_token_multiplier").value == Decimal("2.5")
     assert pair.require_cell("paired_trace_cost_multiplier").value == Decimal("1.5")
+
+
+def test_pair_nullable_resources_are_not_zero_filled_and_keep_denominator(
+    tmp_path,
+) -> None:
+    baseline, compared = _trace_pair(tmp_path)
+    compared = _trace(
+        compared.direct_result,
+        makespan=200,
+        consumptions=(
+            Exp2TraceConsumptionFacts(
+                consumption_id="missing-provider-usage",
+                committed=True,
+                source_total_tokens=None,
+                source_cost_estimate_cny=None,
+                source_bank_roles=TRACE_SOURCE_BANK_ROLES,
+            ),
+        ),
+    )
+
+    pair_input = paper_exp2_metrics._build_pair(
+        load_paper_metric_contract(), baseline, compared
+    )
+    facts = pair_input.facts
+    assert facts["compared_resource_total_unknown"] is True
+    assert facts["compared_trace_attributed_tokens_known_total"] == 0
+    assert facts["compared_trace_attributed_tokens_missing_attempt_count"] == 1
+    assert facts["compared_trace_attributed_cost_known_total"] == Decimal(0)
+    assert facts["compared_trace_attributed_cost_missing_attempt_count"] == 1
+    assert "compared_trace_attributed_tokens" not in facts
+    assert "compared_trace_attributed_cost" not in facts
+
+    projection = build_exp2_trace_observations(
+        (baseline, compared), load_paper_metric_contract()
+    )
+    assert len(projection.pair_rows) == 1
+    pair = projection.pair_rows[0]
+    token_cell = pair.require_cell("paired_trace_token_multiplier")
+    cost_cell = pair.require_cell("paired_trace_cost_multiplier")
+    assert token_cell.value is None
+    assert cost_cell.value is None
+    assert token_cell.paper_eligible is False
+    assert cost_cell.paper_eligible is False
+    assert set(token_cell.audit_denominator_member_ids) == {
+        baseline.direct_result.preregistered_root_run_id,
+        compared.direct_result.preregistered_root_run_id,
+    }
+    assert set(cost_cell.audit_denominator_member_ids) == set(
+        token_cell.audit_denominator_member_ids
+    )
 
 
 def test_trace_parallel_efficiency(tmp_path) -> None:

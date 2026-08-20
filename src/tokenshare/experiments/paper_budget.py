@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from math import isfinite
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Sequence
 
 from tokenshare.executors.ai_api_config import (
@@ -52,6 +53,251 @@ class PaperBudgetApprovalError(ValueError):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ResultsFirstProviderBudgetAuthority:
+    """Exp1/Exp2--4/Exp5 separated exact paid-provider ceilings."""
+
+    exp1: Mapping[str, object]
+    exp2_4: Mapping[str, object]
+    exp5: Mapping[str, object]
+    global_new_paid: Mapping[str, object]
+    authority_digest: str
+    schema_version: str = "tokenshare.results_first_provider_budget.v1"
+
+    def __post_init__(self) -> None:
+        domains = {
+            "exp1": self.exp1,
+            "exp2_4": self.exp2_4,
+            "exp5": self.exp5,
+            "global_new_paid": self.global_new_paid,
+        }
+        for name, value in domains.items():
+            if not isinstance(value, Mapping):
+                raise TypeError(f"{name} provider budget must be a mapping")
+            object.__setattr__(self, name, MappingProxyType(dict(value)))
+        expected_zero = {
+            "current_provider_calls": 0,
+            "current_tokens": 0,
+            "current_cny": "0",
+        }
+        if dict(self.exp2_4) != expected_zero:
+            raise ValueError("Experiment 2--4 current provider budget must be zero")
+        for name in ("exp1", "exp5", "global_new_paid"):
+            value = getattr(self, name)
+            for field_name in ("calls", "tokens"):
+                amount = value.get(field_name)
+                if type(amount) is not int or amount < 0:
+                    raise ValueError(f"{name} {field_name} budget is invalid")
+            cny = value.get("cny")
+            if not isinstance(cny, str) or Decimal(cny) < 0:
+                raise ValueError(f"{name} CNY budget is invalid")
+        exp1_is_new_paid = self.exp1.get("new_paid", True)
+        if type(exp1_is_new_paid) is not bool:
+            raise ValueError("Exp1 new-paid budget flag is invalid")
+        exp1_new_calls = self.exp1["calls"] if exp1_is_new_paid else 0
+        exp1_new_tokens = self.exp1["tokens"] if exp1_is_new_paid else 0
+        exp1_new_cny = (
+            Decimal(str(self.exp1["cny"])) if exp1_is_new_paid else Decimal("0")
+        )
+        if (
+            self.global_new_paid["calls"]
+            != exp1_new_calls + self.exp5["calls"]
+            or self.global_new_paid["tokens"]
+            != exp1_new_tokens + self.exp5["tokens"]
+            or Decimal(str(self.global_new_paid["cny"]))
+            != exp1_new_cny + Decimal(str(self.exp5["cny"]))
+        ):
+            raise ValueError("global provider budget does not equal new Exp1 + Exp5")
+        expected = digest_json(self._body())
+        if self.authority_digest != expected:
+            raise ValueError("results-first provider budget digest drift")
+
+    def _body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "exp1": dict(self.exp1),
+            "exp2_4": dict(self.exp2_4),
+            "exp5": dict(self.exp5),
+            "global_new_paid": dict(self.global_new_paid),
+            "provider_calls_made": 0,
+        }
+
+    def to_dict(self) -> JsonObject:
+        return {**self._body(), "authority_digest": self.authority_digest}
+
+
+def derive_results_first_provider_budget(
+    *,
+    exp1_acquisition_budget: object,
+    exp5_execution_projection: PaperExecutionBudgetProjection,
+    exp5_pricing_authority: Mapping[str, object] | None = None,
+    exp1_acquisition_is_new: bool = True,
+) -> ResultsFirstProviderBudgetAuthority:
+    """Derive exact current paid ceilings without counting trace or reused-bank work."""
+
+    from tokenshare.experiments.paper_response_bank import FullAcquisitionBudget
+
+    if type(exp1_acquisition_budget) is not FullAcquisitionBudget:
+        raise TypeError("typed Exp1 acquisition budget is required")
+    exp1_acquisition_budget.validate()
+    if type(exp5_execution_projection) is not PaperExecutionBudgetProjection:
+        raise TypeError("typed selection-exact Exp5 execution projection is required")
+    if type(exp1_acquisition_is_new) is not bool:
+        raise TypeError("Exp1 acquisition new-paid flag must be bool")
+    if (
+        not exp5_execution_projection.coverage.conditions
+        or any(
+            condition.experiment_id != EXP5_EXPERIMENT_ID
+            for condition in exp5_execution_projection.coverage.conditions
+        )
+        or exp5_execution_projection.provider_calls_made != 0
+    ):
+        raise ValueError("selection-exact Exp5 execution projection coverage drifted")
+    source_full_budget = exp5_execution_projection.source_budget
+    quota = source_full_budget.quota_preflight
+    commitments = quota.get("budget_commitments")
+    if not isinstance(commitments, Mapping):
+        raise ValueError("source full budget commitments are missing")
+    endpoint = commitments.get("endpoint_budget_identity")
+    if not isinstance(endpoint, Mapping):
+        raise ValueError("independent Exp5 endpoint budget identity is missing")
+    member_subtotals = endpoint.get("member_token_cost_subtotals")
+    pricing_digests = endpoint.get("pricing_snapshot_digest_by_member")
+    if (
+        not isinstance(member_subtotals, Mapping)
+        or set(member_subtotals) != set(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+        or not isinstance(pricing_digests, Mapping)
+        or set(pricing_digests) != set(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+    ):
+        raise ValueError("independent Exp5 member budget coverage drifted")
+    if any(
+        not isinstance(member_subtotals[member_id], Mapping)
+        for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    ):
+        raise ValueError("Exp5 member subtotal must be a mapping")
+    exp5_calls = exp5_execution_projection.provider_attempt_upper_bound
+    exp5_tokens = exp5_execution_projection.token_upper_bound
+    exp5_cny = Decimal(str(exp5_execution_projection.cost_upper_bound))
+    current_pricing_digests = dict(pricing_digests)
+    current_endpoint_authority_digest = endpoint.get(
+        "endpoint_budget_identity_digest"
+    )
+    if exp5_pricing_authority is not None:
+        # 使用同一 coverage/attempt 上界，只刷新每个 member 的 current
+        # pricing；Exp2/3 trace 与 representative 的 frozen budget 不变。
+        current_specs = _exp5_v3_member_budget_specs(exp5_pricing_authority)
+        member_calls = {
+            member_id: 0 for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+        }
+        commitments = quota.get("budget_commitments")
+        multiplier = int(
+            commitments["experiment_budget_identity"]["provider_attempt_multiplier"]
+        )
+        for condition in exp5_execution_projection.coverage.conditions:
+            roots = tuple(
+                root
+                for root in exp5_execution_projection.coverage.roots
+                if root.condition is condition
+            )
+            units = sum(len(root.planned_ai_unit_ids) for root in roots)
+            member_id = str(condition.cohort_member_id)
+            member_calls[member_id] += (
+                units + _condition_replacement_reserve(
+                    condition=condition,
+                    condition_ai_units=units,
+                )
+            ) * multiplier
+        exp5_cny = Decimal("0")
+        for member_id, calls in member_calls.items():
+            spec = current_specs[member_id]
+            exp5_cny += Decimal(str(spec["cost_upper_bound_per_provider_attempt"])) * calls
+            current_pricing_digests[member_id] = str(spec["pricing_snapshot_digest"])
+        freshness = exp5_pricing_authority.get("pricing_freshness_authority")
+        if isinstance(freshness, Mapping):
+            current_endpoint_authority_digest = freshness.get(
+                "authority_digest", current_endpoint_authority_digest
+            )
+    exp1 = {
+        "calls": exp1_acquisition_budget.calls,
+        "tokens": exp1_acquisition_budget.tokens,
+        "cny": format(exp1_acquisition_budget.cny, "f"),
+        "budget_digest": exp1_acquisition_budget.budget_digest,
+        "provider_family": "deepseek",
+        "new_paid": exp1_acquisition_is_new,
+    }
+    exp2_4 = {
+        "current_provider_calls": 0,
+        "current_tokens": 0,
+        "current_cny": "0",
+    }
+    exp5 = {
+        "calls": exp5_calls,
+        "tokens": exp5_tokens,
+        "cny": format(exp5_cny, "f"),
+        "provider_family": "siliconflow",
+        "pricing_snapshot_digest_by_member": current_pricing_digests,
+        "endpoint_budget_identity_digest": endpoint.get(
+            "endpoint_budget_identity_digest"
+        ),
+        "pricing_authority_digest": current_endpoint_authority_digest,
+        "execution_projection_digest": (
+            exp5_execution_projection.projection_digest
+        ),
+    }
+    global_new_paid = {
+        "calls": (exp1["calls"] if exp1_acquisition_is_new else 0)
+        + exp5["calls"],
+        "tokens": (exp1["tokens"] if exp1_acquisition_is_new else 0)
+        + exp5["tokens"],
+        "cny": format(
+            (Decimal(str(exp1["cny"])) if exp1_acquisition_is_new else Decimal("0"))
+            + exp5_cny,
+            "f",
+        ),
+    }
+    body = {
+        "schema_version": "tokenshare.results_first_provider_budget.v1",
+        "exp1": exp1,
+        "exp2_4": exp2_4,
+        "exp5": exp5,
+        "global_new_paid": global_new_paid,
+        "provider_calls_made": 0,
+    }
+    return ResultsFirstProviderBudgetAuthority(
+        exp1=exp1,
+        exp2_4=exp2_4,
+        exp5=exp5,
+        global_new_paid=global_new_paid,
+        authority_digest=digest_json(body),
+    )
+
+
+def persist_results_first_provider_budget(
+    *, output_root: str | Path, authority: ResultsFirstProviderBudgetAuthority
+) -> Path:
+    if type(authority) is not ResultsFirstProviderBudgetAuthority:
+        raise TypeError("typed results-first provider budget is required")
+    path = Path(output_root).resolve() / "results_first_provider_budget.v1.json"
+    encoded = (
+        json.dumps(
+            authority.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    if path.exists():
+        if path.read_bytes() != encoded:
+            raise ValueError("existing results-first provider budget drifted")
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("xb") as stream:
+        stream.write(encoded)
+        stream.flush()
+    return path
+
+
+@dataclass(frozen=True, kw_only=True)
 class PaperBudgetLimits:
     """Provider-writing acquisition 的三维硬预算。"""
 
@@ -73,6 +319,124 @@ L3_SMALL_PAID_BUDGET_LIMITS = PaperBudgetLimits(
     cny=Decimal("979.524864"),
     deepseek_cumulative_cny=Decimal("1000"),
 )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperExecutionBudgetProjection:
+    """绑定 full budget/snapshot 与一个 typed coverage 的 selection-exact 上界。"""
+
+    source_budget: PaperBudgetResult
+    source_snapshot: Any
+    coverage: Any
+    source_budget_digest: str
+    source_snapshot_digest: str
+    coverage_digest: str
+    selection_kind: str
+    condition_count: int
+    root_run_count: int
+    first_attempt_ai_unit_count: int
+    protocol_replacement_reserve: int
+    provider_attempt_upper_bound: int
+    token_upper_bound: int
+    cost_upper_bound: float
+    disk_upper_bound_bytes: int
+    disk_estimate: Mapping[str, Any]
+    hard_limits: Mapping[str, Any]
+    provider_calls_made: int = 0
+    schema_version: str = "tokenshare.paper_execution_budget_projection.v1"
+
+    def __post_init__(self) -> None:
+        from tokenshare.experiments.paper_formal_plan import (
+            FormalExecutionCoverage,
+            FormalPlanSnapshot,
+        )
+
+        if type(self.source_budget) is not PaperBudgetResult:
+            raise TypeError("source_budget must be a PaperBudgetResult")
+        if type(self.source_snapshot) is not FormalPlanSnapshot:
+            raise TypeError("source_snapshot must be a FormalPlanSnapshot")
+        if type(self.coverage) is not FormalExecutionCoverage:
+            raise TypeError("coverage must be a FormalExecutionCoverage")
+        if (
+            self.coverage.source_snapshot is not self.source_snapshot
+            or self.source_snapshot.budget_digest != self.source_budget.budget_digest
+            or self.source_budget_digest != self.source_budget.budget_digest
+            or self.source_snapshot_digest != self.source_snapshot.snapshot_digest
+            or self.coverage_digest != self.coverage.coverage_digest
+        ):
+            raise ValueError("execution budget projection source lineage mismatch")
+        if self.selection_kind != self.coverage.selection_kind:
+            raise ValueError("execution budget projection selection kind mismatch")
+        if (
+            self.condition_count != self.coverage.condition_count
+            or self.root_run_count != self.coverage.root_run_count
+            or self.first_attempt_ai_unit_count
+            != self.coverage.selected_first_attempt_ai_unit_count
+        ):
+            raise ValueError("execution budget projection coverage totals mismatch")
+        integer_values = (
+            self.condition_count,
+            self.root_run_count,
+            self.first_attempt_ai_unit_count,
+            self.protocol_replacement_reserve,
+            self.provider_attempt_upper_bound,
+            self.token_upper_bound,
+            self.disk_upper_bound_bytes,
+            self.provider_calls_made,
+        )
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in integer_values):
+            raise ValueError("execution budget projection counts must be non-negative integers")
+        if not isfinite(float(self.cost_upper_bound)) or self.cost_upper_bound < 0:
+            raise ValueError("execution budget projection cost must be non-negative")
+        if self.provider_calls_made != 0:
+            raise ValueError("execution budget projection must not call providers")
+        expected_limits = {
+            "max_total_provider_attempts": self.provider_attempt_upper_bound,
+            "max_total_tokens": self.token_upper_bound,
+            "max_cost_estimate": self.cost_upper_bound,
+            "max_disk_bytes": self.disk_upper_bound_bytes,
+        }
+        if dict(self.hard_limits) != expected_limits:
+            raise ValueError("execution budget projection hard limits mismatch")
+        if int(self.disk_estimate.get("forecast_bytes", -1)) != self.disk_upper_bound_bytes:
+            raise ValueError("execution budget projection disk upper bound mismatch")
+        object.__setattr__(
+            self,
+            "disk_estimate",
+            MappingProxyType(_json_copy(dict(self.disk_estimate))),
+        )
+        object.__setattr__(
+            self,
+            "hard_limits",
+            MappingProxyType(_json_copy(dict(self.hard_limits))),
+        )
+
+    @property
+    def projection_digest(self) -> str:
+        return digest_json(self._body())
+
+    def to_dict(self) -> JsonObject:
+        return {**self._body(), "projection_digest": self.projection_digest}
+
+    def _body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "source_budget_digest": self.source_budget_digest,
+            "source_snapshot_digest": self.source_snapshot_digest,
+            "coverage_digest": self.coverage_digest,
+            "selection_kind": self.selection_kind,
+            "condition_count": self.condition_count,
+            "root_run_count": self.root_run_count,
+            "first_attempt_ai_unit_count": self.first_attempt_ai_unit_count,
+            "protocol_replacement_reserve": self.protocol_replacement_reserve,
+            "provider_attempt_upper_bound": self.provider_attempt_upper_bound,
+            "token_upper_bound": self.token_upper_bound,
+            "cost_upper_bound": self.cost_upper_bound,
+            "disk_upper_bound_bytes": self.disk_upper_bound_bytes,
+            "disk_estimate": _json_copy(dict(self.disk_estimate)),
+            "hard_limits": _json_copy(dict(self.hard_limits)),
+            "provider_calls_made": self.provider_calls_made,
+        }
 
 
 def validate_provider_budget_mode(*, provider_writing: bool, budget_mode: str) -> None:
@@ -891,6 +1255,12 @@ def plan_paper_suite(
                 ),
             }
         ),
+        "disk_estimate_authority": {
+            "schema_version": "tokenshare.paper_disk_estimate_authority.v1",
+            "token_upper_bound_per_provider_attempt": (
+                token_upper_bound_per_provider_attempt
+            ),
+        },
         "hard_limits": _json_copy(
             hard_limits
             if hard_limits is not None
@@ -1143,6 +1513,556 @@ def _paper_disk_estimate(
         ),
         "max_condition_compaction_bytes": max_condition_compaction_bytes,
     }
+
+
+def project_paper_execution_budget(
+    *,
+    snapshot: Any,
+    budget: PaperBudgetResult,
+    coverage: Any,
+) -> PaperExecutionBudgetProjection:
+    """从同一 full authority 对 typed coverage 逐 root 重算运行硬上界。"""
+
+    from tokenshare.experiments.paper_formal_plan import (
+        FormalExecutionCoverage,
+        FormalPlanSnapshot,
+    )
+
+    if type(snapshot) is not FormalPlanSnapshot:
+        raise TypeError("snapshot must be a FormalPlanSnapshot")
+    if type(budget) is not PaperBudgetResult:
+        raise TypeError("budget must be a PaperBudgetResult")
+    if type(coverage) is not FormalExecutionCoverage:
+        raise TypeError("coverage must be a FormalExecutionCoverage")
+    if (
+        coverage.source_snapshot is not snapshot
+        or coverage.source_snapshot_digest != snapshot.snapshot_digest
+        or snapshot.budget_digest != budget.budget_digest
+    ):
+        raise ValueError("execution budget projection source lineage mismatch")
+    commitments = _projection_budget_commitments(budget)
+    _projection_mapping(
+        commitments.get("request_limits"),
+        "request limits",
+    )
+    experiment_identity = _projection_mapping(
+        commitments.get("experiment_budget_identity"),
+        "experiment budget identity",
+    )
+    multiplier = _projection_positive_int(
+        experiment_identity.get("provider_attempt_multiplier"),
+        "provider attempt multiplier",
+    )
+    disk_authority = _projection_mapping(
+        commitments.get("disk_estimate_authority"),
+        "disk estimate authority",
+    )
+    scalar_token_ceiling = _projection_positive_int(
+        disk_authority.get("token_upper_bound_per_provider_attempt"),
+        "scalar token ceiling",
+    )
+    if (
+        disk_authority.get("schema_version")
+        != "tokenshare.paper_disk_estimate_authority.v1"
+    ):
+        raise ValueError("execution budget disk authority drift")
+    endpoint_identity = _projection_mapping(
+        commitments.get("endpoint_budget_identity"),
+        "endpoint budget identity",
+    )
+    scalar_fallback = _projection_mapping(
+        endpoint_identity.get("scalar_fallback_subtotal"),
+        "endpoint scalar fallback subtotal",
+    )
+    scalar_cost_ceiling = _projection_non_negative_float(
+        scalar_fallback.get("cost_upper_bound_per_provider_attempt"),
+        "scalar cost ceiling",
+    )
+
+    roots_by_condition = _validate_projection_full_authority(
+        snapshot=snapshot,
+        budget=budget,
+        commitments=commitments,
+        multiplier=multiplier,
+    )
+    selected_roots_by_condition: dict[str, tuple[Any, ...]] = {
+        condition.condition_id: tuple(
+            root for root in coverage.roots if root.condition is condition
+        )
+        for condition in coverage.conditions
+    }
+    replacement_policy_by_condition = _validate_projection_replacement_authority(
+        snapshot=snapshot,
+        roots_by_condition=roots_by_condition,
+        budget=budget,
+        commitments=commitments,
+        multiplier=multiplier,
+    )
+    selected_replacement_reserve = 0
+    max_condition_root_runs = 0
+    max_condition_ai_units = 0
+    max_condition_provider_attempts = 0
+    selected_provider_attempts_by_condition: dict[str, int] = {}
+    for condition in coverage.conditions:
+        roots = selected_roots_by_condition[condition.condition_id]
+        condition_ai_units = sum(len(root.planned_ai_unit_ids) for root in roots)
+        replacement = _condition_replacement_reserve(
+            condition=condition,
+            condition_ai_units=condition_ai_units,
+        )
+        source_policy = replacement_policy_by_condition[condition.condition_id]
+        if source_policy["policy"] != _condition_replacement_policy(condition):
+            raise ValueError("execution budget replacement policy drift")
+        condition_attempts = (condition_ai_units + replacement) * multiplier
+        selected_replacement_reserve += replacement
+        selected_provider_attempts_by_condition[condition.condition_id] = condition_attempts
+        max_condition_root_runs = max(max_condition_root_runs, len(roots))
+        max_condition_ai_units = max(max_condition_ai_units, condition_ai_units)
+        max_condition_provider_attempts = max(
+            max_condition_provider_attempts,
+            condition_attempts,
+        )
+    provider_attempt_upper_bound = sum(
+        selected_provider_attempts_by_condition.values()
+    )
+    endpoint_specs = _validate_projection_endpoint_authority(
+        snapshot=snapshot,
+        budget=budget,
+        commitments=commitments,
+        roots_by_condition=roots_by_condition,
+        multiplier=multiplier,
+        scalar_token_ceiling=scalar_token_ceiling,
+        scalar_cost_ceiling=scalar_cost_ceiling,
+    )
+    endpoint_usage = None
+    if endpoint_specs is not None:
+        endpoint_usage = {
+            member_id: {
+                "planned_ai_unit_count": 0,
+                "provider_attempt_upper_bound": 0,
+            }
+            for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+        }
+        for condition in coverage.conditions:
+            if condition.experiment_id != EXP5_EXPERIMENT_ID:
+                continue
+            member_id = str(condition.cohort_member_id)
+            if member_id not in endpoint_usage:
+                raise ValueError("execution budget endpoint member drift")
+            roots = selected_roots_by_condition[condition.condition_id]
+            condition_ai_units = sum(len(root.planned_ai_unit_ids) for root in roots)
+            endpoint_usage[member_id]["planned_ai_unit_count"] += condition_ai_units
+            endpoint_usage[member_id]["provider_attempt_upper_bound"] += (
+                selected_provider_attempts_by_condition[condition.condition_id]
+            )
+    token_upper_bound, cost_upper_bound, _endpoint_identity = (
+        _endpoint_aware_budget_totals(
+            max_provider_attempts=provider_attempt_upper_bound,
+            token_upper_bound_per_provider_attempt=scalar_token_ceiling,
+            cost_upper_bound_per_provider_attempt=scalar_cost_ceiling,
+            endpoint_budget_specs=endpoint_specs,
+            endpoint_usage_by_member=endpoint_usage,
+        )
+    )
+    disk_estimate = _paper_disk_estimate(
+        planned_conditions=coverage.condition_count,
+        planned_root_runs=coverage.root_run_count,
+        planned_ai_units=coverage.selected_first_attempt_ai_unit_count,
+        provider_attempt_upper_bound=provider_attempt_upper_bound,
+        max_tokens=scalar_token_ceiling,
+        token_upper_bound=token_upper_bound,
+        max_condition_root_runs=max_condition_root_runs,
+        max_condition_ai_units=max_condition_ai_units,
+        max_condition_provider_attempts=max_condition_provider_attempts,
+    )
+    if coverage.selection_kind == "full":
+        expected_full = (
+            budget.planned_conditions,
+            budget.planned_root_runs,
+            budget.planned_ai_units,
+            budget.max_provider_attempts,
+            budget.token_upper_bound,
+            round(float(budget.cost_upper_bound), 12),
+        )
+        projected_full = (
+            coverage.condition_count,
+            coverage.root_run_count,
+            coverage.selected_first_attempt_ai_unit_count,
+            provider_attempt_upper_bound,
+            token_upper_bound,
+            round(float(cost_upper_bound), 12),
+        )
+        if projected_full != expected_full:
+            raise ValueError("full execution budget projection drift")
+        if disk_estimate != budget.disk_estimate:
+            raise ValueError("full execution budget disk projection drift")
+        source_hard_limits = _projection_mapping(
+            commitments.get("hard_limits"),
+            "hard limits",
+        )
+        if dict(source_hard_limits) != {
+            "max_provider_attempts": budget.max_provider_attempts,
+            "token_upper_bound": budget.token_upper_bound,
+            "cost_upper_bound": budget.cost_upper_bound,
+        }:
+            raise ValueError("full execution budget hard-limit authority drift")
+    disk_upper_bound_bytes = int(disk_estimate["forecast_bytes"])
+    hard_limits = {
+        "max_total_provider_attempts": provider_attempt_upper_bound,
+        "max_total_tokens": token_upper_bound,
+        "max_cost_estimate": cost_upper_bound,
+        "max_disk_bytes": disk_upper_bound_bytes,
+    }
+    return PaperExecutionBudgetProjection(
+        source_budget=budget,
+        source_snapshot=snapshot,
+        coverage=coverage,
+        source_budget_digest=budget.budget_digest,
+        source_snapshot_digest=snapshot.snapshot_digest,
+        coverage_digest=coverage.coverage_digest,
+        selection_kind=coverage.selection_kind,
+        condition_count=coverage.condition_count,
+        root_run_count=coverage.root_run_count,
+        first_attempt_ai_unit_count=(
+            coverage.selected_first_attempt_ai_unit_count
+        ),
+        protocol_replacement_reserve=selected_replacement_reserve,
+        provider_attempt_upper_bound=provider_attempt_upper_bound,
+        token_upper_bound=token_upper_bound,
+        cost_upper_bound=cost_upper_bound,
+        disk_upper_bound_bytes=disk_upper_bound_bytes,
+        disk_estimate=disk_estimate,
+        hard_limits=hard_limits,
+        provider_calls_made=0,
+    )
+
+
+def _projection_budget_commitments(budget: PaperBudgetResult) -> Mapping[str, Any]:
+    quota = _projection_mapping(budget.quota_preflight, "quota preflight")
+    if quota.get("provider_calls_made") != 0:
+        raise ValueError("execution budget source made provider calls")
+    return _projection_mapping(quota.get("budget_commitments"), "budget commitments")
+
+
+def _validate_projection_full_authority(
+    *,
+    snapshot: Any,
+    budget: PaperBudgetResult,
+    commitments: Mapping[str, Any],
+    multiplier: int,
+) -> dict[str, tuple[Any, ...]]:
+    if (
+        snapshot.condition_count != len(snapshot.conditions)
+        or snapshot.root_run_count != len(snapshot.roots)
+        or snapshot.first_attempt_ai_unit_count
+        != sum(len(root.planned_ai_unit_ids) for root in snapshot.roots)
+        or budget.planned_conditions != snapshot.condition_count
+        or budget.planned_root_runs != snapshot.root_run_count
+        or budget.planned_ai_units != snapshot.first_attempt_ai_unit_count
+    ):
+        raise ValueError("execution budget full snapshot totals drift")
+    raw_commitments = commitments.get("ai_unit_commitments")
+    if not isinstance(raw_commitments, (list, tuple)):
+        raise ValueError("execution budget AI-unit commitments are missing")
+    by_key: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for raw in raw_commitments:
+        record = _projection_mapping(raw, "AI-unit commitment")
+        key = (str(record.get("condition_id")), str(record.get("case_id")))
+        if key in by_key:
+            raise ValueError("execution budget duplicate AI-unit commitment")
+        by_key[key] = record
+    roots_by_condition: dict[str, list[Any]] = {}
+    for root in snapshot.roots:
+        key = (root.condition.condition_id, root.case_id)
+        record = by_key.get(key)
+        if record is None:
+            raise ValueError("execution budget is missing an AI-unit commitment")
+        if (
+            root.condition_digest != root.condition.condition_digest
+            or root.selection_digest != root.binding.selection.selection_digest
+            or record.get("condition_digest") != root.condition_digest
+            or record.get("case_digest") != root.case_record_digest
+            or record.get("split_profile_digest") != root.split_profile_digest
+            or tuple(record.get("planned_ai_unit_ids", ()))
+            != root.planned_ai_unit_ids
+        ):
+            raise ValueError("execution budget AI-unit commitment drift")
+        roots_by_condition.setdefault(root.condition.condition_id, []).append(root)
+    if len(by_key) != len(snapshot.roots):
+        raise ValueError("execution budget contains extra AI-unit commitments")
+    if multiplier < 1:
+        raise ValueError("execution budget provider multiplier drift")
+    return {key: tuple(value) for key, value in roots_by_condition.items()}
+
+
+def _validate_projection_replacement_authority(
+    *,
+    snapshot: Any,
+    roots_by_condition: Mapping[str, Sequence[Any]],
+    budget: PaperBudgetResult,
+    commitments: Mapping[str, Any],
+    multiplier: int,
+) -> dict[str, Mapping[str, Any]]:
+    identity = _projection_mapping(
+        commitments.get("experiment_budget_identity"),
+        "experiment budget identity",
+    )
+    raw_policies = identity.get("replacement_policy_by_condition")
+    if not isinstance(raw_policies, (list, tuple)):
+        raise ValueError("execution budget replacement authority is missing")
+    policies: dict[str, Mapping[str, Any]] = {}
+    reserve_by_experiment: dict[str, int] = {}
+    total_reserve = 0
+    for condition_row in snapshot.conditions:
+        condition = condition_row.condition
+        matches = tuple(
+            _projection_mapping(raw, "replacement policy")
+            for raw in raw_policies
+            if isinstance(raw, Mapping)
+            and raw.get("condition_id") == condition.condition_id
+        )
+        if len(matches) != 1:
+            raise ValueError("execution budget replacement condition coverage drift")
+        record = matches[0]
+        condition_ai_units = sum(
+            len(root.planned_ai_unit_ids)
+            for root in roots_by_condition[condition.condition_id]
+        )
+        reserve = _condition_replacement_reserve(
+            condition=condition,
+            condition_ai_units=condition_ai_units,
+        )
+        if (
+            record.get("condition_digest") != condition.condition_digest
+            or record.get("experiment_id") != condition.experiment_id
+            or record.get("planned_ai_unit_count") != condition_ai_units
+            or record.get("protocol_replacement_reserve") != reserve
+            or record.get("policy") != _condition_replacement_policy(condition)
+        ):
+            raise ValueError("execution budget replacement authority drift")
+        policies[condition.condition_id] = record
+        total_reserve += reserve
+        if reserve:
+            reserve_by_experiment[condition.experiment_id] = (
+                reserve_by_experiment.get(condition.experiment_id, 0) + reserve
+            )
+    if len(raw_policies) != len(snapshot.conditions):
+        raise ValueError("execution budget replacement authority has extra conditions")
+    if dict(identity.get("replacement_reserve_by_experiment", {})) != dict(
+        sorted(reserve_by_experiment.items())
+    ):
+        raise ValueError("execution budget replacement experiment subtotal drift")
+    expected_attempts = (
+        snapshot.first_attempt_ai_unit_count + total_reserve
+    ) * multiplier
+    if (
+        expected_attempts != budget.max_provider_attempts
+        or identity.get("max_provider_attempts") != expected_attempts
+        or identity.get("provider_attempt_multiplier") != multiplier
+    ):
+        raise ValueError("execution budget replacement/provider upper bound drift")
+    return policies
+
+
+def _validate_projection_endpoint_authority(
+    *,
+    snapshot: Any,
+    budget: PaperBudgetResult,
+    commitments: Mapping[str, Any],
+    roots_by_condition: Mapping[str, Sequence[Any]],
+    multiplier: int,
+    scalar_token_ceiling: int,
+    scalar_cost_ceiling: float,
+) -> dict[str, JsonObject] | None:
+    raw_identity = commitments.get("endpoint_budget_identity")
+    exp5_conditions = tuple(
+        row.condition
+        for row in snapshot.conditions
+        if row.condition.experiment_id == EXP5_EXPERIMENT_ID
+    )
+    if raw_identity is None:
+        if exp5_conditions:
+            raise ValueError("execution budget endpoint authority is missing")
+        return None
+    identity = _projection_mapping(raw_identity, "endpoint budget identity")
+    subtotals = _projection_mapping(
+        identity.get("member_token_cost_subtotals"),
+        "endpoint member subtotals",
+    )
+    if set(subtotals) != set(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS):
+        raise ValueError("execution budget endpoint member coverage drift")
+    token_by_member = _projection_mapping(
+        identity.get("token_upper_bound_by_member"),
+        "endpoint token subtotals",
+    )
+    cost_by_member = _projection_mapping(
+        identity.get("cost_upper_bound_by_member"),
+        "endpoint cost subtotals",
+    )
+    endpoint_digest_by_member = _projection_mapping(
+        identity.get("endpoint_identity_digest_by_member"),
+        "endpoint identity digests",
+    )
+    pricing_digest_by_member = _projection_mapping(
+        identity.get("pricing_snapshot_digest_by_member"),
+        "endpoint pricing digests",
+    )
+    specs: dict[str, JsonObject] = {}
+    full_usage = {
+        member_id: {
+            "planned_ai_unit_count": 0,
+            "provider_attempt_upper_bound": 0,
+        }
+        for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    }
+    for condition in exp5_conditions:
+        member_id = str(condition.cohort_member_id)
+        if member_id not in full_usage:
+            raise ValueError("execution budget endpoint member drift")
+        ai_units = sum(
+            len(root.planned_ai_unit_ids)
+            for root in roots_by_condition[condition.condition_id]
+        )
+        reserve = _condition_replacement_reserve(
+            condition=condition,
+            condition_ai_units=ai_units,
+        )
+        full_usage[member_id]["planned_ai_unit_count"] += ai_units
+        full_usage[member_id]["provider_attempt_upper_bound"] += (
+            ai_units + reserve
+        ) * multiplier
+        if any(
+            root.endpoint_controls.model_endpoint_identity_digest
+            != condition.model_endpoint_identity_digest
+            for root in roots_by_condition[condition.condition_id]
+        ):
+            raise ValueError("execution budget endpoint/root identity drift")
+    cohort_digest = str(identity.get("model_cohort_digest"))
+    prompt_per_attempt = _projection_positive_int(
+        identity.get("prompt_token_upper_bound_per_provider_attempt"),
+        "endpoint prompt token ceiling",
+    )
+    for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS:
+        subtotal = _projection_mapping(
+            subtotals[member_id],
+            "endpoint member subtotal",
+        )
+        token_per_attempt = _projection_positive_int(
+            subtotal.get("token_upper_bound_per_provider_attempt"),
+            "endpoint token ceiling",
+        )
+        cost_per_attempt = _projection_non_negative_float(
+            subtotal.get("cost_upper_bound_per_provider_attempt"),
+            "endpoint cost ceiling",
+        )
+        attempts = int(full_usage[member_id]["provider_attempt_upper_bound"])
+        if attempts < 1:
+            raise ValueError("execution budget endpoint has no formal attempts")
+        completion_tokens = _projection_non_negative_int(
+            subtotal.get("completion_token_upper_bound"),
+            "endpoint completion token subtotal",
+        )
+        thinking_tokens = _projection_non_negative_int(
+            subtotal.get("thinking_token_upper_bound"),
+            "endpoint thinking token subtotal",
+        )
+        if completion_tokens % attempts or thinking_tokens % attempts:
+            raise ValueError("execution budget endpoint token subtotal drift")
+        completion_per_attempt = completion_tokens // attempts
+        thinking_per_attempt = thinking_tokens // attempts
+        endpoint_digest = str(subtotal.get("model_endpoint_identity_digest"))
+        pricing_digest = str(subtotal.get("pricing_snapshot_digest"))
+        if (
+            subtotal.get("planned_ai_unit_count")
+            != full_usage[member_id]["planned_ai_unit_count"]
+            or subtotal.get("provider_attempt_upper_bound") != attempts
+            or subtotal.get("token_upper_bound") != attempts * token_per_attempt
+            or round(float(subtotal.get("cost_upper_bound", -1)), 12)
+            != round(attempts * cost_per_attempt, 12)
+            or token_by_member.get(member_id) != subtotal.get("token_upper_bound")
+            or round(float(cost_by_member.get(member_id, -1)), 12)
+            != round(float(subtotal.get("cost_upper_bound", -1)), 12)
+            or endpoint_digest_by_member.get(member_id) != endpoint_digest
+            or pricing_digest_by_member.get(member_id) != pricing_digest
+        ):
+            raise ValueError("execution budget endpoint subtotal drift")
+        specs[member_id] = {
+            "model_cohort_digest": cohort_digest,
+            "model_endpoint_identity_digest": endpoint_digest,
+            "pricing_snapshot_digest": pricing_digest,
+            "prompt_token_upper_bound_per_provider_attempt": prompt_per_attempt,
+            "completion_token_upper_bound_per_provider_attempt": (
+                completion_per_attempt
+            ),
+            "thinking_token_upper_bound_per_provider_attempt": (
+                thinking_per_attempt
+            ),
+            "token_upper_bound_per_provider_attempt": token_per_attempt,
+            "cost_upper_bound_per_provider_attempt": cost_per_attempt,
+            "cost_currency": subtotal.get("cost_currency"),
+        }
+    scalar = _projection_mapping(
+        identity.get("scalar_fallback_subtotal"),
+        "endpoint scalar fallback subtotal",
+    )
+    mapped_attempts = sum(
+        int(usage["provider_attempt_upper_bound"]) for usage in full_usage.values()
+    )
+    scalar_attempts = budget.max_provider_attempts - mapped_attempts
+    if (
+        scalar.get("provider_attempt_upper_bound") != scalar_attempts
+        or scalar.get("token_upper_bound_per_provider_attempt")
+        != scalar_token_ceiling
+        or scalar.get("token_upper_bound") != scalar_attempts * scalar_token_ceiling
+        or float(scalar.get("cost_upper_bound_per_provider_attempt", -1))
+        != scalar_cost_ceiling
+        or round(float(scalar.get("cost_upper_bound", -1)), 12)
+        != round(scalar_attempts * scalar_cost_ceiling, 12)
+    ):
+        raise ValueError("execution budget endpoint scalar fallback drift")
+    full_tokens, full_cost, _rebuilt = _endpoint_aware_budget_totals(
+        max_provider_attempts=budget.max_provider_attempts,
+        token_upper_bound_per_provider_attempt=scalar_token_ceiling,
+        cost_upper_bound_per_provider_attempt=scalar_cost_ceiling,
+        endpoint_budget_specs=specs,
+        endpoint_usage_by_member=full_usage,
+    )
+    if (
+        full_tokens != budget.token_upper_bound
+        or round(full_cost, 12) != round(float(budget.cost_upper_bound), 12)
+        or identity.get("token_upper_bound") != full_tokens
+        or round(float(identity.get("cost_upper_bound", -1)), 12)
+        != round(full_cost, 12)
+    ):
+        raise ValueError("execution budget endpoint total drift")
+    return specs
+
+
+def _projection_mapping(value: Any, name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"execution budget {name} must be an object")
+    return value
+
+
+def _projection_positive_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"execution budget {name} must be a positive integer")
+    return value
+
+
+def _projection_non_negative_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"execution budget {name} must be a non-negative integer")
+    return value
+
+
+def _projection_non_negative_float(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"execution budget {name} must be numeric")
+    normalized = float(value)
+    if not isfinite(normalized) or normalized < 0:
+        raise ValueError(f"execution budget {name} must be finite and non-negative")
+    return normalized
 
 
 def _prepare_exp5_v3_endpoint_budget_specs(

@@ -27,6 +27,8 @@ PAID_SCOPES = frozenset(
         "exp1_full_online",
         "exp5_capability_smoke",
         "exp5_full_online",
+        "results_first_representative_exp1_exp3_exp5",
+        "results_first_full_exp1_exp3_exp5",
     }
 )
 

@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import time
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
@@ -27,9 +28,15 @@ from tokenshare.experiments.paper_budget import load_exp1_pilot_profile
 from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
 from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
 from tokenshare.experiments.paper_model_policy import (
+    EXP5_PRICING_FRESHNESS_AS_OF,
+    EXP5_PRICING_FRESHNESS_AUTHORITY_SCHEMA_VERSION,
+    EXP5_PRICING_MAX_AGE_DAYS,
     PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
+    load_model_endpoint_cohort,
+    load_model_entry_map,
+    load_provider_config_map,
 )
 from tokenshare.experiments.paper_models import (
     PaperStatus,
@@ -38,6 +45,48 @@ from tokenshare.experiments.paper_models import (
 )
 from tokenshare.experiments.run_paper_experiments import main
 from tests.phase7_fixtures import prepared_wire_kwargs
+
+
+def test_results_first_reuse_rebuilds_exp5_pricing_authority_from_current_config() -> None:
+    cohort = load_model_endpoint_cohort(paper_cli.DEFAULT_EXP5_MODEL_COHORT)
+    entry_map = load_model_entry_map(paper_cli.DEFAULT_EXP5_MODEL_ENTRY_MAP)
+    current_provider_configs = load_provider_config_map(
+        {"siliconflow": paper_cli.DEFAULT_EXP5_PROVIDER_CONFIG}
+    )
+    stale_provider_configs = dict(current_provider_configs)
+    stale_provider_configs[formal_runner.APPROVED_ENDPOINT_BINDINGS_KEY] = {
+        "exp5_real_ai_model_endpoint_comparison": {
+            "pricing_freshness_authority": {
+                "schema_version": EXP5_PRICING_FRESHNESS_AUTHORITY_SCHEMA_VERSION,
+                "pricing_freshness_as_of": "2026-07-29",
+                "max_age_days": EXP5_PRICING_MAX_AGE_DAYS,
+            }
+        }
+    }
+
+    refreshed = paper_cli.refresh_results_first_exp5_execution_authority(
+        base_ai_api_configs=stale_provider_configs,
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=current_provider_configs,
+    )
+
+    binding = refreshed[formal_runner.APPROVED_ENDPOINT_BINDINGS_KEY][
+        "exp5_real_ai_model_endpoint_comparison"
+    ]
+    pricing_authority = binding["pricing_freshness_authority"]
+    assert refreshed["siliconflow"] is current_provider_configs["siliconflow"]
+    assert pricing_authority["pricing_freshness_as_of"] == EXP5_PRICING_FRESHNESS_AS_OF
+    assert pricing_authority["authority_digest"] == digest_json(
+        {
+            name: value
+            for name, value in pricing_authority.items()
+            if name != "authority_digest"
+        }
+    )
+    assert set(pricing_authority["source_provider_config_digest_by_member"]) == set(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    )
 
 
 def test_legacy_cli_routes_pipeline_subcommands_without_parsing_them(monkeypatch) -> None:
@@ -77,61 +126,127 @@ def test_legacy_cli_routes_representative_full_plan_smoke_without_legacy_gates(
     assert observed == [argv]
 
 
-def test_representative_builder_freezes_one_full_exp1_to_exp5_authority(
+def test_legacy_cli_routes_full_results_first_without_legacy_gates(monkeypatch) -> None:
+    observed: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        paper_cli,
+        "run_paper_pipeline_main",
+        lambda argv: observed.append(tuple(argv)) or 23,
+    )
+    argv = (
+        "run-results-first",
+        "--selection",
+        "full",
+        "--output-root",
+        "fresh-output",
+        "--planning-artifact-root",
+        "planning",
+        "--plan-bundle-root",
+        "bundle",
+        "--new-run",
+        "--allow-provider-calls",
+    )
+
+    assert main(argv) == 23
+    assert observed == [argv]
+
+
+def test_legacy_direct_paid_formal_path_is_not_an_official_entrypoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys,
 ) -> None:
-    from tokenshare.experiments import paper_response_bank
-    from tokenshare.experiments import run_paper_pipeline
-
-    atomic = object()
-    terminal = object()
-    calls: dict[str, object] = {}
-
-    def fake_atomic(**kwargs):
-        assert "SILICONFLOW_API_KEY" not in kwargs[
-            "api_key_env_by_provider_family"
-        ].values()
-        calls["atomic"] = kwargs
-        return atomic
-
-    def fake_service(**kwargs):
-        calls["service"] = kwargs
-        return terminal
+    class FailIfTransportUsed:
+        def post_chat_completion(self, **_kwargs):
+            pytest.fail("legacy direct formal path must stop before transport")
 
     monkeypatch.setattr(
-        paper_response_bank,
-        "prepare_representative_acquisition_authority",
-        fake_atomic,
-    )
-    monkeypatch.setattr(
-        run_paper_pipeline,
-        "build_representative_full_plan_smoke_service_authority",
-        fake_service,
+        paper_cli,
+        "_paper_output_root",
+        lambda _path: pytest.fail(
+            "legacy direct paid guard must precede output/planning construction"
+        ),
     )
 
-    result = paper_cli.build_representative_full_plan_smoke_authority(
+    exit_code = main(
+        [
+            "--output-root",
+            str(tmp_path / "legacy-output"),
+            "--experiments",
+            "exp1,exp2,exp3,exp4,exp5",
+            "--real-transport",
+        ],
+        gate_c_transport=FailIfTransportUsed(),
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert body["status"] == "blocked"
+    assert body["failure_kind"] == "legacy_direct_paid_execution_deauthorized"
+    assert body["provider_calls_made"] is None
+    assert body["provider_calls_missing_reason"] == (
+        "legacy_direct_path_has_no_atomic_ledger"
+    )
+    assert "run-results-first" in body["message"]
+    assert not (tmp_path / "legacy-output").exists()
+
+
+def test_canonical_results_first_builder_freezes_one_typed_full_authority_for_both_scales(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.paper_budget import PaperExecutionBudgetProjection
+    from tokenshare.experiments.paper_formal_plan import (
+        FormalExecutionCoverage,
+        FormalPlanSnapshot,
+        FormalPreparedRequestInventory,
+    )
+    from tokenshare.experiments.run_paper_pipeline import (
+        ResultsFirstExecutionAuthority,
+        ResultsFirstExecutionPolicy,
+    )
+
+    authorities = paper_cli.build_results_first_execution_authorities(
         output_root=tmp_path / "execution",
         planning_artifact_root=tmp_path / "planning",
         plan_bundle_root=tmp_path / "bundle",
         resume=False,
     )
 
-    assert result is terminal
-    atomic_call = calls["atomic"]
-    assert [plan.experiment_id for plan in atomic_call["dispatch_plans"]] == [
-        "exp1_real_ai_feasibility",
-        "exp2_real_ai_scalability",
-        "exp3_real_ai_fault_recovery",
-        "exp4_real_ai_protocol_ablation",
-        "exp5_real_ai_model_endpoint_comparison",
-    ]
-    assert atomic_call["max_acquisition_concurrency"] == 10
-    assert atomic_call["repeat_ids"] == (0,)
-    assert atomic_call["budget"].budget_digest.startswith("sha256:")
-    assert calls["service"]["atomic_authority"] is atomic
-    assert calls["service"]["full_budget"] is atomic_call["budget"]
-    approved = calls["service"]["ai_api_configs"][
+    assert set(authorities) == {"full", "filtered"}
+    full = authorities["full"]
+    filtered = authorities["filtered"]
+    assert type(full) is type(filtered) is ResultsFirstExecutionAuthority
+    assert type(full.policy) is ResultsFirstExecutionPolicy
+    assert full.policy is filtered.policy
+    assert type(full.full_snapshot) is FormalPlanSnapshot
+    assert type(full.full_prepared_inventory) is FormalPreparedRequestInventory
+    assert full.full_snapshot is filtered.full_snapshot
+    assert full.full_prepared_inventory is filtered.full_prepared_inventory
+    assert full.full_budget is filtered.full_budget
+    assert type(full.coverage) is type(filtered.coverage) is FormalExecutionCoverage
+    assert type(full.execution_budget_projection) is PaperExecutionBudgetProjection
+    assert type(filtered.execution_budget_projection) is PaperExecutionBudgetProjection
+    assert full.coverage.selection_kind == "full"
+    assert filtered.coverage.selection_kind == "filtered"
+    assert (
+        full.coverage.condition_count,
+        full.coverage.root_run_count,
+        full.coverage.selected_first_attempt_ai_unit_count,
+    ) == (324, 6_384, 40_520)
+    assert filtered.coverage.root_run_count == 145
+    for authority in authorities.values():
+        assert authority.coverage.source_snapshot is full.full_snapshot
+        assert authority.execution_budget_projection.source_budget is full.full_budget
+        assert authority.execution_budget_projection.coverage is authority.coverage
+        assert authority.bundle.coverage_digest == authority.coverage.coverage_digest
+        assert authority.bundle.plan_digest.startswith("sha256:")
+        assert authority.provider_calls_made == 0
+    assert full.bundle.coverage_digest != filtered.bundle.coverage_digest
+    assert full.bundle.plan_digest != filtered.bundle.plan_digest
+    assert not (tmp_path / "planning" / "full-slots").exists()
+    assert not (tmp_path / "planning" / "filtered-slots").exists()
+    assert not (tmp_path / "bundle").exists()
+    approved = full.ai_api_configs[
         paper_cli.APPROVED_ENDPOINT_BINDINGS_KEY
     ]["exp5_real_ai_model_endpoint_comparison"]
     assert set(approved["member_plans"]) == {
@@ -140,11 +255,146 @@ def test_representative_builder_freezes_one_full_exp1_to_exp5_authority(
         "minimax_m2_5_siliconflow",
         "deepseek_v3_pro_siliconflow",
     }
-    assert set(calls["service"]["hard_limits"]) == {
-        "max_total_provider_attempts",
-        "max_total_tokens",
-        "max_cost_estimate",
-    }
+    assert full.execution_budget_projection.hard_limits != (
+        filtered.execution_budget_projection.hard_limits
+    )
+
+
+def test_legacy_representative_authority_wrapper_delegates_singular_exact_root_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = object()
+    observed: list[dict[str, object]] = []
+
+    def build(**kwargs: object):
+        observed.append(dict(kwargs))
+        return sentinel
+
+    monkeypatch.setattr(
+        paper_cli,
+        "build_results_first_execution_authority_for_selection",
+        build,
+        raising=False,
+    )
+    output_root = tmp_path / "exact-output"
+    planning_root = tmp_path / "exact-planning"
+    bundle_root = tmp_path / "exact-bundle"
+
+    result = paper_cli.build_representative_full_plan_smoke_authority(
+        output_root=output_root,
+        planning_artifact_root=planning_root,
+        plan_bundle_root=bundle_root,
+        resume=True,
+    )
+
+    assert result is sentinel
+    assert observed == [
+        {
+            "selection": "representative",
+            "output_root": output_root,
+            "planning_artifact_root": planning_root,
+            "plan_bundle_root": bundle_root,
+            "resume": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("selection", "selection_kind"),
+    (("full", "full"), ("representative", "filtered")),
+)
+def test_singular_results_first_builder_preserves_exact_user_roots(
+    selection: str,
+    selection_kind: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = object()
+    observed: list[dict[str, object]] = []
+
+    def build(**kwargs: object):
+        observed.append(dict(kwargs))
+        return {selection_kind: sentinel}
+
+    monkeypatch.setattr(
+        paper_cli,
+        "_build_results_first_execution_authorities",
+        build,
+    )
+    output_root = tmp_path / "output"
+    planning_root = tmp_path / "planning"
+    bundle_root = tmp_path / "bundle"
+
+    result = paper_cli.build_results_first_execution_authority_for_selection(
+        selection=selection,
+        output_root=output_root,
+        planning_artifact_root=planning_root,
+        plan_bundle_root=bundle_root,
+        resume=True,
+    )
+
+    assert result is sentinel
+    assert observed == [
+        {
+            "output_root": output_root,
+            "planning_artifact_root": planning_root,
+            "plan_bundle_root": bundle_root,
+            "resume": True,
+            "_selection_kinds": (selection_kind,),
+            "_exact_roots": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("selection", "selection_kind"),
+    (
+        ("representative_exp1_exp3_exp5", "filtered"),
+        ("full_exp1_exp3_exp5", "full"),
+    ),
+)
+def test_exp4_excluded_results_first_selections_are_explicit_and_typed(
+    selection: str,
+    selection_kind: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """排除 Exp4 只能由两个预注册 selection 进入 authority builder。"""
+
+    sentinel = object()
+    observed: list[dict[str, object]] = []
+
+    def build(**kwargs: object):
+        observed.append(dict(kwargs))
+        return {selection_kind: sentinel}
+
+    monkeypatch.setattr(
+        paper_cli,
+        "_build_results_first_execution_authorities",
+        build,
+    )
+
+    result = paper_cli.build_results_first_execution_authority_for_selection(
+        selection=selection,
+        output_root=tmp_path / "output",
+        planning_artifact_root=tmp_path / "planning",
+        plan_bundle_root=tmp_path / "bundle",
+        resume=False,
+    )
+
+    assert result is sentinel
+    assert observed == [
+        {
+            "output_root": tmp_path / "output",
+            "planning_artifact_root": tmp_path / "planning",
+            "plan_bundle_root": tmp_path / "bundle",
+            "resume": False,
+            "_selection_kinds": (selection_kind,),
+            "_exact_roots": True,
+            "_exclude_exp4": True,
+        }
+    ]
 
 
 APPROVED_EXP1_PILOT_DIGEST = (
@@ -829,7 +1079,7 @@ def test_exp5_standalone_smoke_identity_injects_local_key_without_prior_evidence
     }
     assert all(
         member["source_provider_config_digest"]
-        == "sha256:6b1d6ffe977340ebbf59d69368d8c977fef664007575de72593c08c038d5ffe1"
+        == "sha256:5135c1c2da0f7512b9891f4ea35c65891044dab544d7ad01230ef1db43ff4b5d"
         for member in cohort_identity["member_endpoints"]
     )
 
@@ -5008,6 +5258,13 @@ def _exp5_v3_cli_preflight() -> dict:
             },
             "pricing_snapshot": pricing_snapshot,
             "pricing_snapshot_digest": digest_json(pricing_snapshot),
+            "pricing_freshness": {
+                "accessed_at": EXP5_PRICING_FRESHNESS_AS_OF,
+                "pricing_freshness_as_of": EXP5_PRICING_FRESHNESS_AS_OF,
+                "age_days": 0,
+                "max_age_days": EXP5_PRICING_MAX_AGE_DAYS,
+                "status": "fresh",
+            },
         }
     return {
         "schema_version": "tokenshare.paper_model_endpoint_cohort_preflight.v1",
@@ -5023,6 +5280,11 @@ def _exp5_v3_cli_preflight() -> dict:
         "member_plans": member_plans,
         "request_controls_snapshot": comparable_controls,
         "request_controls_snapshot_digest": digest_json(comparable_controls),
+        "pricing_freshness_authority": {
+            "schema_version": EXP5_PRICING_FRESHNESS_AUTHORITY_SCHEMA_VERSION,
+            "pricing_freshness_as_of": EXP5_PRICING_FRESHNESS_AS_OF,
+            "max_age_days": EXP5_PRICING_MAX_AGE_DAYS,
+        },
     }
 
 
@@ -5106,6 +5368,25 @@ def test_pipeline_formal_authority_recomputes_actual_plan_budget_and_configs(
 
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    provider_calls: list[str] = []
+    network_calls: list[str] = []
+
+    def provider_bomb(*_args, **_kwargs):
+        provider_calls.append("provider")
+        raise AssertionError("formal authority construction must not call provider")
+
+    def network_bomb(*_args, **_kwargs):
+        network_calls.append("network")
+        raise AssertionError("formal authority construction must not open network")
+
+    monkeypatch.setattr(socket, "create_connection", network_bomb)
+    monkeypatch.setattr(socket, "getaddrinfo", network_bomb)
+    if command == "run-exp5-online":
+        monkeypatch.setattr(
+            paper_cli,
+            "_ProviderFamilyTransportRouter",
+            lambda **_kwargs: provider_bomb,
+        )
     profile = load_paper_pipeline_profile()
 
     authority = paper_cli.build_epd027_formal_service_authority(
@@ -5126,6 +5407,19 @@ def test_pipeline_formal_authority_recomputes_actual_plan_budget_and_configs(
         "approval_mode": "paid_receipt",
         "budget_digest": authority.budget_digest,
     }
+    assert provider_calls == []
+    assert network_calls == []
+    if command == "run-exp5-online":
+        config = kwargs["ai_api_configs"]["siliconflow"]
+        preflight = kwargs["ai_api_configs"][
+            paper_cli.APPROVED_ENDPOINT_BINDINGS_KEY
+        ][experiment_id]
+        assert kwargs["transport"] is provider_bomb
+        assert all(
+            member["source_provider_config_digest"] == config.config_digest
+            and member["api_key_env"] == "SILICONFLOW_API_KEY"
+            for member in preflight["member_plans"].values()
+        )
 
 
 def test_pipeline_online_checks_authority_binds_496_plan_and_l3_budget(
@@ -5193,6 +5487,11 @@ def test_pipeline_capability_smoke_authority_uses_canonical_exp5_subset(
     assert authority.keyword_arguments["budget"].budget_digest.startswith("sha256:")
     assert authority.keyword_arguments["profile"].paper_eligible is False
     assert authority.keyword_arguments["real_transport"] is True
+    root_callback_factory = authority.keyword_arguments[
+        "online_root_callback_factory"
+    ]
+    assert root_callback_factory.serialize_roots is False
+    assert callable(root_callback_factory)
 
 
 @pytest.mark.parametrize(

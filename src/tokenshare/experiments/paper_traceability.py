@@ -115,7 +115,41 @@ class _LoadedReplayInputs:
     direct: Mapping[str, object]
     current: Mapping[str, object]
     source: Mapping[str, object]
-    current_evidence_files: tuple[tuple[str, bytes], ...]
+    current_evidence_files: "_ProtectedEvidenceFiles"
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ProtectedEvidenceFiles:
+    """按访问逐个校验 protected evidence，避免整个闭包 bytes 常驻内存。"""
+
+    root_path: Path
+    refs: tuple[Mapping[str, Any], ...]
+
+    def __iter__(self):
+        for ref in self.refs:
+            yield (
+                str(ref["evidence_relative_path"]),
+                _verified_root_ref(self.root_path, ref),
+            )
+
+    def verify(self) -> None:
+        for ref in self.refs:
+            _verify_root_ref_streaming(self.root_path, ref)
+
+    def copy_to(self, output_root: str | Path) -> None:
+        destination = Path(output_root).resolve(strict=False)
+        for ref in self.refs:
+            relative = Path(str(ref["evidence_relative_path"]))
+            if relative.is_absolute() or ".." in relative.parts:
+                raise TraceabilityBlockedError(
+                    "replay input closure evidence path is invalid"
+                )
+            target = (destination / relative).resolve(strict=False)
+            if target != destination and destination not in target.parents:
+                raise TraceabilityBlockedError(
+                    "replay input closure evidence path escapes output root"
+                )
+            _copy_verified_root_ref(self.root_path, ref, target)
 
 
 def recompute_cell_lineage(
@@ -503,6 +537,8 @@ def _persist_protected_replay_input_root(
 
 def _load_protected_replay_inputs(
     value: ProtectedReplayInputRoot,
+    *,
+    _defer_evidence_validation: bool = False,
 ) -> _LoadedReplayInputs:
     if not isinstance(value, ProtectedReplayInputRoot) or not value._producer_validated:
         raise TraceabilityBlockedError("L4 replay requires protected runner descriptor")
@@ -521,22 +557,21 @@ def _load_protected_replay_inputs(
     ):
         raise TraceabilityBlockedError("replay input closure descriptor mismatch")
     loaded = {}
-    current_evidence_files = []
+    current_evidence_refs = []
     try:
         for name in ("direct", "current", "source"):
             ref = descriptor["input_refs"][name]
-            content = _verified_root_ref(value.root_path, ref)
-            loaded[name] = pickle.loads(content)
+            loaded[name] = _verified_root_pickle(value.root_path, ref)
         for ref in descriptor["current_provider_object_refs"]:
-            _verified_root_ref(value.root_path, ref)
+            _verify_root_ref_streaming(value.root_path, ref)
         for ref in descriptor["current_evidence_refs"]:
             relative_path = Path(str(ref["evidence_relative_path"]))
             if relative_path.is_absolute() or ".." in relative_path.parts:
                 raise TraceabilityBlockedError(
                     "replay input closure evidence path is invalid"
                 )
-            current_evidence_files.append(
-                (relative_path.as_posix(), _verified_root_ref(value.root_path, ref))
+            current_evidence_refs.append(
+                {**dict(ref), "evidence_relative_path": relative_path.as_posix()}
             )
         for ref in descriptor["external_source_object_refs"]:
             path = Path(ref["external_path"])
@@ -546,11 +581,17 @@ def _load_protected_replay_inputs(
         raise TraceabilityBlockedError("replay input closure is missing or invalid") from exc
     if not all(isinstance(loaded[name], Mapping) for name in loaded):
         raise TraceabilityBlockedError("replay input closure did not restore typed mappings")
+    evidence_files = _ProtectedEvidenceFiles(
+        root_path=value.root_path,
+        refs=tuple(current_evidence_refs),
+    )
+    if not _defer_evidence_validation:
+        evidence_files.verify()
     return _LoadedReplayInputs(
         direct=loaded["direct"],
         current=loaded["current"],
         source=loaded["source"],
-        current_evidence_files=tuple(current_evidence_files),
+        current_evidence_files=evidence_files,
     )
 
 
@@ -570,12 +611,14 @@ def recompute_paper_traceability(
         generate_paper_formal_report,
     )
 
-    loaded = _load_protected_replay_inputs(replay_input_root)
+    loaded = _load_protected_replay_inputs(
+        replay_input_root,
+        _defer_evidence_validation=True,
+    )
     output_path = Path(output_root)
     if output_path.exists() and any(output_path.iterdir()):
         raise FileExistsError(f"traceability output root is not fresh: {output_path}")
-    for relative_path, content in loaded.current_evidence_files:
-        _atomic_write_bytes(output_path / relative_path, content)
+    loaded.current_evidence_files.copy_to(output_path)
     current_inputs = loaded.current
     source_inputs = loaded.source
     current_contract = contract or load_paper_metric_contract()
@@ -1090,6 +1133,72 @@ def _verified_root_ref(root: Path, ref: Mapping[str, Any]) -> bytes:
     ):
         raise TraceabilityBlockedError("replay input closure digest mismatch")
     return content
+
+
+def _verified_root_pickle(root: Path, ref: Mapping[str, Any]) -> Any:
+    _verify_root_ref_streaming(root, ref)
+    path = (root / str(ref["path"])).resolve(strict=False)
+    try:
+        with path.open("rb") as handle:
+            return pickle.load(handle)
+    except FileNotFoundError as exc:
+        raise TraceabilityBlockedError("replay input closure file is missing") from exc
+
+
+def _verify_root_ref_streaming(root: Path, ref: Mapping[str, Any]) -> None:
+    path = (root / str(ref["path"])).resolve(strict=False)
+    resolved_root = root.resolve(strict=False)
+    if resolved_root != path and resolved_root not in path.parents:
+        raise TraceabilityBlockedError("replay input closure path escapes root")
+    digest = sha256()
+    size = 0
+    try:
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                size += len(chunk)
+                digest.update(chunk)
+    except FileNotFoundError as exc:
+        raise TraceabilityBlockedError("replay input closure file is missing") from exc
+    if (
+        size != ref.get("size_bytes")
+        or "sha256:" + digest.hexdigest() != ref.get("content_hash")
+    ):
+        raise TraceabilityBlockedError("replay input closure digest mismatch")
+
+
+def _copy_verified_root_ref(
+    root: Path,
+    ref: Mapping[str, Any],
+    target: Path,
+) -> None:
+    source = (root / str(ref["path"])).resolve(strict=False)
+    resolved_root = root.resolve(strict=False)
+    if resolved_root != source and resolved_root not in source.parents:
+        raise TraceabilityBlockedError("replay input closure path escapes root")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    digest = sha256()
+    size = 0
+    try:
+        try:
+            with source.open("rb") as reader, temporary.open("xb") as writer:
+                while chunk := reader.read(1024 * 1024):
+                    size += len(chunk)
+                    digest.update(chunk)
+                    writer.write(chunk)
+                writer.flush()
+                os.fsync(writer.fileno())
+        except FileNotFoundError as exc:
+            raise TraceabilityBlockedError("replay input closure file is missing") from exc
+        if (
+            size != ref.get("size_bytes")
+            or "sha256:" + digest.hexdigest() != ref.get("content_hash")
+        ):
+            raise TraceabilityBlockedError("replay input closure digest mismatch")
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def _sha256_file(path: Path) -> str:

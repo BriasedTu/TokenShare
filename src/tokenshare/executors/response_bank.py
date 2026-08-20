@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
+import os
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
 
@@ -49,6 +50,40 @@ COMMON_ROLES = {
 
 class ResponseBankBlockedError(RuntimeError):
     """表示 replay 因显式外部 bank capability 不完整而阻塞。"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResponseBankCanonicalRelocationEvidence:
+    manifest_digest: str
+    manifest_file_sha256: str
+    marker_digest: str
+    root_identity_digest: str
+    root_free_tree_digest: str
+    root_free_file_count: int
+    schema_version: str = "tokenshare.response_bank_canonical_relocation_evidence.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != (
+            "tokenshare.response_bank_canonical_relocation_evidence.v1"
+        ):
+            raise ValueError("response bank relocation evidence schema drift")
+        for value in (
+            self.manifest_digest,
+            self.manifest_file_sha256,
+            self.marker_digest,
+            self.root_identity_digest,
+            self.root_free_tree_digest,
+        ):
+            _digest_hex(value)
+        if (
+            isinstance(self.root_free_file_count, bool)
+            or not isinstance(self.root_free_file_count, int)
+            or self.root_free_file_count < 1
+        ):
+            raise ValueError("response bank relocation file count is invalid")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def canonical_digest(value: Any) -> str:
@@ -208,7 +243,7 @@ class ResponseBankManifest:
 
 @dataclass(frozen=True, kw_only=True)
 class ResultsFirstResponseBankManifest:
-    """用户授权 smoke facility 的 bank manifest；绝不冒充 paid receipt。"""
+    """用户授权 results-first facility 的 bank manifest；绝不冒充 paid receipt。"""
 
     schema_version: str
     authorization_kind: str
@@ -237,13 +272,19 @@ class ResultsFirstResponseBankManifest:
         object_role_schema: Sequence[str],
         terminal_entry_count: int,
         authorization_digest: str,
+        authorization_kind: str = "user_authorized_results_first",
     ) -> "ResultsFirstResponseBankManifest":
         canonical_entry_ids = tuple(sorted(entry_ids))
         if len(set(canonical_entry_ids)) != len(canonical_entry_ids):
             raise ValueError("manifest entry_ids must be unique")
+        if authorization_kind not in {
+            "user_authorized_results_first",
+            "user_authorized_smoke_facility",
+        }:
+            raise ValueError("results-first manifest authorization kind mismatch")
         value = cls(
             schema_version=RESULTS_FIRST_RESPONSE_BANK_MANIFEST_SCHEMA_VERSION,
-            authorization_kind="user_authorized_smoke_facility",
+            authorization_kind=authorization_kind,
             bank_root_id=bank_root_id,
             manifest_digest="",
             profile_digest=profile_digest,
@@ -272,7 +313,10 @@ class ResultsFirstResponseBankManifest:
         manifest = cls(**converted)
         if manifest.schema_version != RESULTS_FIRST_RESPONSE_BANK_MANIFEST_SCHEMA_VERSION:
             raise ValueError("results-first manifest schema_version mismatch")
-        if manifest.authorization_kind != "user_authorized_smoke_facility":
+        if manifest.authorization_kind not in {
+            "user_authorized_results_first",
+            "user_authorized_smoke_facility",
+        }:
             raise ValueError("results-first manifest authorization kind mismatch")
         if manifest.manifest_digest != _manifest_digest(manifest):
             raise ValueError("manifest digest mismatch")
@@ -558,6 +602,196 @@ def initialize_response_bank(
     return ResponseBankResolver.open(root).index.manifest
 
 
+def relocate_response_bank_canonically(
+    *,
+    source_root: str | Path,
+    target_root: str | Path,
+) -> ResponseBankCanonicalRelocationEvidence:
+    """把 strict bank 以目标 root 重新绑定，并以 marker 作为最后提交。"""
+
+    source_input = Path(source_root)
+    target_input = Path(target_root)
+    if source_input.is_symlink() or target_input.is_symlink():
+        raise ValueError("response bank relocation root must not be a symlink")
+    source = source_input.resolve(strict=True)
+    target = target_input.resolve(strict=False)
+    resolver = ResponseBankResolver.open(source)
+    if source == target:
+        raise ValueError("response bank relocation roots must be distinct")
+    if source in target.parents or target in source.parents:
+        raise ValueError("response bank relocation roots must not overlap")
+
+    source_files, source_directories = _relocation_regular_tree(source)
+    manifest_relative = Path("manifest.v1.json")
+    marker_relative = Path("response_bank_root_marker.v1.json")
+    source_manifest_bytes = source_files.pop(manifest_relative, None)
+    source_marker_bytes = source_files.pop(marker_relative, None)
+    if source_manifest_bytes is None or source_marker_bytes is None:
+        raise ValueError("response bank relocation source publication is incomplete")
+    manifest = resolver.index.manifest
+    expected_source_manifest_bytes = _canonical_bytes(manifest.to_dict())
+    expected_source_marker = _root_marker(
+        source,
+        manifest.bank_root_id,
+        manifest.manifest_digest,
+    )
+    if (
+        source_manifest_bytes != expected_source_manifest_bytes
+        or source_marker_bytes != _canonical_bytes(expected_source_marker)
+    ):
+        raise ValueError("response bank relocation source is not canonical")
+    for entry in resolver.index.entries:
+        for locator in entry.object_locators:
+            resolver.read_verified(locator)
+
+    target_marker = _root_marker(
+        target,
+        manifest.bank_root_id,
+        manifest.manifest_digest,
+    )
+    target_manifest = replace(
+        manifest,
+        root_binding_marker_digest=target_marker["marker_digest"],
+    )
+    if target_manifest.manifest_digest != _manifest_digest(target_manifest):
+        raise ValueError("response bank relocation changed manifest identity")
+    ValidatedResponseBankIndex.build(
+        target_manifest,
+        resolver.index.inventory_rows,
+        resolver.index.entries,
+    )
+    target_manifest_bytes = _canonical_bytes(target_manifest.to_dict())
+    target_marker_bytes = _canonical_bytes(target_marker)
+    expected_files = {
+        **source_files,
+        manifest_relative: target_manifest_bytes,
+        marker_relative: target_marker_bytes,
+    }
+    expected_directories = {
+        relative
+        for relative in source_directories
+        if relative != Path(".")
+    }
+    for relative in expected_files:
+        expected_directories.update(relative.parents)
+    expected_directories.discard(Path("."))
+
+    existing_files: dict[Path, bytes] = {}
+    existing_directories: set[Path] = set()
+    if target.exists():
+        if not target.is_dir():
+            raise ValueError("response bank relocation target is not a directory")
+        existing_files, existing_directories = _relocation_regular_tree(target)
+        if (
+            set(existing_files) - set(expected_files)
+            or existing_directories - expected_directories
+        ):
+            raise ValueError("response bank relocation target contains extra topology")
+        if any(
+            existing_files[relative] != expected_files[relative]
+            for relative in existing_files
+        ):
+            raise ValueError("response bank relocation target byte drift")
+        missing_root_free = set(source_files) - set(existing_files)
+        if manifest_relative in existing_files and missing_root_free:
+            raise ValueError("response bank relocation manifest preceded root-free files")
+        if marker_relative in existing_files and set(existing_files) != set(
+            expected_files
+        ):
+            raise ValueError("response bank relocation marker is not last")
+
+    target.mkdir(parents=True, exist_ok=True)
+    for relative in sorted(expected_directories, key=lambda item: item.as_posix()):
+        (target / relative).mkdir(parents=True, exist_ok=True)
+    for relative in sorted(source_files, key=lambda item: item.as_posix()):
+        if relative not in existing_files:
+            _write_relocation_bytes_once(target / relative, source_files[relative])
+    if manifest_relative not in existing_files:
+        _write_relocation_bytes_once(
+            target / manifest_relative,
+            target_manifest_bytes,
+        )
+    if marker_relative not in existing_files:
+        _write_relocation_bytes_once(target / marker_relative, target_marker_bytes)
+
+    final_files, final_directories = _relocation_regular_tree(target)
+    if final_files != expected_files or final_directories != expected_directories:
+        raise ValueError("response bank relocation publication drift")
+    relocated = ResponseBankResolver.open(target)
+    if (
+        relocated.index.manifest != target_manifest
+        or relocated.index.inventory_rows != resolver.index.inventory_rows
+        or relocated.index.entries != resolver.index.entries
+    ):
+        raise ValueError("response bank relocation strict reload drift")
+    for entry in relocated.index.entries:
+        for locator in entry.object_locators:
+            relocated.read_verified(locator)
+
+    root_free_tree_digest, root_free_file_count = (
+        _response_bank_root_free_tree_identity(
+            manifest=target_manifest,
+            root_free_files=source_files,
+        )
+    )
+    evidence = ResponseBankCanonicalRelocationEvidence(
+        manifest_digest=target_manifest.manifest_digest,
+        manifest_file_sha256=_digest_bytes(target_manifest_bytes),
+        marker_digest=target_marker["marker_digest"],
+        root_identity_digest=target_marker["root_identity_digest"],
+        root_free_tree_digest=root_free_tree_digest,
+        root_free_file_count=root_free_file_count,
+    )
+    if inspect_response_bank_canonical_relocation(root_path=target) != evidence:
+        raise ValueError("response bank relocation evidence reload drift")
+    return evidence
+
+
+def inspect_response_bank_canonical_relocation(
+    *,
+    root_path: str | Path,
+) -> ResponseBankCanonicalRelocationEvidence:
+    """只读重算 strict bank 的 canonical relocation evidence。"""
+
+    root_input = Path(root_path)
+    if root_input.is_symlink():
+        raise ValueError("response bank relocation root must not be a symlink")
+    root = root_input.resolve(strict=True)
+    resolver = ResponseBankResolver.open(root)
+    files, _directories = _relocation_regular_tree(root)
+    manifest_relative = Path("manifest.v1.json")
+    marker_relative = Path("response_bank_root_marker.v1.json")
+    manifest_bytes = files.pop(manifest_relative, None)
+    marker_bytes = files.pop(marker_relative, None)
+    if manifest_bytes is None or marker_bytes is None:
+        raise ValueError("response bank relocation publication is incomplete")
+    manifest = resolver.index.manifest
+    expected_manifest_bytes = _canonical_bytes(manifest.to_dict())
+    marker = _root_marker(root, manifest.bank_root_id, manifest.manifest_digest)
+    if (
+        manifest_bytes != expected_manifest_bytes
+        or marker_bytes != _canonical_bytes(marker)
+    ):
+        raise ValueError("response bank relocation publication is not canonical")
+    for entry in resolver.index.entries:
+        for locator in entry.object_locators:
+            resolver.read_verified(locator)
+    root_free_tree_digest, root_free_file_count = (
+        _response_bank_root_free_tree_identity(
+            manifest=manifest,
+            root_free_files=files,
+        )
+    )
+    return ResponseBankCanonicalRelocationEvidence(
+        manifest_digest=manifest.manifest_digest,
+        manifest_file_sha256=_digest_bytes(manifest_bytes),
+        marker_digest=marker["marker_digest"],
+        root_identity_digest=marker["root_identity_digest"],
+        root_free_tree_digest=root_free_tree_digest,
+        root_free_file_count=root_free_file_count,
+    )
+
+
 def _validate_entry(
     manifest: ResponseBankManifest,
     row: ResponseBankInventoryRow,
@@ -649,6 +883,75 @@ def _require_exact_fields(value: Mapping[str, Any], cls: type[Any]) -> None:
 def _canonical_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
         "utf-8"
+    )
+
+
+def _relocation_regular_tree(root: Path) -> tuple[dict[Path, bytes], set[Path]]:
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("response bank relocation root topology drift")
+    files: dict[Path, bytes] = {}
+    directories: set[Path] = set()
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        if path.is_symlink():
+            raise ValueError("response bank relocation tree contains a symlink")
+        relative = path.relative_to(root)
+        if path.is_dir():
+            directories.add(relative)
+        elif path.is_file():
+            files[relative] = path.read_bytes()
+        else:
+            raise ValueError("response bank relocation tree contains a non-file")
+    return files, directories
+
+
+def _write_relocation_bytes_once(path: Path, payload: bytes) -> None:
+    if path.is_symlink():
+        raise ValueError("response bank relocation target contains a symlink")
+    if path.exists():
+        if not path.is_file() or path.read_bytes() != payload:
+            raise ValueError("response bank relocation write-once byte drift")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("xb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _response_bank_root_free_tree_identity(
+    *,
+    manifest: ResponseBankManifest | ResultsFirstResponseBankManifest,
+    root_free_files: Mapping[Path, bytes],
+) -> tuple[str, int]:
+    manifest_body = manifest.to_dict()
+    manifest_body.pop("root_binding_marker_digest")
+    normalized_manifest = _canonical_bytes(manifest_body)
+    rows = [
+        {
+            "relative_path": "manifest.v1.json",
+            "file_sha256": _digest_bytes(normalized_manifest),
+            "size_bytes": len(normalized_manifest),
+        }
+    ]
+    rows.extend(
+        {
+            "relative_path": relative.as_posix(),
+            "file_sha256": _digest_bytes(payload),
+            "size_bytes": len(payload),
+        }
+        for relative, payload in sorted(
+            root_free_files.items(),
+            key=lambda item: item[0].as_posix(),
+        )
+    )
+    return (
+        canonical_digest(
+            {
+                "schema_version": "tokenshare.response_bank_root_free_tree.v1",
+                "files": rows,
+            }
+        ),
+        len(rows),
     )
 
 

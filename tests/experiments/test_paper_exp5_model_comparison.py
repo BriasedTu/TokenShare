@@ -19,6 +19,9 @@ from tokenshare.experiments.paper_experiment_contracts import (
 )
 from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
 from tokenshare.experiments.paper_model_policy import (
+    EXP5_PRICING_FRESHNESS_AS_OF,
+    EXP5_PRICING_FRESHNESS_AUTHORITY_SCHEMA_VERSION,
+    EXP5_PRICING_MAX_AGE_DAYS,
     PAPER_MODEL_ENDPOINT_COHORT_ID,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBERS,
@@ -36,6 +39,11 @@ from tokenshare.experiments.paper_models import (
     digest_json,
 )
 from tokenshare.experiments.paper_runner import _bind_lean_matrix_to_catalog
+from tokenshare.experiments.paper_formal_runner import (
+    _case_with_selection_split_profile,
+    _catalog_cases_by_id,
+    _condition_with_frozen_case_metadata,
+)
 
 
 MODULE_NAME = "tokenshare.experiments.paper_exp5_model_comparison"
@@ -116,6 +124,16 @@ def test_exp5_v3_expands_48_repeat_major_conditions() -> None:
     }
 
     assert len(conditions) == 48
+    lean_conditions = tuple(
+        condition for condition in conditions if condition.domain == "lean_proof"
+    )
+    factor_conditions = tuple(
+        condition for condition in conditions if condition.domain == "factorization"
+    )
+    assert len(lean_conditions) == 36
+    assert all(condition.topic_family_version is None for condition in lean_conditions)
+    assert len(factor_conditions) == 12
+    assert all(condition.topic_family_version is None for condition in factor_conditions)
     cursor = 0
     for repeat_id, member_ids in expected_order.items():
         predecessor = None
@@ -148,6 +166,63 @@ def test_exp5_v3_expands_48_repeat_major_conditions() -> None:
                 for condition in block
             )
             predecessor = member_id
+
+
+def test_exp5_v3_representative_roots_accept_case_owned_lean_metadata() -> None:
+    module = _load_module()
+    catalog = _tracked_v3_catalog()
+    context = _context(
+        catalog=catalog,
+        binding=_cohort_preflight_v3(),
+    )
+    conditions = module.expand_exp5_v3_conditions(context)
+    selections = module.freeze_exp5_v3_case_selections(context, conditions)
+    representative = tuple(
+        (condition, selection)
+        for condition, selection in zip(conditions, selections, strict=True)
+        if condition.repeat_id == 0
+    )
+    cases_by_id = _catalog_cases_by_id(catalog)
+
+    assert len(representative) == 16
+    for condition, selection in representative:
+        case = cases_by_id[selection.ordered_case_ids[0]]
+        profiled_case = _case_with_selection_split_profile(case, selection)
+        runtime_condition = _condition_with_frozen_case_metadata(
+            condition=condition,
+            case=profiled_case,
+        )
+        if condition.domain == "factorization":
+            assert getattr(selection, "split_profile_id", None) is None
+            assert profiled_case == case
+            assert runtime_condition == condition
+        else:
+            assert condition.topic_family_version is None
+            assert runtime_condition.topic_family_version == "v1"
+
+
+def test_exp5_v3_wrong_nonempty_lean_metadata_version_fails_closed() -> None:
+    module = _load_module()
+    catalog = _tracked_v3_catalog()
+    context = _context(
+        catalog=catalog,
+        binding=_cohort_preflight_v3(),
+    )
+    conditions = module.expand_exp5_v3_conditions(context)
+    selections = module.freeze_exp5_v3_case_selections(context, conditions)
+    index = next(
+        index
+        for index, condition in enumerate(conditions)
+        if condition.repeat_id == 0 and condition.domain == "lean_proof"
+    )
+    condition = conditions[index]
+    case = _catalog_cases_by_id(catalog)[selections[index].ordered_case_ids[0]]
+
+    with pytest.raises(ValueError, match="topic_family_version"):
+        _condition_with_frozen_case_metadata(
+            condition=replace(condition, topic_family_version="wrong-version"),
+            case=case,
+        )
 
 
 def test_exp5_v3_cohort_uses_v4_selection_for_648_roots_and_4992_units() -> None:
@@ -490,6 +565,7 @@ def test_exp5_epd006_uses_all_exp1_hard_roots_without_exp2_slice() -> None:
             assert len(selection.ordered_case_ids) == 166
         else:
             assert condition.topic_family in module.LEAN_TOPIC_FAMILIES
+            assert condition.topic_family_version is None
             assert selection.topic_family == condition.topic_family
             assert selection.ordered_case_ids == tuple(
                 readiness_ids[
@@ -1022,6 +1098,7 @@ def test_exp5_model_execution_join_binds_formal_attempt_identity_refs_and_fields
         "attempt_id",
         "worker_id",
         "provider_attempt_index",
+        "provider_attempt_count",
         "attempt_status",
         "provider",
         "model",
@@ -1066,6 +1143,51 @@ def test_exp5_model_execution_join_rejects_non_finite_cost(
         module.build_exp5_model_execution_rows(
             {"model_execution_records": [item]}
         )
+
+
+@pytest.mark.parametrize(
+    "retry_shape",
+    [
+        "nonzero_provider_attempt_index",
+        "zero_provider_attempt_count",
+        "multiple_provider_attempt_count",
+        "multiple_request_identities",
+        "multiple_provider_attempt_records",
+    ],
+)
+def test_exp5_model_execution_join_keeps_retry_shaped_evidence_but_blocks_publication(
+    retry_shape: str,
+) -> None:
+    module = _load_module()
+    item = _model_execution_item()
+    record = item["record"]
+    attempt = item["attempt"]
+    if retry_shape == "nonzero_provider_attempt_index":
+        attempt["provider_attempt_index"] = 1
+    elif retry_shape == "zero_provider_attempt_count":
+        attempt["provider_attempt_count"] = 0
+    elif retry_shape == "multiple_provider_attempt_count":
+        attempt["provider_attempt_count"] = 2
+    elif retry_shape == "multiple_request_identities":
+        record["actual_request_identities"].append(
+            deepcopy(record["actual_request_identities"][0])
+        )
+    else:
+        record["actual_provider_attempts"].append(
+            deepcopy(record["actual_provider_attempts"][0])
+        )
+    record["record_digest"] = digest_json(
+        {key: value for key, value in record.items() if key != "record_digest"}
+    )
+
+    row = module.build_exp5_model_execution_rows(
+        {"model_execution_records": [item]}
+    )[0]
+
+    assert "exp5_retry_forbidden" in row["failure_reasons"]
+    assert row["total_tokens"] == 45
+    assert row["cost_estimate"] == 0.012
+    assert row["paper_eligible"] is False
 
 
 def test_exp5_model_execution_join_requires_actual_request_and_provider_attempt_identity() -> None:
@@ -1284,6 +1406,7 @@ def _model_execution_item(
         attempt_id="attempt1",
         worker_id="worker1",
         provider_attempt_index=0,
+        provider_attempt_count=1,
         attempt_status="succeeded",
         provider="openai",
         model="gpt-5.6-sol",
@@ -1532,6 +1655,7 @@ def _cohort_preflight_v3() -> dict[str, Any]:
         source_digest = "sha256:" + str(index) * 64
         selected_entry_id = f"{member_id}_entry"
         reasoning_controls = dict(expected["request_overrides"])
+        pricing_snapshot = dict(expected["pricing"])
         identity = PaperModelEndpointIdentity(
             model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
             model_cohort_digest=cohort_digest,
@@ -1570,6 +1694,15 @@ def _cohort_preflight_v3() -> dict[str, Any]:
                     reasoning_controls
                 ),
             },
+            "pricing_snapshot": pricing_snapshot,
+            "pricing_snapshot_digest": digest_json(pricing_snapshot),
+            "pricing_freshness": {
+                "accessed_at": EXP5_PRICING_FRESHNESS_AS_OF,
+                "pricing_freshness_as_of": EXP5_PRICING_FRESHNESS_AS_OF,
+                "age_days": 0,
+                "max_age_days": EXP5_PRICING_MAX_AGE_DAYS,
+                "status": "fresh",
+            },
         }
     return {
         "schema_version": "tokenshare.paper_model_endpoint_cohort_preflight.v1",
@@ -1585,6 +1718,11 @@ def _cohort_preflight_v3() -> dict[str, Any]:
         "member_plans": member_plans,
         "request_controls_snapshot": comparable_controls,
         "request_controls_snapshot_digest": digest_json(comparable_controls),
+        "pricing_freshness_authority": {
+            "schema_version": EXP5_PRICING_FRESHNESS_AUTHORITY_SCHEMA_VERSION,
+            "pricing_freshness_as_of": EXP5_PRICING_FRESHNESS_AS_OF,
+            "max_age_days": EXP5_PRICING_MAX_AGE_DAYS,
+        },
     }
 
 

@@ -86,6 +86,7 @@ def merge_lean_child_proofs(
     created_at: str,
     checker: LeanChecker = check_lean_proof,
     slot_integrity_enabled: bool = True,
+    verification_enabled: bool = True,
 ) -> LeanProofMergeResult:
     """Build a root merge proof from child proof evidence and re-check it."""
 
@@ -100,13 +101,19 @@ def merge_lean_child_proofs(
             split_certificate=split_certificate,
             child_inputs=ordered_inputs,
             environment_manifest=environment_manifest,
+            artifact_store=artifact_store,
+            verification_enabled=verification_enabled,
         )
 
     parent_payload = LeanTheoremPayload.from_dict(
         json.loads(artifact_store.read_bytes(parent_theorem_payload_ref).decode("utf-8"))
     )
     merge_rule_id = _merge_rule_id(split_certificate)
-    child_proof_sources = _child_proof_sources(ordered_inputs, artifact_store)
+    child_proof_sources = _child_proof_sources(
+        ordered_inputs,
+        artifact_store,
+        verification_enabled=verification_enabled,
+    )
     child_statements = _child_statements(split_certificate)
     proof_source = _merge_proof_source(
         merge_rule_id,
@@ -143,7 +150,10 @@ def merge_lean_child_proofs(
         artifact_store=artifact_store,
         environment_manifest=environment_manifest,
     )
-    child_proof_refs = _child_proof_refs(ordered_inputs)
+    child_proof_refs = _child_proof_refs(
+        ordered_inputs,
+        verification_enabled=verification_enabled,
+    )
     accepted = checker_report.status == LeanCheckerStatus.ACCEPTED
     merge_result_ref = None
     if accepted:
@@ -194,6 +204,7 @@ def merge_lean_lemma_graph_proofs(
     created_at: str,
     checker: LeanChecker = check_lean_proof,
     slot_integrity_enabled: bool = True,
+    verification_enabled: bool = True,
 ) -> LeanLemmaGraphMergeResult:
     """Assemble accepted lemma-DAG node proof artifacts and re-check the root."""
 
@@ -221,12 +232,17 @@ def merge_lean_lemma_graph_proofs(
             node_inputs=ordered_inputs,
             artifact_store=artifact_store,
             environment_manifest=environment_manifest,
+            verification_enabled=verification_enabled,
         )
 
     parent_payload = LeanTheoremPayload.from_dict(
         json.loads(artifact_store.read_bytes(parent_theorem_payload_ref).decode("utf-8"))
     )
-    node_proof_sources = _lemma_graph_proof_sources(ordered_inputs, artifact_store)
+    node_proof_sources = _lemma_graph_proof_sources(
+        ordered_inputs,
+        artifact_store,
+        verification_enabled=verification_enabled,
+    )
     node_statements = _lemma_graph_node_statements(lemma_graph_certificate)
     proof_source = _lemma_graph_merge_proof_source(
         lemma_graph_certificate,
@@ -267,7 +283,10 @@ def merge_lean_lemma_graph_proofs(
         artifact_store=artifact_store,
         environment_manifest=environment_manifest,
     )
-    node_proof_refs = _lemma_graph_node_proof_refs(ordered_inputs)
+    node_proof_refs = _lemma_graph_node_proof_refs(
+        ordered_inputs,
+        verification_enabled=verification_enabled,
+    )
     accepted = checker_report.status == LeanCheckerStatus.ACCEPTED
     merge_result_ref = None
     if accepted:
@@ -341,6 +360,8 @@ def _validate_child_inputs(
     split_certificate: LeanSplitCertificate,
     child_inputs: list[LeanProofMergeInput],
     environment_manifest: LeanEnvironmentManifest,
+    artifact_store: ArtifactStore,
+    verification_enabled: bool,
 ) -> None:
     certificate_children = {
         str(child["child_logical_key"]): child for child in split_certificate.child_goals
@@ -356,6 +377,10 @@ def _validate_child_inputs(
             raise ValueError("Lean child proof missing from split certificate")
         if child_result.context_digest != certificate_child["context_digest"]:
             raise ValueError("Lean child proof context mismatch")
+        if not artifact_store.verify(child_result.proof_candidate_ref):
+            raise ValueError("Lean child proof candidate artifact ref is missing")
+        if not verification_enabled:
+            continue
         if not child_result.accepted or not child_result.merge_ready:
             raise ValueError("Lean child proof is not merge-ready")
         report = child_result.checker_report
@@ -444,9 +469,23 @@ def _have_from_child(
 def _child_proof_sources(
     inputs: list[LeanProofMergeInput],
     artifact_store: ArtifactStore,
+    *,
+    verification_enabled: bool,
 ) -> dict[str, str]:
     sources: dict[str, str] = {}
     for item in inputs:
+        if not verification_enabled:
+            candidate = _load_json_object(
+                artifact_store.read_bytes(item.child_proof.proof_candidate_ref).decode(
+                    "utf-8"
+                ),
+                artifact_name="Lean child proof candidate",
+            )
+            proof_source = candidate.get("proof_source")
+            if not isinstance(proof_source, str):
+                raise ValueError("Lean child proof candidate proof_source is missing")
+            sources[item.child_proof.child_logical_key] = proof_source
+            continue
         report = item.child_proof.checker_report
         if report is None or report.proof_artifact_ref is None:
             raise ValueError("Lean child proof missing proof artifact")
@@ -463,9 +502,18 @@ def _child_statements(split_certificate: LeanSplitCertificate) -> dict[str, str]
     }
 
 
-def _child_proof_refs(inputs: list[LeanProofMergeInput]) -> dict[str, ArtifactRef]:
+def _child_proof_refs(
+    inputs: list[LeanProofMergeInput],
+    *,
+    verification_enabled: bool,
+) -> dict[str, ArtifactRef]:
     refs: dict[str, ArtifactRef] = {}
     for item in inputs:
+        if not verification_enabled:
+            refs[item.child_proof.child_logical_key] = (
+                item.child_proof.proof_candidate_ref
+            )
+            continue
         report = item.child_proof.checker_report
         if report is None or report.proof_artifact_ref is None:
             raise ValueError("Lean child proof missing proof artifact")
@@ -596,6 +644,7 @@ def _validate_lemma_graph_node_inputs(
     node_inputs: list[LeanLemmaGraphProofInput],
     artifact_store: ArtifactStore,
     environment_manifest: LeanEnvironmentManifest,
+    verification_enabled: bool,
 ) -> None:
     nodes_by_id = certificate.lemma_nodes_by_id
     expected_environment_digest = environment_manifest.environment_digest
@@ -626,6 +675,8 @@ def _validate_lemma_graph_node_inputs(
         )
         if proof_candidate.get("theorem_payload_digest") != certificate_payload.payload_digest:
             raise ValueError("Lean lemma graph proof candidate payload digest mismatch")
+        if not verification_enabled:
+            continue
         report = item.checker_report
         if report is None or report.status != LeanCheckerStatus.ACCEPTED:
             raise ValueError("Lean lemma graph node proof missing accepted checker report")
@@ -661,9 +712,23 @@ def _lemma_graph_node_statements(
 def _lemma_graph_proof_sources(
     inputs: list[LeanLemmaGraphProofInput],
     artifact_store: ArtifactStore,
+    *,
+    verification_enabled: bool,
 ) -> dict[str, str]:
     sources: dict[str, str] = {}
     for item in inputs:
+        if not verification_enabled:
+            candidate = _load_json_object(
+                artifact_store.read_bytes(item.proof_candidate_ref).decode("utf-8"),
+                artifact_name="Lean lemma graph proof candidate",
+            )
+            proof_source = candidate.get("proof_source")
+            if not isinstance(proof_source, str):
+                raise ValueError(
+                    "Lean lemma graph proof candidate proof_source is missing"
+                )
+            sources[item.node_id] = proof_source
+            continue
         report = item.checker_report
         if report is None or report.proof_artifact_ref is None:
             raise ValueError("Lean lemma graph node proof missing proof artifact")
@@ -675,9 +740,14 @@ def _lemma_graph_proof_sources(
 
 def _lemma_graph_node_proof_refs(
     inputs: list[LeanLemmaGraphProofInput],
+    *,
+    verification_enabled: bool,
 ) -> dict[str, ArtifactRef]:
     refs: dict[str, ArtifactRef] = {}
     for item in inputs:
+        if not verification_enabled:
+            refs[item.node_id] = item.proof_candidate_ref
+            continue
         report = item.checker_report
         if report is None or report.proof_artifact_ref is None:
             raise ValueError("Lean lemma graph node proof missing proof artifact")

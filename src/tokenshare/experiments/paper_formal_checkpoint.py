@@ -541,6 +541,51 @@ def _task20_publication_inventory(
         )
     ):
         raise ValueError("Task20 observation collection closure mismatch")
+    source_record_digests_by_member = {
+        record.get("member_id"): record.get("record_digest")
+        for record in source_records
+    }
+    for observation in observations:
+        refs = observation.get("lineage_source_record_refs")
+        if (
+            not isinstance(refs, list)
+            or any(
+                not isinstance(ref, Mapping)
+                or set(ref) != {"member_id", "record_digest"}
+                or source_record_digests_by_member.get(ref.get("member_id"))
+                != ref.get("record_digest")
+                for ref in refs
+            )
+        ):
+            raise ValueError("Task20 observation lineage record closure mismatch")
+        if not refs and not (
+            observation.get("publish_blocked") is True
+            and observation.get("numeric_value") is None
+            and (
+                (
+                    observation.get("required_current_provider_roles") == []
+                    and observation.get("required_source_bank_roles") == []
+                )
+                or (
+                    isinstance(observation.get("null_reason"), str)
+                    and (
+                        observation["null_reason"].startswith(
+                            "missing_required_lineage:"
+                        )
+                        or observation["null_reason"].startswith(
+                            "missing_declared_root_lineage"
+                        )
+                        or observation["null_reason"].startswith(
+                            "missing_exact_root_source_facts"
+                        )
+                        or observation["null_reason"].startswith(
+                            "root_source_lineage_"
+                        )
+                    )
+                )
+            )
+        ):
+            raise ValueError("Task20 observation lineage record closure mismatch")
     typed_observations = tuple(
         PaperMetricObservation(**observation) for observation in observations
     )

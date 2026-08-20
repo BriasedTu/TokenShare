@@ -120,6 +120,7 @@ class Exp2TraceConsumptionFacts:
     source_total_tokens: int | Decimal | None
     source_cost_estimate_cny: int | Decimal | None
     source_bank_roles: tuple[str, ...] | None
+    source_bank_entry_id: str | None = None
 
     def __post_init__(self) -> None:
         _non_empty(self.consumption_id, "consumption_id")
@@ -130,6 +131,8 @@ class Exp2TraceConsumptionFacts:
             if value is not None:
                 _nonnegative_number(value, name)
         _normalize_roles(self, "source_bank_roles")
+        if self.source_bank_entry_id is not None:
+            _non_empty(self.source_bank_entry_id, "source_bank_entry_id")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -166,6 +169,9 @@ class Exp2TraceHydratedRoot:
     ai_units: tuple[Exp2AIUnitFacts, ...] | None
     in_flight_at_witness: int | None
     observed_peak_concurrency: int | None
+    source_api_latency_total_ms: int | Decimal | None = None
+    source_api_latency_known_total_ms: int | Decimal | None = None
+    source_api_latency_missing_attempt_count: int | None = None
 
     def __post_init__(self) -> None:
         _validate_direct(self.direct_result, "experiment_2_trace", "real_model_trace_protocol_run")
@@ -177,6 +183,44 @@ class Exp2TraceHydratedRoot:
             value = getattr(self, name)
             if value is not None:
                 _nonnegative_int(value, name)
+        latency_coverage = (
+            self.source_api_latency_total_ms,
+            self.source_api_latency_known_total_ms,
+            self.source_api_latency_missing_attempt_count,
+        )
+        if any(value is not None for value in latency_coverage):
+            if (
+                self.source_api_latency_known_total_ms is None
+                or self.source_api_latency_missing_attempt_count is None
+            ):
+                raise ValueError("source API latency coverage must be complete")
+            _nonnegative_number(
+                self.source_api_latency_known_total_ms,
+                "source_api_latency_known_total_ms",
+            )
+            _nonnegative_int(
+                self.source_api_latency_missing_attempt_count,
+                "source_api_latency_missing_attempt_count",
+            )
+            if self.source_api_latency_total_ms is not None:
+                _nonnegative_number(
+                    self.source_api_latency_total_ms,
+                    "source_api_latency_total_ms",
+                )
+                if (
+                    self.source_api_latency_missing_attempt_count != 0
+                    or Decimal(str(self.source_api_latency_total_ms))
+                    != Decimal(str(self.source_api_latency_known_total_ms))
+                ):
+                    raise ValueError("source API latency coverage is inconsistent")
+            elif self.source_api_latency_missing_attempt_count == 0:
+                committed_count = (
+                    0
+                    if self.trace_consumptions is None
+                    else sum(value.committed for value in self.trace_consumptions)
+                )
+                if committed_count > 0:
+                    raise ValueError("known source API latency cannot have null total")
         worker = _worker_count(self.direct_result)
         scheduled = None if self.ai_units is None else sum(unit.scheduled for unit in self.ai_units)
         if self.observed_peak_concurrency is not None and (
@@ -378,6 +422,18 @@ class _PairInput:
     infra_invalid: bool
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ResourceCoverage:
+    source_attempt_count: int
+    total_unknown: bool
+    tokens_total: Decimal | None
+    tokens_known_total: Decimal
+    tokens_missing_attempt_count: int
+    cost_total: Decimal | None
+    cost_known_total: Decimal
+    cost_missing_attempt_count: int
+
+
 def build_exp2_trace_observations(
     hydrated_roots: Sequence[Exp2TraceHydratedRoot],
     contract: PaperMetricContract,
@@ -451,27 +507,70 @@ def build_exp2_trace_observations(
         worker = value.observation.pair_identity[-1]
         repeat = value.observation.pair_identity[1]
         repeat_groups.setdefault((worker, repeat, value.observation.position_stratum), []).append(value)
-    repeat_values: dict[tuple[int, int, str], Decimal | None] = {}
+    repeat_medians: dict[tuple[int, int, str], Exp2ObservationCell] = {}
     for key in sorted(repeat_groups):
         values = repeat_groups[key]
         bundle = _pair_collection_bundle(key, values, summary_kind="repeat")
         cells = _evaluate_cells(contract, TRACE_TABLE_ID, "repeat_summary", _TRACE_REPEAT_FIELDS, bundle)
         row = Exp2TraceRepeatSummary(worker_count=key[0], repeat_id=key[1], position_stratum=key[2], cells=cells)
         repeat_rows.append(row)
-        median = row.require_cell("trace_replay_paired_speedup_median").value
-        repeat_values[key] = Decimal(median) if median is not None else None
+        repeat_medians[key] = row.require_cell("trace_replay_paired_speedup_median")
 
     condition_rows: list[Exp2TraceConditionSummary] = []
     condition_keys = sorted({(worker, stratum) for worker, _, stratum in repeat_groups})
     for worker, stratum in condition_keys:
-        selected = tuple((key, repeat_values[key]) for key in sorted(repeat_values) if key[0] == worker and key[2] == stratum)
+        selected = tuple(
+            (key, repeat_medians[key])
+            for key in sorted(repeat_medians)
+            if key[0] == worker and key[2] == stratum
+        )
         facts: dict[str, Mapping[str, object]] = {}
         invalid = False
-        for key, median in selected:
+        for key, median_cell in selected:
             member_id = f"repeat-summary:w{worker}:r{key[1]}:{stratum}"
-            item: dict[str, object] = {"member_kind": "exp2_repeat_speedup_summary"}
-            if median is not None:
-                item["repeat_speedup_value"] = median
+            pair_values = repeat_groups[key]
+            lineage_root_facts: dict[str, Mapping[str, object]] = {}
+            for pair_value in pair_values:
+                for root_id, root_fact in pair_value.root_facts.items():
+                    previous = lineage_root_facts.setdefault(root_id, root_fact)
+                    if previous != root_fact:
+                        raise ValueError("conflicting Exp2 summary root lineage facts")
+                    previous = facts.setdefault(root_id, root_fact)
+                    if previous != root_fact:
+                        raise ValueError("conflicting Exp2 condition root lineage facts")
+            ordered_root_ids = tuple(sorted(lineage_root_facts))
+            if median_cell.value is not None and median_cell.publish_blocked:
+                raise ValueError(
+                    "blocked Exp2 repeat speedup must not carry a numeric value"
+                )
+            item: dict[str, object] = {
+                "member_kind": (
+                    "exp2_repeat_speedup_summary"
+                    if median_cell.value is not None or median_cell.publish_blocked
+                    else "exp2_repeat_speedup_exclusion"
+                ),
+                "lineage_root_run_ids": ordered_root_ids,
+                "source_bank_entry_ids": tuple(
+                    dict.fromkeys(
+                        entry_id
+                        for root_id in ordered_root_ids
+                        for root_fact in (lineage_root_facts[root_id],)
+                        for entry_id in root_fact.get("source_bank_entry_ids", ())
+                    )
+                ),
+            }
+            if median_cell.value is not None:
+                item["repeat_speedup_value"] = Decimal(median_cell.value)
+            elif not median_cell.publish_blocked:
+                if median_cell.reason != "membership_excluded":
+                    raise ValueError(
+                        "unblocked Exp2 repeat speedup null lacks closed exclusion"
+                    )
+                item["closed_exclusion_reason"] = median_cell.reason
+            else:
+                item["upstream_blocked_reason"] = (
+                    median_cell.reason or "missing_repeat_speedup_evidence"
+                )
             facts[member_id] = item
             invalid = invalid or any(value.infra_invalid for value in repeat_groups[key])
         bundle = _bundle(
@@ -556,7 +655,14 @@ def _validate_contract(contract: PaperMetricContract) -> None:
 def _trace_root_bundle(value: Exp2TraceHydratedRoot) -> MetricObservationBundle:
     row = value.direct_result
     member_facts: dict[str, Mapping[str, object]] = {
-        row.preregistered_root_run_id: _root_member_facts(row)
+        row.preregistered_root_run_id: _root_member_facts(
+            row,
+            source_bank_entry_ids=(
+                _source_entry_ids(value)
+                if value.trace_consumptions is not None
+                else None
+            ),
+        )
     }
     if value.trace_consumptions is None:
         member_facts[f"missing-consumptions:{row.preregistered_root_run_id}"] = {
@@ -568,6 +674,28 @@ def _trace_root_bundle(value: Exp2TraceHydratedRoot) -> MetricObservationBundle:
             facts: dict[str, object] = {
                 "member_kind": "committed_trace_consumption",
                 "committed": consumption.committed,
+                "source_usage_total_unknown": (
+                    consumption.source_total_tokens is None
+                ),
+                "source_usage_total_tokens_known_total": (
+                    Decimal(0)
+                    if consumption.source_total_tokens is None
+                    else Decimal(str(consumption.source_total_tokens))
+                ),
+                "source_usage_total_tokens_missing_attempt_count": (
+                    1 if consumption.source_total_tokens is None else 0
+                ),
+                "source_cost_total_unknown": (
+                    consumption.source_cost_estimate_cny is None
+                ),
+                "source_cost_known_total_cny": (
+                    Decimal(0)
+                    if consumption.source_cost_estimate_cny is None
+                    else Decimal(str(consumption.source_cost_estimate_cny))
+                ),
+                "source_cost_missing_attempt_count": (
+                    1 if consumption.source_cost_estimate_cny is None else 0
+                ),
             }
             if consumption.source_total_tokens is not None:
                 facts["source_usage_total_tokens"] = consumption.source_total_tokens
@@ -575,6 +703,8 @@ def _trace_root_bundle(value: Exp2TraceHydratedRoot) -> MetricObservationBundle:
                 facts["source_cost_estimate_cny"] = consumption.source_cost_estimate_cny
             if consumption.source_bank_roles is not None:
                 facts["source_bank_roles"] = consumption.source_bank_roles
+            if consumption.source_bank_entry_id is not None:
+                facts["source_bank_entry_id"] = consumption.source_bank_entry_id
             _insert_member(member_facts, consumption.consumption_id, facts)
     if value.ai_units is None:
         member_facts[f"missing-ai-units:{row.preregistered_root_run_id}"] = {
@@ -595,6 +725,35 @@ def _trace_root_bundle(value: Exp2TraceHydratedRoot) -> MetricObservationBundle:
         "infra_invalid": _publication_invalid(row),
         "configured_worker_count": _worker_count(row),
     }
+    coverage = _resource_coverage(value)
+    row_facts.update(
+        {
+            "resource_total_unknown": coverage.total_unknown,
+            "source_provider_attempt_count": coverage.source_attempt_count,
+            "trace_attributed_tokens_known_total": coverage.tokens_known_total,
+            "trace_attributed_tokens_missing_attempt_count": (
+                coverage.tokens_missing_attempt_count
+            ),
+            "trace_attributed_cost_known_total": coverage.cost_known_total,
+            "trace_attributed_cost_missing_attempt_count": (
+                coverage.cost_missing_attempt_count
+            ),
+        }
+    )
+    if value.source_api_latency_known_total_ms is not None:
+        row_facts["source_api_latency_known_total_ms"] = (
+            value.source_api_latency_known_total_ms
+        )
+        row_facts["source_api_latency_missing_attempt_count"] = (
+            value.source_api_latency_missing_attempt_count
+        )
+        row_facts["source_api_latency_total_unknown"] = (
+            value.source_api_latency_total_ms is None
+        )
+        if value.source_api_latency_total_ms is not None:
+            row_facts["source_api_latency_total_ms"] = (
+                value.source_api_latency_total_ms
+            )
     if value.persisted_logical_makespan_ms is not None:
         row_facts["runtime_elapsed_ms"] = value.persisted_logical_makespan_ms
     if value.in_flight_at_witness is not None:
@@ -684,22 +843,82 @@ def _build_pair(
         "baseline_trace_replay_wall_clock_ms": 0 if baseline is None or baseline.persisted_logical_makespan_ms is None else baseline.persisted_logical_makespan_ms,
         "compared_trace_replay_wall_clock_ms": 0 if compared.persisted_logical_makespan_ms is None else compared.persisted_logical_makespan_ms,
     }
-    baseline_resource = _resource_totals(baseline)
-    compared_resource = _resource_totals(compared)
+    facts["lineage_root_run_ids"] = tuple(
+        value
+        for value in (
+            None if baseline_row is None else baseline_row.preregistered_root_run_id,
+            row.preregistered_root_run_id,
+        )
+        if value is not None
+    )
+    facts["source_bank_entry_ids"] = tuple(
+        dict.fromkeys(
+            entry_id
+            for value in (baseline, compared)
+            if value is not None
+            for entry_id in _source_entry_ids(value)
+        )
+    )
+    baseline_resource = _resource_coverage(baseline)
+    compared_resource = _resource_coverage(compared)
     facts.update(
         {
-            "baseline_resource_evidence_complete": baseline_resource is not None,
-            "compared_resource_evidence_complete": compared_resource is not None,
-            "baseline_trace_attributed_tokens": 0 if baseline_resource is None else baseline_resource[0],
-            "baseline_trace_attributed_cost": 0 if baseline_resource is None else baseline_resource[1],
-            "compared_trace_attributed_tokens": 0 if compared_resource is None else compared_resource[0],
-            "compared_trace_attributed_cost": 0 if compared_resource is None else compared_resource[1],
+            "baseline_resource_evidence_complete": not baseline_resource.total_unknown,
+            "compared_resource_evidence_complete": not compared_resource.total_unknown,
+            "baseline_resource_total_unknown": baseline_resource.total_unknown,
+            "compared_resource_total_unknown": compared_resource.total_unknown,
+            "baseline_source_provider_attempt_count": (
+                baseline_resource.source_attempt_count
+            ),
+            "compared_source_provider_attempt_count": (
+                compared_resource.source_attempt_count
+            ),
+            "baseline_trace_attributed_tokens_known_total": (
+                baseline_resource.tokens_known_total
+            ),
+            "baseline_trace_attributed_tokens_missing_attempt_count": (
+                baseline_resource.tokens_missing_attempt_count
+            ),
+            "compared_trace_attributed_tokens_known_total": (
+                compared_resource.tokens_known_total
+            ),
+            "compared_trace_attributed_tokens_missing_attempt_count": (
+                compared_resource.tokens_missing_attempt_count
+            ),
+            "baseline_trace_attributed_cost_known_total": (
+                baseline_resource.cost_known_total
+            ),
+            "baseline_trace_attributed_cost_missing_attempt_count": (
+                baseline_resource.cost_missing_attempt_count
+            ),
+            "compared_trace_attributed_cost_known_total": (
+                compared_resource.cost_known_total
+            ),
+            "compared_trace_attributed_cost_missing_attempt_count": (
+                compared_resource.cost_missing_attempt_count
+            ),
         }
     )
+    for prefix, resource in (
+        ("baseline", baseline_resource),
+        ("compared", compared_resource),
+    ):
+        if resource.tokens_total is not None:
+            facts[f"{prefix}_trace_attributed_tokens"] = resource.tokens_total
+        if resource.cost_total is not None:
+            facts[f"{prefix}_trace_attributed_cost"] = resource.cost_total
     facts["closed_exclusion_reason"] = _closed_pair_exclusion(baseline, compared)
-    root_facts = {row.preregistered_root_run_id: _root_member_facts(row)}
+    root_facts = {
+        row.preregistered_root_run_id: _root_member_facts(
+            row,
+            source_bank_entry_ids=_source_entry_ids(compared),
+        )
+    }
     if baseline_row is not None:
-        root_facts[baseline_row.preregistered_root_run_id] = _root_member_facts(baseline_row)
+        root_facts[baseline_row.preregistered_root_run_id] = _root_member_facts(
+            baseline_row,
+            source_bank_entry_ids=_source_entry_ids(baseline),
+        )
     member_id = _pair_member_id(identity)
     members: dict[str, Mapping[str, object]] = {**root_facts, member_id: facts}
     invalid = _publication_invalid(row) or (baseline_row is not None and _publication_invalid(baseline_row))
@@ -972,29 +1191,83 @@ def _bundle(
     )
 
 
-def _root_member_facts(row: PaperDirectRootResult) -> Mapping[str, object]:
-    return {
+def _root_member_facts(
+    row: PaperDirectRootResult,
+    *,
+    source_bank_entry_ids: Sequence[str] | None = None,
+) -> Mapping[str, object]:
+    facts: dict[str, object] = {
         "member_kind": "preregistered_root",
+        "preregistered_root_run_id": row.preregistered_root_run_id,
         "final_result_reference_complete": row.final_result_reference_complete,
         "end_to_end_verified_success": row.end_to_end_verified_success,
     }
+    if source_bank_entry_ids is not None:
+        facts["source_bank_entry_ids"] = tuple(source_bank_entry_ids)
+    return facts
+
+
+def _source_entry_ids(value: Exp2TraceHydratedRoot | None) -> tuple[str, ...]:
+    if value is None or value.trace_consumptions is None:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            item.source_bank_entry_id
+            for item in value.trace_consumptions
+            if item.committed and item.source_bank_entry_id is not None
+        )
+    )
+
+
+def _resource_coverage(value: Exp2TraceHydratedRoot | None) -> _ResourceCoverage:
+    if value is None or value.trace_consumptions is None:
+        return _ResourceCoverage(
+            source_attempt_count=0,
+            total_unknown=True,
+            tokens_total=None,
+            tokens_known_total=Decimal(0),
+            tokens_missing_attempt_count=0,
+            cost_total=None,
+            cost_known_total=Decimal(0),
+            cost_missing_attempt_count=0,
+        )
+    committed = tuple(item for item in value.trace_consumptions if item.committed)
+    roles_complete = bool(committed) and all(
+        item.source_bank_roles == TRACE_SOURCE_BANK_ROLES for item in committed
+    )
+    token_values = tuple(item.source_total_tokens for item in committed)
+    cost_values = tuple(item.source_cost_estimate_cny for item in committed)
+    token_missing = sum(value is None for value in token_values)
+    cost_missing = sum(value is None for value in cost_values)
+    token_known = sum(
+        (Decimal(str(value)) for value in token_values if value is not None),
+        Decimal(0),
+    )
+    cost_known = sum(
+        (Decimal(str(value)) for value in cost_values if value is not None),
+        Decimal(0),
+    )
+    return _ResourceCoverage(
+        source_attempt_count=len(committed),
+        total_unknown=(
+            not roles_complete or token_missing > 0 or cost_missing > 0
+        ),
+        tokens_total=(
+            token_known if roles_complete and token_missing == 0 else None
+        ),
+        tokens_known_total=token_known,
+        tokens_missing_attempt_count=token_missing,
+        cost_total=cost_known if roles_complete and cost_missing == 0 else None,
+        cost_known_total=cost_known,
+        cost_missing_attempt_count=cost_missing,
+    )
 
 
 def _resource_totals(value: Exp2TraceHydratedRoot | None) -> tuple[Decimal, Decimal] | None:
-    if value is None or value.trace_consumptions is None:
+    coverage = _resource_coverage(value)
+    if coverage.tokens_total is None or coverage.cost_total is None:
         return None
-    committed = tuple(item for item in value.trace_consumptions if item.committed)
-    if any(
-        item.source_total_tokens is None
-        or item.source_cost_estimate_cny is None
-        or item.source_bank_roles != TRACE_SOURCE_BANK_ROLES
-        for item in committed
-    ):
-        return None
-    return (
-        sum((Decimal(str(item.source_total_tokens)) for item in committed), Decimal(0)),
-        sum((Decimal(str(item.source_cost_estimate_cny)) for item in committed), Decimal(0)),
-    )
+    return coverage.tokens_total, coverage.cost_total
 
 
 def _closed_pair_exclusion(
@@ -1030,6 +1303,14 @@ def _case_facts(row: PaperDirectRootResult) -> tuple[str, str, str]:
         "factor_position_quantile",
         "position_stratum",
     }
+    if row.condition_axes.get("domain") == "lean_proof":
+        expected.update(
+            {
+                "official_case_digest",
+                "official_root_theorem_id",
+                "official_root_theorem_payload_digest",
+            }
+        )
     if set(ref) != expected:
         raise ValueError("Exp2 preregistered_case_ref schema drift")
     digest = ref["case_record_digest"]

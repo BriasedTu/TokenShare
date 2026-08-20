@@ -19,6 +19,9 @@ from tokenshare.experiments.paper_models import PaperDirectRootStatus, digest_js
 
 
 EXP1_TABLE_ID = "exp1_feasibility"
+EXP1_EVIDENCE_CLASSES = frozenset(
+    {"online_real_provider", "real_model_trace_protocol_run"}
+)
 EXP1_NUMERIC_FIELDS = (
     "preregistered_root_count",
     "final_result_root_count",
@@ -66,6 +69,26 @@ class Exp1ActualProviderAttemptFacts:
 
 
 @dataclass(frozen=True, kw_only=True)
+class Exp1TraceConsumptionFacts:
+    """已提交 response-bank consumption 的 source-domain lineage。"""
+
+    consumption_id: str
+    source_bank_entry_id: str
+    source_bank_roles: tuple[str, ...] | None
+
+    def __post_init__(self) -> None:
+        _non_empty(self.consumption_id, "consumption_id")
+        _non_empty(self.source_bank_entry_id, "source_bank_entry_id")
+        if self.source_bank_roles is not None:
+            roles = tuple(self.source_bank_roles)
+            if any(not isinstance(role, str) or not role for role in roles):
+                raise ValueError("source_bank_roles must contain non-empty strings")
+            if len(set(roles)) != len(roles):
+                raise ValueError("duplicate source bank role")
+            object.__setattr__(self, "source_bank_roles", roles)
+
+
+@dataclass(frozen=True, kw_only=True)
 class Exp1HydratedDirectRow:
     """绑定 canonical direct row 与已物化 provenance facts 的最小 DTO。"""
 
@@ -73,6 +96,7 @@ class Exp1HydratedDirectRow:
     root_start_at_ms: int | Decimal | None = None
     root_terminal_at_ms: int | Decimal | None = None
     actual_provider_attempts: tuple[Exp1ActualProviderAttemptFacts, ...] | None = None
+    trace_consumptions: tuple[Exp1TraceConsumptionFacts, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.direct_result, PaperDirectRootResult):
@@ -94,6 +118,27 @@ class Exp1HydratedDirectRow:
             if len(set(ids)) != len(ids):
                 raise ValueError("duplicate actual provider attempt id within root")
             object.__setattr__(self, "actual_provider_attempts", attempts)
+        if self.trace_consumptions is not None:
+            consumptions = tuple(self.trace_consumptions)
+            if any(
+                not isinstance(value, Exp1TraceConsumptionFacts)
+                for value in consumptions
+            ):
+                raise TypeError("trace_consumptions must contain typed trace facts")
+            ids = tuple(value.consumption_id for value in consumptions)
+            if len(set(ids)) != len(ids):
+                raise ValueError("duplicate trace consumption id within root")
+            object.__setattr__(self, "trace_consumptions", consumptions)
+        if (
+            self.direct_result.evidence_class == "online_real_provider"
+            and self.trace_consumptions is not None
+        ):
+            raise ValueError("online Exp1 row cannot contain trace consumptions")
+        if (
+            self.direct_result.evidence_class == "real_model_trace_protocol_run"
+            and self.actual_provider_attempts
+        ):
+            raise ValueError("trace Exp1 row cannot contain actual provider attempts")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -159,6 +204,13 @@ def build_exp1_observations(
     if table.numeric_output_fields != EXP1_NUMERIC_FIELDS:
         raise ValueError("Exp1 numeric output field contract drift")
     hydrated = tuple(_hydrate(value) for value in direct_rows)
+    evidence_classes = {
+        value.direct_result.evidence_class for value in hydrated
+    }
+    if not evidence_classes <= EXP1_EVIDENCE_CLASSES:
+        raise ValueError("Exp1 projector evidence class is unsupported")
+    if len(evidence_classes) > 1:
+        raise ValueError("Exp1 projector cannot mix online and trace evidence")
     root_ids = tuple(
         value.direct_result.preregistered_root_run_id for value in hydrated
     )
@@ -228,8 +280,8 @@ def _hydrate(
 def _group_key(row: PaperDirectRootResult) -> tuple[str, str, str | None, int]:
     if row.experiment_id != "experiment_1":
         raise ValueError("Exp1 projector only accepts experiment_1")
-    if row.evidence_class != "online_real_provider":
-        raise ValueError("Exp1 projector only accepts online_real_provider")
+    if row.evidence_class not in EXP1_EVIDENCE_CLASSES:
+        raise ValueError("Exp1 projector evidence class is unsupported")
     domain = row.condition_axes.get("domain")
     difficulty = row.condition_axes.get("difficulty")
     topic_family = row.condition_axes.get("topic_family")
@@ -279,6 +331,26 @@ def _build_bundle(
             root_facts["root_terminal_at_ms"] = value.root_terminal_at_ms
         member_facts[row.preregistered_root_run_id] = root_facts
 
+        if row.evidence_class == "real_model_trace_protocol_run":
+            if value.trace_consumptions is None:
+                missing_id = f"missing-trace-consumption-facts:{row.preregistered_root_run_id}"
+                member_facts[missing_id] = {
+                    "member_kind": "committed_trace_consumption",
+                    "committed": True,
+                }
+            else:
+                for consumption in value.trace_consumptions:
+                    if consumption.consumption_id in member_facts:
+                        raise ValueError("duplicate Exp1 member id")
+                    facts: dict[str, object] = {
+                        "member_kind": "committed_trace_consumption",
+                        "committed": True,
+                        "source_bank_entry_id": consumption.source_bank_entry_id,
+                    }
+                    if consumption.source_bank_roles is not None:
+                        facts["source_bank_roles"] = consumption.source_bank_roles
+                    member_facts[consumption.consumption_id] = facts
+
         if value.actual_provider_attempts is None:
             missing_id = f"missing-actual-provider-attempt-facts:{row.preregistered_root_run_id}"
             member_facts[missing_id] = {"member_kind": "actual_provider_attempt"}
@@ -314,6 +386,7 @@ def _build_bundle(
             "paper_difficulty": key[1],
             "topic_family": key[2],
             "repeat_id": key[3],
+            "evidence_class": rows[0].direct_result.evidence_class,
             "infra_invalid": infrastructure_invalid,
         },
         member_ids=tuple(member_facts),
@@ -352,9 +425,11 @@ def _nonnegative_number(value: object, name: str) -> None:
 
 
 __all__ = [
+    "EXP1_EVIDENCE_CLASSES",
     "EXP1_NUMERIC_FIELDS",
     "Exp1ActualProviderAttemptFacts",
     "Exp1HydratedDirectRow",
+    "Exp1TraceConsumptionFacts",
     "Exp1ObservationCell",
     "Exp1ObservationRow",
     "build_exp1_observations",

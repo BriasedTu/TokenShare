@@ -388,6 +388,8 @@ def _openai_error_message(body: JsonObject, text: str, status_code: int) -> str:
 
 
 class UrlLibSiliconFlowTransport:
+    tokenshare_hard_total_deadline = True
+
     def post_chat_completion(
         self,
         *,
@@ -396,7 +398,10 @@ class UrlLibSiliconFlowTransport:
         normalized_absolute_endpoint: str,
         content_type: str,
         timeout_seconds: int,
+        hard_deadline_session: Any | None = None,
     ):
+        if hard_deadline_session is not None:
+            return hard_deadline_session.dispatch_for_transport("siliconflow")
         request = urllib.request.Request(
             normalized_absolute_endpoint,
             data=body_bytes,
@@ -434,6 +439,8 @@ class UrlLibSiliconFlowTransport:
 
 
 class UrlLibOpenAITransport:
+    tokenshare_hard_total_deadline = True
+
     def post_chat_completion(
         self,
         *,
@@ -442,7 +449,10 @@ class UrlLibOpenAITransport:
         normalized_absolute_endpoint: str,
         content_type: str,
         timeout_seconds: int,
+        hard_deadline_session: Any | None = None,
     ):
+        if hard_deadline_session is not None:
+            return hard_deadline_session.dispatch_for_transport("openai")
         request = urllib.request.Request(
             normalized_absolute_endpoint,
             data=body_bytes,
@@ -480,6 +490,8 @@ class UrlLibOpenAITransport:
 
 
 class UrlLibDeepSeekTransport:
+    tokenshare_hard_total_deadline = True
+
     def post_chat_completion(
         self,
         *,
@@ -488,7 +500,10 @@ class UrlLibDeepSeekTransport:
         normalized_absolute_endpoint: str,
         content_type: str,
         timeout_seconds: int,
+        hard_deadline_session: Any | None = None,
     ):
+        if hard_deadline_session is not None:
+            return hard_deadline_session.dispatch_for_transport("deepseek")
         request = urllib.request.Request(
             normalized_absolute_endpoint,
             data=body_bytes,

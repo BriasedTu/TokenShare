@@ -55,7 +55,7 @@ from tokenshare.local_runtime import (
     SequentialWorkerBackend,
 )
 from tokenshare.core.models import ArtifactRef
-from tokenshare.storage.events import EventType
+from tokenshare.storage.events import EventLedger, EventType
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -132,6 +132,54 @@ FULL_LIFECYCLE_EVENTS = {
     EventType.CONTRIBUTION_STATE_CHANGED.value,
     EventType.SETTLEMENT_RECORDED.value,
 }
+
+
+def _assert_canonical_attempt_identity(result) -> None:
+    ledger_path = Path(result.output_root) / result.run_evidence["protocol_runtime"][
+        "event_ledger_path"
+    ]
+    _assert_event_canonical_attempt_identity(EventLedger(ledger_path).read_all())
+
+
+def _assert_event_canonical_attempt_identity(events) -> None:
+    verifications = {
+        str(event.payload["verification_report"]["attempt_id"]): event
+        for event in events
+        if event.event_type == EventType.VERIFICATION_RECORDED
+    }
+    selections = [
+        event
+        for event in events
+        if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+    ]
+    assert selections
+    selected_attempt_ids: set[str] = set()
+    for event in selections:
+        selection = event.payload["canonical_selection"]
+        attempt_id = str(selection["selected_attempt_id"])
+        selected_attempt_ids.add(attempt_id)
+        verification_event = verifications[attempt_id]
+        report = verification_event.payload["verification_report"]
+        canonical_refs = selection["canonical_output_refs"]
+        assert verification_event.event_seq == selection[
+            "selected_verification_event_seq"
+        ]
+        assert report["submission_id"] == selection["selected_submission_id"]
+        assert report["status"] == "passed"
+        assert report["eligible_for_canonical"] is True
+        assert report["candidate_output_refs"] == canonical_refs
+        assert event.payload["canonical_output_refs"] == canonical_refs
+        assert all(
+            ref["artifact_type"] == "canonical_output"
+            for ref in canonical_refs.values()
+        )
+    assert all(
+        str(event.payload["verification_report"]["attempt_id"])
+        not in selected_attempt_ids
+        for event in verifications.values()
+        if event.payload["verification_report"]["status"] != "passed"
+        or not event.payload["verification_report"]["eligible_for_canonical"]
+    )
 
 
 class _CapturingFactorizationTransport:
@@ -447,6 +495,7 @@ def test_verifier_rejection_and_late_submission_requeue_without_old_canonical(
         assert len(same_unit_attempts) == 2
         assert old_attempt_id not in canonical_attempt_ids
         assert canonical_attempt_ids & (same_unit_attempts - {old_attempt_id})
+        _assert_event_canonical_attempt_identity(events)
 
 
 def test_parsed_candidate_hook_runs_before_submission_and_verification(
@@ -542,6 +591,7 @@ def test_real_os_worker_death_expires_lease_and_reassigns_same_unit(
     assert active_leases[0]["lease_id"] != active_leases[1]["lease_id"]
     assert active_leases[0]["attempt_id"] != active_leases[1]["attempt_id"]
     assert active_leases[0]["fencing_token"] != active_leases[1]["fencing_token"]
+    _assert_event_canonical_attempt_identity(ledger.read_all())
 
 
 @pytest.mark.parametrize(
@@ -604,6 +654,7 @@ def test_five_ablation_modes_are_observed_from_runtime_gates(
         ablation_mode=mode,
     )
 
+    _assert_canonical_attempt_identity(result)
     runtime = result.run_evidence["ablation_runtime"]
     assert runtime["mode"] == mode
     assert runtime["max_retries"] == 1
@@ -672,6 +723,107 @@ def test_five_ablation_modes_are_observed_from_runtime_gates(
         ].startswith(
             "sha256:"
         )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "FULL",
+        "NO_VERIFICATION",
+        "NO_PARSER_POLICY",
+        "NO_REQUEUE",
+        "NO_MERGE_GATE",
+    ),
+)
+def test_lean_five_ablation_modes_preserve_canonical_attempt_identity(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+        lean_lemma_graph_path=LEAN_GRAPH_CATALOG,
+    )
+    case = (
+        next(
+            item
+            for item in catalog.cases_for(domain="lean_proof")
+            if item["case_id"] == "lean_v2_medium_lemma_dag_01"
+        )
+        if mode == "NO_VERIFICATION"
+        else catalog.cases_for(domain="lean_proof", difficulty="easy")[0]
+    )
+    condition = PaperExperimentCondition(
+        experiment_id="exp4_real_ai_protocol_ablation",
+        condition_id=f"task6_lean_ablation_{mode.lower()}",
+        domain="lean_proof",
+        difficulty=str(case["difficulty"]),
+        paper_difficulty=str(case["paper_difficulty"]),
+        topic_family=str(case["topic_family"]),
+        topic_family_version=str(case["topic_family_version"]),
+        construction_rule_id=case.get("construction_rule_id"),
+        oracle_package_group=case.get("oracle_package_group"),
+        proof_assembly_shape=case.get("proof_assembly_shape"),
+        worker_count=2,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode=mode,
+        model_policy="fixed_entry",
+        repeat_id=0,
+        seed=1,
+        catalog_digest=catalog.catalog_digest,
+    )
+    checker = (
+        RecordingLeanChecker.reject_all()
+        if mode in {"NO_VERIFICATION", "NO_REQUEUE", "NO_MERGE_GATE"}
+        else RecordingLeanChecker()
+    )
+
+    result = dispatch_paper_case(
+        case=case,
+        condition=condition,
+        output_root=str(tmp_path / mode),
+        transport=ScriptedLeanPaperProofTransport(
+            proof_sources_by_statement=(
+                _oracle_sources_by_statement(case)
+                if "lemma_graph" in case
+                else None
+            )
+        ),
+        real_transport=False,
+        ai_api_config=None,
+        entry_id="lean_paper_scripted",
+        max_tokens=512,
+        timeout_seconds=30,
+        checker=checker,
+        ablation_mode=mode,
+    )
+
+    _assert_canonical_attempt_identity(result)
+    runtime = result.run_evidence["ablation_runtime"]
+    assert runtime["mode"] == mode
+    assert runtime["applied_before_adapter_completion"] is True
+    if mode == "FULL":
+        assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+        assert result.task_result.accepted_validity is True
+    elif mode == "NO_VERIFICATION":
+        assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+        assert result.task_result.accepted_validity is False
+        assert any(
+            observation["canonical_output_refs"]
+            and observation["independent_candidate_validity"] is False
+            for observation in runtime["attempt_observations"]
+        )
+    elif mode == "NO_PARSER_POLICY":
+        assert result.task_result.root_status != PaperTaskStatus.COMPLETED
+        assert runtime["raw_only_exposed"] is True
+    elif mode == "NO_REQUEUE":
+        assert result.task_result.root_status != PaperTaskStatus.COMPLETED
+        assert len({item.unit_id for item in result.attempt_results}) == len(
+            result.attempt_results
+        )
+    else:
+        assert runtime["premature_merge_attempted"] is True
 
 
 def test_experiments_package_has_no_direct_protocol_state_write_authority() -> None:

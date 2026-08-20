@@ -6,8 +6,15 @@ import pytest
 
 import tokenshare.experiments.paper_projection as paper_projection
 from tokenshare.core.models import ArtifactRef
-from tokenshare.experiments.paper_models import PaperExperimentCondition
+from tokenshare.experiments.paper_models import (
+    PaperAttemptResult,
+    PaperAttemptStatus,
+    PaperExperimentCondition,
+    PaperTaskResult,
+    PaperTaskStatus,
+)
 from tokenshare.experiments.paper_projection import (
+    PaperProtocolProjection,
     _auditable_no_return_evidence,
     _attempt_status,
     project_paper_protocol_run,
@@ -17,6 +24,211 @@ from tokenshare.storage.artifacts import ArtifactStore
 
 
 NOW = "2026-07-23T00:00:00Z"
+
+
+def _model_record_ref(name: str) -> ArtifactRef:
+    return ArtifactRef(
+        artifact_id=f"model-record-{name}",
+        artifact_type="PaperModelExecutionRecord",
+        uri=f"artifacts/model-record-{name}.json",
+        content_hash=f"sha256:{name[0] * 64}",
+        size_bytes=1,
+        media_type="application/json",
+        artifact_schema_id="tokenshare.paper_model_execution_record",
+        artifact_schema_version="v2",
+        source={"kind": "test"},
+        metadata={"attempt_id": name},
+        created_at=NOW,
+    )
+
+
+def _projection_attempt(
+    attempt_id: str,
+    *,
+    provider_attempt_count: int = 1,
+    model_execution_record_ref: dict | None = None,
+) -> PaperAttemptResult:
+    return PaperAttemptResult(
+        condition_id="condition",
+        repeat_id=0,
+        run_id="run",
+        task_id="task",
+        unit_id=f"unit-{attempt_id}",
+        attempt_id=attempt_id,
+        worker_id="worker",
+        provider_attempt_index=provider_attempt_count,
+        attempt_status=PaperAttemptStatus.SUCCEEDED,
+        provider="provider" if provider_attempt_count else None,
+        model="model" if provider_attempt_count else None,
+        entry_id="entry" if provider_attempt_count else None,
+        request_ref=None,
+        raw_output_ref=None,
+        parsed_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref=None,
+        usage_ref=None,
+        started_at=NOW,
+        ended_at=NOW,
+        latency_ms=0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        cost_estimate=0.0,
+        error_kind=None,
+        fault_injection_ref=None,
+        paper_eligible=True,
+        model_execution_record_ref=model_execution_record_ref,
+        provider_attempt_count=provider_attempt_count,
+    )
+
+
+def _projection(*attempts: PaperAttemptResult) -> PaperProtocolProjection:
+    return PaperProtocolProjection(
+        task_result=PaperTaskResult(
+            condition_id="condition",
+            repeat_id=0,
+            task_id="task",
+            domain="factorization",
+            difficulty="easy",
+            root_status=PaperTaskStatus.COMPLETED,
+            accepted_validity=True,
+            failure_stage=None,
+            failure_kind=None,
+            attempt_count=len(attempts),
+            provider_attempt_count=sum(
+                item.provider_attempt_count for item in attempts
+            ),
+            wall_clock_ms=0,
+            total_tokens=0,
+            cost_estimate=0.0,
+            event_refs=[],
+            artifact_refs=[],
+            paper_eligible=True,
+        ),
+        attempt_results=tuple(attempts),
+        lifecycle_coverage={},
+        runtime_generation_identity={},
+        runtime_observation={},
+        ineligibility_reasons=(),
+    )
+
+
+def _binding(
+    request_attempt_id: str,
+    record_attempt_id: str | None,
+    record_ref: ArtifactRef | None,
+    *,
+    record_required: bool = True,
+):
+    return paper_projection.CapturedModelExecutionRecordBinding(
+        request_attempt_id=request_attempt_id,
+        record_attempt_id=record_attempt_id,
+        record_ref=record_ref,
+        record_required=record_required,
+    )
+
+
+def test_reconcile_captured_model_record_refs_joins_by_attempt_id_not_order() -> None:
+    ref_a = _model_record_ref("a")
+    ref_b = _model_record_ref("b")
+
+    result = paper_projection.reconcile_captured_model_execution_records(
+        _projection(_projection_attempt("a"), _projection_attempt("b")),
+        (_binding("b", "b", ref_b), _binding("a", "a", ref_a)),
+    )
+
+    assert [item.model_execution_record_ref for item in result.attempt_results] == [
+        ref_a.to_dict(),
+        ref_b.to_dict(),
+    ]
+    assert result.task_result.artifact_refs == [ref_a.to_dict(), ref_b.to_dict()]
+
+
+@pytest.mark.parametrize(
+    ("attempts", "bindings", "error_match"),
+    (
+        (
+            (_projection_attempt("a"),),
+            (_binding("", "a", _model_record_ref("a")),),
+            "request attempt_id",
+        ),
+        (
+            (_projection_attempt("a"),),
+            (
+                _binding("a", "a", _model_record_ref("a")),
+                _binding("a", "a", _model_record_ref("b")),
+            ),
+            "duplicate captured request attempt_id",
+        ),
+        (
+            (_projection_attempt("a"),),
+            (_binding("a", "b", _model_record_ref("a")),),
+            "record attempt_id",
+        ),
+        (
+            (_projection_attempt("a"), _projection_attempt("a")),
+            (_binding("a", "a", _model_record_ref("a")),),
+            "duplicate projected attempt_id",
+        ),
+        (
+            (
+                _projection_attempt(
+                    "a",
+                    model_execution_record_ref=_model_record_ref("b").to_dict(),
+                ),
+            ),
+            (_binding("a", "a", _model_record_ref("a")),),
+            "conflicting projected model execution record",
+        ),
+        (
+            (_projection_attempt("a"),),
+            (),
+            "actual provider attempt is missing captured model execution record",
+        ),
+    ),
+)
+def test_reconcile_captured_model_record_refs_fails_closed(
+    attempts,
+    bindings,
+    error_match,
+) -> None:
+    with pytest.raises(ValueError, match=error_match):
+        paper_projection.reconcile_captured_model_execution_records(
+            _projection(*attempts),
+            bindings,
+        )
+
+
+def test_reconcile_captured_model_record_refs_allows_preprovider_without_record() -> None:
+    result = paper_projection.reconcile_captured_model_execution_records(
+        _projection(_projection_attempt("a", provider_attempt_count=0)),
+        (_binding("a", None, None, record_required=False),),
+    )
+
+    assert result.attempt_results[0].model_execution_record_ref is None
+    assert result.task_result.artifact_refs == []
+
+
+def test_reconcile_allows_explicit_nonrequired_record_with_positive_transport_count() -> None:
+    result = paper_projection.reconcile_captured_model_execution_records(
+        _projection(_projection_attempt("a", provider_attempt_count=1)),
+        (_binding("a", None, None, record_required=False),),
+    )
+
+    assert result.attempt_results[0].provider_attempt_count == 1
+    assert result.attempt_results[0].model_execution_record_ref is None
+    assert result.task_result.artifact_refs == []
+
+
+def test_reconcile_requires_explicitly_required_record_even_without_provider_call() -> None:
+    with pytest.raises(
+        ValueError,
+        match="required captured model execution record is missing",
+    ):
+        paper_projection.reconcile_captured_model_execution_records(
+            _projection(_projection_attempt("a", provider_attempt_count=0)),
+            (_binding("a", None, None, record_required=True),),
+        )
 
 
 @pytest.mark.parametrize(

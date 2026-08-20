@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from tests.experiments.test_paper_direct_results import (
     _canonical_fixture,
     _inventory_manifest,
@@ -37,8 +39,18 @@ ONLINE_ROLES = (
 )
 
 
-def _direct_row(tmp_path, *, root_id: str, correct: bool = True, verdict: bool = True):
-    inventory_row, condition, catalog = _inventory_row(root_id=root_id)
+def _direct_row(
+    tmp_path,
+    *,
+    root_id: str,
+    correct: bool = True,
+    verdict: bool = True,
+    evidence_class: str = "online_real_provider",
+):
+    inventory_row, condition, catalog = _inventory_row(
+        root_id=root_id,
+        evidence_class=evidence_class,
+    )
     kwargs, *_ = _canonical_fixture(
         tmp_path,
         inventory_row,
@@ -134,6 +146,33 @@ def test_wrong_final_is_completion_not_success(tmp_path) -> None:
     assert _cell(result, "end_to_end_verified_success_rate").value == Decimal(0)
     assert _cell(result, "incorrect_final_failure_count").value == 1
     assert _cell(result, "failure_root_count").value == 1
+
+
+def test_exp1_projector_rejects_mixed_online_and_trace_evidence(tmp_path) -> None:
+    online = _direct_row(tmp_path, root_id="inventory:online")
+    trace = _direct_row(
+        tmp_path,
+        root_id="inventory:trace",
+        evidence_class="real_model_trace_protocol_run",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot mix online and trace evidence",
+    ):
+        build_exp1_observations(
+            (
+                Exp1HydratedDirectRow(
+                    direct_result=online,
+                    actual_provider_attempts=(_attempt("attempt:online"),),
+                ),
+                Exp1HydratedDirectRow(
+                    direct_result=trace,
+                    actual_provider_attempts=None,
+                ),
+            ),
+            load_paper_metric_contract(),
+        )
 
 
 def test_infra_invalid_returns_blocked_null_publish_observation(tmp_path) -> None:

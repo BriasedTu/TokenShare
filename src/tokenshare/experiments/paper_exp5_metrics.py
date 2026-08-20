@@ -452,11 +452,13 @@ def _build_bundle(
         for root in value.preregistered_roots:
             members[f"quality-root:{root.preregistered_root_run_id}"] = {
                 "member_kind": "preregistered_root",
+                "preregistered_root_run_id": root.preregistered_root_run_id,
                 "final_result_reference_complete": root.final_result_reference_complete,
                 "end_to_end_verified_success": root.end_to_end_verified_success,
             }
             clock_facts: dict[str, object] = {
                 "member_kind": "exp5_preregistered_root",
+                "preregistered_root_run_id": root.preregistered_root_run_id,
                 "repeat_id": value.repeat_id,
             }
             if root.root_terminal_at_ms is not None:
@@ -474,6 +476,7 @@ def _build_bundle(
         for attempt in value.first_provider_attempts:
             attempt_facts: dict[str, object] = {
                 "member_kind": "exp5_provider_attempt",
+                "provider_attempt_id": attempt.attempt_id,
                 "actual_call": attempt.actual_call,
                 "provider_transport_failure": attempt.provider_transport_failure,
                 "parse_schema_unusable": attempt.parse_schema_unusable,

@@ -9,6 +9,7 @@ from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequestFactory,
 )
 from tokenshare.executors.response_bank import (
+    ResultsFirstResponseBankManifest,
     ResponseBankInventoryRow,
     canonical_digest,
     inventory_entry_id,
@@ -29,10 +30,12 @@ from tokenshare.experiments.paper_response_bank import (
     build_semantic_inventory,
     create_acquisition_plan_bundle,
     create_representative_acquisition_plan_bundle,
+    establish_results_first_acquisition_authorization,
     load_acquisition_plan_bundle,
     load_representative_acquisition_plan_bundle,
     preflight_inventory_before_coordinator,
     replacement_slots_for,
+    results_first_response_bank_manifest_for_bundle,
 )
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
 from tokenshare.experiments import paper_response_bank as response_bank
@@ -79,6 +82,7 @@ def _candidate(
     experiment_id: str = "exp2_real_ai_scalability",
     fault_type: str = "none",
     ablation_mode: str = "FULL",
+    case_id: str = "case-a",
     case_digest: str = "sha256:" + "3" * 64,
     unit_id: str = "unit-0",
     sample: int = 0,
@@ -99,13 +103,14 @@ def _candidate(
         repeat_id=sample if repeat_id is None else repeat_id,
         fault_type=fault_type,
         ablation_mode=ablation_mode,
-        case_id="case-a",
+        case_id=case_id,
         case_record_digest=case_digest,
         planned_ai_unit_id=unit_id,
         sample_slot_index=sample,
         replacement_slot=replacement_slot,
         prompt_profile_digest=prompt_digest,
         prepared_request=_prepared(
+            case_id=case_id,
             unit_id=unit_id,
             sample=sample,
             replacement_slot=replacement_slot,
@@ -115,6 +120,36 @@ def _candidate(
         ),
         terminal_kind=terminal_kind,
         replacement_policy_id=replacement_policy_id,
+    )
+
+
+def _formal_exp1_candidate(
+    *,
+    case_id: str,
+    case_digest: str,
+    split_profile_digest: str,
+    unit_id: str,
+) -> SemanticSlotCandidate:
+    return replace(
+        _candidate(
+            experiment_id="exp1_real_ai_feasibility",
+            condition_id="exp1_factorization_easy_w10_r0",
+            worker_count=10,
+            case_id=case_id,
+            case_digest=case_digest,
+            unit_id=unit_id,
+            body_marker=f"{case_id}:{unit_id}",
+        ),
+        formal_authority=True,
+        selection_id="exp1-factorization-easy-v1",
+        selection_digest="sha256:" + "7" * 64,
+        seed=271828,
+        split_profile_id=None,
+        split_profile_digest=split_profile_digest,
+        source_snapshot_digest="sha256:" + "5" * 64,
+        coverage_digest="sha256:" + "6" * 64,
+        model_endpoint_identity_digest="sha256:" + "9" * 64,
+        request_controls_digest="sha256:" + "a" * 64,
     )
 
 
@@ -162,6 +197,219 @@ def _representative_plan() -> RepresentativeUnifiedAcquisitionPlan:
         acquisition_requests=(request,),
         max_acquisition_concurrency=10,
     )
+
+
+def _single_request_bundle(tmp_path: Path):
+    candidate = _candidate()
+    plan = build_semantic_inventory((candidate,))
+    request = AcquisitionRequest(
+        inventory_row=plan.rows[0],
+        prepared_request=candidate.prepared_request,
+        provider_family="deepseek",
+        api_key_env="DEEPSEEK_API_KEY",
+        timeout_seconds=600,
+        token_upper_bound=300_000,
+        cost_upper_bound=Decimal("1.25"),
+        frozen_pricing=FrozenPricing(
+            currency="CNY",
+            input_per_million_tokens=Decimal("0.5"),
+            output_per_million_tokens=Decimal("1.5"),
+        ),
+        requested_at="2026-08-03T00:00:00Z",
+    )
+    return create_acquisition_plan_bundle(
+        tmp_path / "bundle",
+        authorized_plan_digest="sha256:" + "a" * 64,
+        profile_digest="sha256:" + "b" * 64,
+        semantic_inventory_plan=plan,
+        acquisition_requests=(request,),
+    )
+
+
+def _write_legacy_results_first_marker(*, bundle, output_root: Path) -> bytes:
+    output_root.mkdir(parents=True, exist_ok=True)
+    selected_experiments = [
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+        "exp4_real_ai_protocol_ablation",
+    ]
+    identity = {
+        "schema_version": (
+            "tokenshare.results_first_smoke_acquisition_authorization.v1"
+        ),
+        "authorization_kind": "user_authorized_smoke_facility",
+        "authorized_plan_digest": bundle.authorized_plan_digest,
+        "profile_digest": bundle.profile_digest,
+        "budget_digest": bundle.full_budget.budget_digest,
+        "inventory_digest": bundle.inventory_digest,
+        "prompt_admission_profile_digest": (
+            bundle.prompt_admission_profile_digest
+        ),
+        "provider_config_digest": bundle.provider_config_digest,
+        "output_root_path_digest": response_bank.output_root_path_digest(output_root),
+        "selected_experiments": selected_experiments,
+    }
+    marker_body = {
+        "schema_version": "tokenshare.results_first_smoke_facility_marker.v1",
+        "authorization_kind": "user_authorized_smoke_facility",
+        "authorization_digest": canonical_digest(identity),
+        "authorized_plan_digest": bundle.authorized_plan_digest,
+        "profile_digest": bundle.profile_digest,
+        "budget_digest": bundle.full_budget.budget_digest,
+        "inventory_digest": bundle.inventory_digest,
+        "prompt_admission_profile_digest": (
+            bundle.prompt_admission_profile_digest
+        ),
+        "provider_config_digest": bundle.provider_config_digest,
+        "output_root_path_digest": response_bank.output_root_path_digest(output_root),
+    }
+    persisted = {
+        **marker_body,
+        "marker_digest": canonical_digest(marker_body),
+    }
+    encoded = (
+        json.dumps(
+            persisted,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    (
+        output_root / "results_first_smoke_facility_marker.v1.json"
+    ).write_bytes(encoded)
+    return encoded
+
+
+def test_results_first_authorization_writes_neutral_marker_and_resumes_legacy_exactly(
+    tmp_path: Path,
+) -> None:
+    bundle = _single_request_bundle(tmp_path)
+    new_root = tmp_path / "new-acquisition"
+
+    created = establish_results_first_acquisition_authorization(
+        bundle=bundle,
+        output_root=new_root,
+        output_mode="new_run",
+        allow_provider_calls=True,
+    )
+
+    assert created.schema_version == (
+        "tokenshare.results_first_acquisition_authorization.v1"
+    )
+    assert created.authorization_kind == "user_authorized_results_first"
+    assert created.authorization_state == "user_authorized_results_first"
+    assert created.selected_experiments == ("exp1_real_ai_feasibility",)
+    assert created.marker.schema_version == (
+        "tokenshare.results_first_facility_marker.v1"
+    )
+    assert (new_root / "results_first_facility_marker.v1.json").is_file()
+    assert not (
+        new_root / "results_first_smoke_facility_marker.v1.json"
+    ).exists()
+
+    legacy_root = tmp_path / "legacy-acquisition"
+    legacy_bytes = _write_legacy_results_first_marker(
+        bundle=bundle,
+        output_root=legacy_root,
+    )
+    resumed = establish_results_first_acquisition_authorization(
+        bundle=bundle,
+        output_root=legacy_root,
+        output_mode="resume",
+        allow_provider_calls=True,
+    )
+
+    assert resumed.schema_version == (
+        "tokenshare.results_first_smoke_acquisition_authorization.v1"
+    )
+    assert resumed.authorization_kind == "user_authorized_smoke_facility"
+    assert resumed.authorization_state == "user_authorized_smoke_facility"
+    assert (
+        legacy_root / "results_first_smoke_facility_marker.v1.json"
+    ).read_bytes() == legacy_bytes
+    assert not (legacy_root / "results_first_facility_marker.v1.json").exists()
+    assert results_first_response_bank_manifest_for_bundle(
+        bundle,
+        resumed,
+    ).authorization_kind == "user_authorized_smoke_facility"
+
+
+def test_results_first_authorization_dual_or_corrupt_new_marker_fails_closed(
+    tmp_path: Path,
+) -> None:
+    bundle = _single_request_bundle(tmp_path)
+    dual_root = tmp_path / "dual-acquisition"
+    establish_results_first_acquisition_authorization(
+        bundle=bundle,
+        output_root=dual_root,
+        output_mode="new_run",
+        allow_provider_calls=True,
+    )
+    _write_legacy_results_first_marker(bundle=bundle, output_root=dual_root)
+    with pytest.raises(response_bank.AcquisitionAuthorizationError, match="both"):
+        establish_results_first_acquisition_authorization(
+            bundle=bundle,
+            output_root=dual_root,
+            output_mode="resume",
+            allow_provider_calls=True,
+        )
+
+    corrupt_root = tmp_path / "corrupt-new-acquisition"
+    establish_results_first_acquisition_authorization(
+        bundle=bundle,
+        output_root=corrupt_root,
+        output_mode="new_run",
+        allow_provider_calls=True,
+    )
+    (corrupt_root / "results_first_facility_marker.v1.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        response_bank.AcquisitionAuthorizationError,
+        match="identity mismatch",
+    ):
+        establish_results_first_acquisition_authorization(
+            bundle=bundle,
+            output_root=corrupt_root,
+            output_mode="resume",
+            allow_provider_calls=True,
+        )
+
+
+def test_results_first_manifest_round_trips_new_and_legacy_authorization_kinds() -> None:
+    common = {
+        "bank_root_id": "sha256:" + "1" * 64,
+        "profile_digest": "sha256:" + "2" * 64,
+        "budget_digest": "sha256:" + "3" * 64,
+        "inventory_digest": "sha256:" + "4" * 64,
+        "provider_config_digest": "sha256:" + "5" * 64,
+        "entry_ids": ("entry-a",),
+        "object_role_schema": ("raw_response",),
+        "terminal_entry_count": 1,
+        "authorization_digest": "sha256:" + "6" * 64,
+    }
+    current = ResultsFirstResponseBankManifest.create(**common)
+    legacy = ResultsFirstResponseBankManifest.create(
+        **common,
+        authorization_kind="user_authorized_smoke_facility",
+    )
+
+    assert current.authorization_kind == "user_authorized_results_first"
+    assert ResultsFirstResponseBankManifest.from_dict(current.to_dict()) == current
+    assert ResultsFirstResponseBankManifest.from_dict(legacy.to_dict()) == legacy
+
+    missing = current.to_dict()
+    missing.pop("authorization_kind")
+    with pytest.raises(ValueError, match="fields mismatch"):
+        ResultsFirstResponseBankManifest.from_dict(missing)
+    unknown = current.to_dict()
+    unknown["authorization_kind"] = "unknown"
+    with pytest.raises(ValueError, match="authorization kind"):
+        ResultsFirstResponseBankManifest.from_dict(unknown)
 
 
 def _exp2_online_conditions() -> tuple[dict, ...]:
@@ -524,6 +772,102 @@ def test_exp2_conditions_share_case_repeat_unit_slot_and_repeats_do_not() -> Non
     assert refs["w1-r0"]["semantic_slot_keys"] == refs["w50-r0"]["semantic_slot_keys"]
     assert refs["w1-r1"]["semantic_slot_keys"] != refs["w1-r0"]["semantic_slot_keys"]
     assert len(plan.rows) == 2
+
+
+def test_exp1_condition_keeps_distinct_case_split_profile_authority() -> None:
+    case_064 = _formal_exp1_candidate(
+        case_id="factor_v2_easy_064",
+        case_digest="sha256:" + "b" * 64,
+        split_profile_digest="sha256:" + "c" * 64,
+        unit_id="range_0",
+    )
+    case_093 = _formal_exp1_candidate(
+        case_id="factor_v2_easy_093",
+        case_digest="sha256:" + "d" * 64,
+        split_profile_digest="sha256:" + "e" * 64,
+        unit_id="range_0",
+    )
+
+    plan = build_semantic_inventory((case_064, case_093))
+
+    assert len(plan.condition_refs) == 1
+    condition_ref = plan.condition_refs[0]
+    assert condition_ref["condition_id"] == "exp1_factorization_easy_w10_r0"
+    assert condition_ref["experiment_id"] == "exp1_real_ai_feasibility"
+    assert "split_profile_id" not in condition_ref
+    assert "split_profile_digest" not in condition_ref
+    case_refs = {ref["case_id"]: ref for ref in condition_ref["case_refs"]}
+    assert case_refs["factor_v2_easy_064"]["split_profile_id"] is None
+    assert case_refs["factor_v2_easy_064"]["split_profile_digest"] == (
+        "sha256:" + "c" * 64
+    )
+    assert case_refs["factor_v2_easy_093"]["split_profile_id"] is None
+    assert case_refs["factor_v2_easy_093"]["split_profile_digest"] == (
+        "sha256:" + "e" * 64
+    )
+    rows_by_slot = {row.semantic_slot_key: row for row in plan.rows}
+    assert {
+        ref["case_id"]: sorted(
+            {
+                rows_by_slot[slot_key].replacement_slot
+                for slot_key in ref["semantic_slot_keys"]
+            }
+        )
+        for ref in condition_ref["case_refs"]
+    } == {
+        "factor_v2_easy_064": [0],
+        "factor_v2_easy_093": [0],
+    }
+
+
+def test_exp1_same_case_split_profile_drift_fails_closed() -> None:
+    base = _formal_exp1_candidate(
+        case_id="factor_v2_easy_064",
+        case_digest="sha256:" + "b" * 64,
+        split_profile_digest="sha256:" + "c" * 64,
+        unit_id="range_0",
+    )
+    drift = replace(base, split_profile_digest="sha256:" + "d" * 64)
+
+    with pytest.raises(ValueError, match="case split profile authority drift"):
+        build_semantic_inventory((base, drift))
+
+
+def test_target_fault_replacement_policy_does_not_expand_exp1_source_slots() -> None:
+    source = _formal_exp1_candidate(
+        case_id="factor_v2_easy_064",
+        case_digest="sha256:" + "b" * 64,
+        split_profile_digest="sha256:" + "c" * 64,
+        unit_id="range_0",
+    )
+    target_candidates = tuple(
+        _candidate(
+            experiment_id="exp3_real_ai_fault_recovery",
+            condition_id="exp3-worker-death",
+            fault_type="worker_death",
+            case_id="factor_v2_easy_064",
+            case_digest="sha256:" + "b" * 64,
+            unit_id="range_0",
+            replacement_slot=slot,
+            body_marker="factor_v2_easy_064:range_0",
+        )
+        for slot in range(5)
+    )
+
+    plan = build_semantic_inventory((source, *target_candidates))
+
+    refs = {ref["condition_id"]: ref for ref in plan.condition_refs}
+    rows_by_slot = {row.semantic_slot_key: row for row in plan.rows}
+    source_slots = {
+        rows_by_slot[slot_key].replacement_slot
+        for slot_key in refs[source.condition_id]["semantic_slot_keys"]
+    }
+    target_slots = {
+        rows_by_slot[slot_key].replacement_slot
+        for slot_key in refs["exp3-worker-death"]["semantic_slot_keys"]
+    }
+    assert source_slots == {0}
+    assert target_slots == {0, 1, 2, 3, 4}
 
 
 def test_same_repeat_cannot_map_to_multiple_sample_slots() -> None:

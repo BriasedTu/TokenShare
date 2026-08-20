@@ -75,8 +75,8 @@ L1_COMPONENT_FILES = (
 )
 L1_TASK25_TO_29_FILES = {
     "tests/experiments/test_paper_online_checks.py": 6,
-    "tests/experiments/test_paper_paid_authorization.py": 14,
-    "tests/experiments/test_run_paper_pipeline.py": 39,
+    "tests/experiments/test_paper_paid_authorization.py": 15,
+    "tests/experiments/test_run_paper_pipeline.py": 183,
     "tests/experiments/test_paper_formal_gate.py": 18,
     "tests/experiments/test_smoke_launcher_supervision.py": 9,
 }
@@ -89,7 +89,7 @@ L1_TASK19_NODEIDS = {
     "tests/experiments/test_paper_formal_callbacks.py::test_worker_death_parent_commit_and_ordinal_replacement_flow",
 }
 L1_TASK20_TO_22_FILES = {
-    "tests/experiments/test_paper_metric_observations.py": 11,
+    "tests/experiments/test_paper_metric_observations.py": 23,
     "tests/experiments/test_paper_metric_renderer_contract.py": 4,
     "tests/experiments/test_paper_full_resource_trace.py": 4,
 }

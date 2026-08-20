@@ -116,6 +116,7 @@ class Exp4DirectRootFacts:
     paper_evidence_complete: bool
     infrastructure_valid: bool
     source_bank_roles: tuple[str, ...] | None
+    source_bank_entry_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -156,6 +157,12 @@ class Exp4DirectRootFacts:
             if len(set(roles)) != len(roles):
                 raise ValueError("duplicate source bank role")
             object.__setattr__(self, "source_bank_roles", roles)
+        entry_ids = tuple(self.source_bank_entry_ids)
+        if any(not isinstance(value, str) or not value for value in entry_ids):
+            raise ValueError("source_bank_entry_ids must contain non-empty strings")
+        if len(set(entry_ids)) != len(entry_ids):
+            raise ValueError("duplicate source bank entry id")
+        object.__setattr__(self, "source_bank_entry_ids", entry_ids)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -377,9 +384,7 @@ def build_exp4_observations(
             )
         )
 
-    full_index: dict[
-        tuple[str, int, str, int, tuple[str, ...]], list[_RootEntry]
-    ] = {}
+    full_index: dict[tuple[str, int, str, int], list[_RootEntry]] = {}
     for entry in entries:
         if entry.mode_input.ablation_mode == "FULL":
             full_index.setdefault(_match_key(entry), []).append(entry)
@@ -436,7 +441,29 @@ def _build_pair(
     }
     if full is not None:
         _add_complete_pair_resource_facts(facts, full.root, ablation.root)
-    member_facts = {pair_member_id: facts}
+    pair_roots = tuple(
+        root
+        for root in (
+            None if full is None else full.root,
+            ablation.root,
+        )
+        if root is not None
+    )
+    facts["lineage_root_run_ids"] = tuple(
+        root.preregistered_root_run_id for root in pair_roots
+    )
+    facts["source_bank_entry_ids"] = tuple(
+        dict.fromkeys(
+            entry_id
+            for root in pair_roots
+            for entry_id in root.source_bank_entry_ids
+        )
+    )
+    member_facts = {
+        root.preregistered_root_run_id: _root_lineage_facts(root)
+        for root in pair_roots
+    }
+    member_facts[pair_member_id] = facts
     identity = {
         "kind": "pair",
         "case_id": ablation.root.case_id,
@@ -593,16 +620,22 @@ def _group_member_facts(
     members: dict[str, Mapping[str, object]] = {}
     for input_index, value in enumerate(group):
         for root in value.roots:
-            members[root.preregistered_root_run_id] = {
-                "member_kind": "preregistered_root",
-                "final_result_reference_complete": root.final_result_reference_complete,
-                "end_to_end_verified_success": root.end_to_end_verified_success,
-                "source_bank_roles": root.source_bank_roles,
-            }
+            members[root.preregistered_root_run_id] = _root_lineage_facts(root)
         for observation in value.observations:
             member_id = f"observation:{input_index}:{value.condition_id}:{observation.observation_id}"
             members[member_id] = dict(observation.facts)
     return members
+
+
+def _root_lineage_facts(root: Exp4DirectRootFacts) -> Mapping[str, object]:
+    return {
+        "member_kind": "preregistered_root",
+        "preregistered_root_run_id": root.preregistered_root_run_id,
+        "final_result_reference_complete": root.final_result_reference_complete,
+        "end_to_end_verified_success": root.end_to_end_verified_success,
+        "source_bank_roles": root.source_bank_roles,
+        "source_bank_entry_ids": root.source_bank_entry_ids,
+    }
 
 
 def _group_ineligibility_reasons(
@@ -685,13 +718,14 @@ def _add_complete_pair_resource_facts(
             facts[f"ablation_{target}"] = ablation_value
 
 
-def _match_key(entry: _RootEntry) -> tuple[str, int, str, int, tuple[str, ...]]:
+def _match_key(entry: _RootEntry) -> tuple[str, int, str, int]:
+    """按预注册 case/repeat/sample 配对；实际 replacement 消费属于结果事实。"""
+
     return (
         entry.mode_input.domain,
         entry.mode_input.repeat_id,
         entry.root.case_id,
         entry.root.sample_slot_index,
-        entry.root.replacement_slot_ids,
     )
 
 

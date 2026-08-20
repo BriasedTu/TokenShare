@@ -530,6 +530,8 @@ def selected_experiments_for_provider_scope(scope: str) -> tuple[str, ...]:
         "exp1_full_online": ("exp1",),
         "exp5_capability_smoke": ("exp5_capability",),
         "exp5_full_online": ("exp5",),
+        "results_first_representative_exp1_exp3_exp5": ("exp1", "exp5"),
+        "results_first_full_exp1_exp3_exp5": ("exp1", "exp5"),
     }
     try:
         return mapping[scope]

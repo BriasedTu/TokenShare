@@ -115,6 +115,7 @@ def _trace_evidence_facts(
     domain: str = "factorization",
     executed_ai_unit_count: int = 1,
     replacement_count: int = 1,
+    redelivery_count: int = 1,
 ) -> dict:
     bindings = [
         _unit_binding(index, domain=domain)
@@ -224,15 +225,23 @@ def _trace_evidence_facts(
     for unit_index, binding in enumerate(bindings):
         replacements = tuple(
             TraceReplacementBinding(
-                replacement_slot=replacement_slot,
+                replacement_slot=current_ordinal,
                 entry_id=entries_by_slot[
-                    (binding["planned_ai_unit_id"], replacement_slot)
+                    (
+                        binding["planned_ai_unit_id"],
+                        0 if redelivery_count > 1 else current_ordinal,
+                    )
                 ].entry_id,
                 inference_request_digest=entries_by_slot[
-                    (binding["planned_ai_unit_id"], replacement_slot)
+                    (
+                        binding["planned_ai_unit_id"],
+                        0 if redelivery_count > 1 else current_ordinal,
+                    )
                 ].inference_request_digest,
             )
-            for replacement_slot in range(replacement_count)
+            for current_ordinal in range(
+                redelivery_count if redelivery_count > 1 else replacement_count
+            )
         )
         source_bindings.append(
             TraceSourceBinding.create(
@@ -246,13 +255,13 @@ def _trace_evidence_facts(
         )
         selected_entry = entries_by_slot[(binding["planned_ai_unit_id"], 0)]
         selected_locators = locators_by_entry[selected_entry.entry_id]
-        wrappers.append(
+        wrappers.extend(
             CurrentTraceWrapper(
                 current_run_id="run-1",
                 current_task_id="task-1",
                 current_unit_id=binding["unit_id"],
-                current_attempt_id=f"attempt-{unit_index}",
-                attempt_ordinal=0,
+                current_attempt_id=f"attempt-{unit_index}-{current_ordinal}",
+                attempt_ordinal=current_ordinal,
                 bank_root_id=manifest.bank_root_id,
                 manifest_digest=manifest.manifest_digest,
                 root_binding_marker_digest=manifest.root_binding_marker_digest,
@@ -281,8 +290,9 @@ def _trace_evidence_facts(
                 current_canonical_ref=(
                     "canonical-1" if terminal_kind == "success" else None
                 ),
-                current_ledger_ref="ledger-1",
+                current_ledger_ref=f"ledger-{unit_index}-{current_ordinal}",
             )
+            for current_ordinal in range(redelivery_count)
         )
     return {
         "schema_version": "tokenshare.paper_evidence_eligibility_facts.v2",
@@ -404,7 +414,7 @@ def test_trace_class_requires_current_calls_zero_and_dual_provenance() -> None:
         TraceSourceBinding.from_dict(item)
         for item in multi_facts["trace_source_bindings"]
     ]
-    swapped_bindings = [
+    drifted_bindings = [
         TraceSourceBinding.create(
             planned_ai_unit_id=binding.planned_ai_unit_id,
             sample_slot_index=binding.sample_slot_index,
@@ -412,15 +422,23 @@ def test_trace_class_requires_current_calls_zero_and_dual_provenance() -> None:
             manifest_digest=binding.manifest_digest,
             replacements=(
                 binding.replacements[0],
-                multi_bindings[1 - index].replacements[1],
+                TraceReplacementBinding(
+                    replacement_slot=1,
+                    entry_id=binding.replacements[1].entry_id,
+                    inference_request_digest=(
+                        multi_bindings[1 - index]
+                        .replacements[1]
+                        .inference_request_digest
+                    ),
+                ),
             ),
             source_evidence_class=binding.source_evidence_class,
         ).to_dict()
         for index, binding in enumerate(multi_bindings)
     ]
-    swapped_unexecuted_replacements = (
+    drifted_unexecuted_replacements = (
         paper_models.evaluate_versioned_paper_evidence(
-            {**multi_facts, "trace_source_bindings": swapped_bindings}
+            {**multi_facts, "trace_source_bindings": drifted_bindings}
         )
     )
 
@@ -445,10 +463,37 @@ def test_trace_class_requires_current_calls_zero_and_dual_provenance() -> None:
             missing_terminal_stage.ineligibility_reasons
         )
     assert "current_trace_identity_chain_invalid" in (
-        swapped_unexecuted_replacements.ineligibility_reasons
+        drifted_unexecuted_replacements.ineligibility_reasons
     )
     assert paper_models.evaluate_versioned_paper_evidence(lean_facts).paper_eligible is True
     assert paper_models.evaluate_versioned_paper_evidence(facts).paper_eligible is True
+
+
+def test_trace_class_accepts_same_source_artifact_protocol_redelivery() -> None:
+    facts = _trace_evidence_facts(redelivery_count=3)
+
+    report = paper_models.evaluate_versioned_paper_evidence(facts)
+
+    assert report.paper_eligible is True
+    assert report.current_provider_call_count == 0
+    wrappers = facts["current_lifecycle_refs"]
+    assert [wrapper["attempt_ordinal"] for wrapper in wrappers] == [0, 1, 2]
+    assert {wrapper["entry_id"] for wrapper in wrappers} == {"entry-0-0"}
+
+    drifted = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [
+                wrappers[0],
+                {
+                    **wrappers[1],
+                    "inference_request_digest": digest_json({"drifted": True}),
+                },
+                wrappers[2],
+            ],
+        }
+    )
+    assert "current_trace_identity_chain_invalid" in drifted.ineligibility_reasons
 
 
 @pytest.mark.parametrize(

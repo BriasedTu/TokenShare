@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import base64
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Literal
+from typing import Literal, Mapping
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from tokenshare.core.models import JsonObject
@@ -49,6 +50,108 @@ class PreparedOutboundRequest:
     sample_slot_index: int
     replacement_slot: int
     inference_request_digest: str
+
+    def to_dict(self) -> JsonObject:
+        """返回可精确恢复 wire bytes 的 canonical JSON persistence body。"""
+
+        prepared = validate_prepared_request(self)
+        return {
+            "schema_version": prepared.schema_version,
+            "body_obj": json.loads(prepared.body_bytes.decode("utf-8")),
+            "body_bytes_base64": base64.b64encode(prepared.body_bytes).decode("ascii"),
+            "body_digest": prepared.body_digest,
+            "serialization_profile": prepared.serialization_profile,
+            "normalized_absolute_endpoint": prepared.normalized_absolute_endpoint,
+            "provider_config_digest": prepared.provider_config_digest,
+            "entry_id": prepared.entry_id,
+            "configured_model": prepared.configured_model,
+            "effective_controls_digest": prepared.effective_controls_digest,
+            "plugin_id": prepared.plugin_id,
+            "plugin_version": prepared.plugin_version,
+            "prompt_profile_id": prepared.prompt_profile_id,
+            "prompt_serialization_schema": prepared.prompt_serialization_schema,
+            "body_serialization_schema": prepared.body_serialization_schema,
+            "prompt_admission_profile_id": prepared.prompt_admission_profile_id,
+            "prompt_admission_profile_version": prepared.prompt_admission_profile_version,
+            "prompt_admission_profile_digest": prepared.prompt_admission_profile_digest,
+            "estimated_prompt_tokens": prepared.estimated_prompt_tokens,
+            "case_id": prepared.case_id,
+            "planned_ai_unit_id": prepared.planned_ai_unit_id,
+            "sample_slot_index": prepared.sample_slot_index,
+            "replacement_slot": prepared.replacement_slot,
+            "inference_request_digest": prepared.inference_request_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "PreparedOutboundRequest":
+        """严格恢复 canonical persistence body；不接受隐式类型转换。"""
+
+        if not isinstance(value, Mapping):
+            raise ValueError("prepared request must be a JSON object")
+        expected = {
+            "schema_version",
+            "body_obj",
+            "body_bytes_base64",
+            "body_digest",
+            "serialization_profile",
+            "normalized_absolute_endpoint",
+            "provider_config_digest",
+            "entry_id",
+            "configured_model",
+            "effective_controls_digest",
+            "plugin_id",
+            "plugin_version",
+            "prompt_profile_id",
+            "prompt_serialization_schema",
+            "body_serialization_schema",
+            "prompt_admission_profile_id",
+            "prompt_admission_profile_version",
+            "prompt_admission_profile_digest",
+            "estimated_prompt_tokens",
+            "case_id",
+            "planned_ai_unit_id",
+            "sample_slot_index",
+            "replacement_slot",
+            "inference_request_digest",
+        }
+        if set(value) != expected:
+            raise ValueError("prepared request fields do not match v1 schema")
+        string_fields = expected - {
+            "body_obj",
+            "prompt_admission_profile_version",
+            "estimated_prompt_tokens",
+            "sample_slot_index",
+            "replacement_slot",
+        }
+        if any(
+            not isinstance(value[field], str) or not value[field]
+            for field in string_fields
+        ):
+            raise ValueError("prepared request string field is invalid")
+        integer_fields = (
+            "prompt_admission_profile_version",
+            "estimated_prompt_tokens",
+            "sample_slot_index",
+            "replacement_slot",
+        )
+        for field in integer_fields:
+            item = value[field]
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                raise ValueError(f"prepared request {field} is invalid")
+        body_obj = value["body_obj"]
+        if type(body_obj) is not dict:
+            raise ValueError("prepared request body_obj must be a JSON object")
+        encoded = value["body_bytes_base64"]
+        try:
+            body_bytes = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("prepared request body bytes are invalid") from exc
+        if base64.b64encode(body_bytes).decode("ascii") != encoded:
+            raise ValueError("prepared request body bytes are not canonical base64")
+        arguments = dict(value)
+        arguments.pop("body_bytes_base64")
+        arguments["body_bytes"] = body_bytes
+        return validate_prepared_request(cls(**arguments))
 
     def provenance_dict(self) -> JsonObject:
         """返回不复制请求正文 bytes 的稳定 provenance 字段。"""

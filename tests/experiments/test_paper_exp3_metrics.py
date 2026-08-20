@@ -406,6 +406,33 @@ def test_ratio_is_separately_named_audit_only() -> None:
     assert not any("overhead_ratio" in name for name in row.metric_ids)
 
 
+def test_usage_pair_remains_valid_when_reference_replay_wall_clock_is_unavailable() -> None:
+    row = _trace(
+        _observation(
+            "pair-usage-only",
+            member_kind="exp3_trace_pair",
+            pair_evidence_complete=True,
+            fault_sample_slot_id="0",
+            reference_sample_slot_id="0",
+            fault_trace_replay_wall_clock_ms=None,
+            reference_trace_replay_wall_clock_ms=None,
+            fault_trace_attributed_tokens=300,
+            reference_trace_attributed_tokens=200,
+            fault_trace_attributed_cost=Decimal("0.12"),
+            reference_trace_attributed_cost=Decimal("0.08"),
+            source_bank_roles=TRACE_SOURCE_BANK_ROLES,
+        ),
+        sample_slot_id="0",
+    )
+
+    wall = row.require_cell("trace_replay_wall_clock_overhead_ms")
+    assert wall.value is None
+    assert wall.publish_blocked is False
+    assert wall.reason == "reference_replay_wall_clock_unavailable"
+    assert row.require_cell("trace_attributed_token_overhead").value == 100
+    assert row.require_cell("trace_attributed_cost_overhead").value == Decimal("0.04")
+
+
 def test_signed_kill_error_per_death_mean_max() -> None:
     row = _trace(
         _observation(
@@ -427,7 +454,10 @@ def test_signed_kill_error_per_death_mean_max() -> None:
         fault_type="worker_death",
     )
 
-    assert row.require_cell("kill_progress_error_pp").value is None
+    legacy_per_death = row.require_cell("kill_progress_error_pp")
+    assert legacy_per_death.value is None
+    assert legacy_per_death.publish_blocked is False
+    assert legacy_per_death.reason == "multiple_deaths_use_signed_aggregates"
     assert row.require_cell("kill_progress_error_signed_mean_pp").value == Decimal("-2.5")
     assert row.require_cell("kill_progress_error_signed_max_pp").value == Decimal("5")
 

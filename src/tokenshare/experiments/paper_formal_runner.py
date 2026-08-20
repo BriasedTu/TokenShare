@@ -10,9 +10,11 @@ from decimal import Decimal
 from enum import Enum
 import hashlib
 import json
+import os
 import pickle
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
+import stat
 import tempfile
 from threading import Lock
 from types import MappingProxyType
@@ -22,8 +24,11 @@ import uuid
 from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.response_bank import CurrentTraceWrapper
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
-from tokenshare.experiments.paper_catalog import estimated_ai_units_for_case
-from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
+from tokenshare.experiments.paper_catalog import (
+    PaperInputCatalogManifest,
+    estimated_ai_units_for_case,
+    lean_theorem_payload_from_case,
+)
 from tokenshare.experiments.paper_catalog_execution_view import (
     restore_catalog_execution_view,
 )
@@ -43,6 +48,9 @@ from tokenshare.experiments.paper_formal_evidence import (
     _is_protocol_ledger_event,
 )
 from tokenshare.experiments.paper_formal_callbacks import (
+    Exp5RootHardLimitAuthority,
+    PaperProviderExceptionAccounting,
+    bind_condition_to_frozen_case_metadata,
     exp5_identity_fail_stop_required,
     finalize_exp5_identity_evidence,
     run_exp4_ablation_strategy,
@@ -55,10 +63,14 @@ from tokenshare.experiments.paper_exp3_metrics import (
     Exp3PersistedObservation,
     Exp3OnlineRecoveryInput,
     Exp3TraceConditionInput,
+    STARTED_REPLACEMENT_ROLES,
+    SUCCESSFUL_REPLACEMENT_ROLES,
+    TRACE_SOURCE_BANK_ROLES,
 )
 from tokenshare.experiments.paper_exp1_metrics import (
     Exp1ActualProviderAttemptFacts,
     Exp1HydratedDirectRow,
+    Exp1TraceConsumptionFacts,
 )
 from tokenshare.experiments.paper_exp2_metrics import (
     Exp2AIUnitFacts,
@@ -83,12 +95,16 @@ from tokenshare.experiments.paper_model_policy import (
     EXP5_DOMAIN_EXECUTION_CONTRACTS,
     exp5_provider_specific_reasoning_controls,
 )
+from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
 from tokenshare.experiments.paper_models import (
+    ArtifactIdentitySnapshot,
     ExternalBankObjectLocator,
+    LEAN_TOPIC_FAMILIES,
     PaperEvidenceEligibilityFacts,
     PaperBudgetResult,
     PaperConditionResult,
     PaperExperimentCondition,
+    PaperModelExecutionRecord,
     PaperStatus,
     PaperSuiteResult,
     PaperDirectRootInventoryRow,
@@ -98,8 +114,13 @@ from tokenshare.experiments.paper_models import (
 )
 from tokenshare.experiments.paper_direct_results import (
     CanonicalDirectRootEvidence,
+    LEAN_MIXED_TOPIC_FAMILY_AXIS,
+    PaperDirectRootResult,
     _DIRECT_RESULT_FACTORY_TOKEN,
+    _observed_row,
     build_canonical_direct_evidence,
+    build_persisted_verification_event_verdict_body,
+    persist_native_online_direct_artifacts,
     project_paper_direct_results,
 )
 from tokenshare.experiments.paper_unit_commitments import (
@@ -113,9 +134,76 @@ from tokenshare.experiments.paper_terminal_outcomes import (
 )
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger
+
+
+def _formal_path_is_reparse_point(path: Path) -> bool:
+    """不解析目标地检查symlink/junction/Windows reparse identity。"""
+
+    junction = getattr(path, "is_junction", None)
+    try:
+        if callable(junction) and junction():
+            return True
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ValueError("formal path reparse identity is unreadable") from exc
+    attributes = int(getattr(metadata, "st_file_attributes", 0))
+    reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    return bool(
+        (reparse_flag and attributes & reparse_flag)
+        or stat.S_ISLNK(int(getattr(metadata, "st_mode", 0)))
+    )
+
+
+def _reject_formal_reparse_path(
+    path: str | Path,
+    *,
+    recursive: bool,
+    check_existing_parents: bool,
+) -> None:
+    """在resolve/copy/delete前fail-closed拒绝所有reparse边界。"""
+
+    candidate = Path(os.path.abspath(Path(path)))
+    if check_existing_parents:
+        parent = candidate.parent
+        while True:
+            if _formal_path_is_reparse_point(parent):
+                raise ValueError("formal path parent contains a reparse point")
+            if parent == parent.parent:
+                break
+            parent = parent.parent
+    if _formal_path_is_reparse_point(candidate):
+        raise ValueError("formal path contains a reparse point")
+    try:
+        metadata = candidate.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ValueError("formal path identity is unreadable") from exc
+    if not recursive or not stat.S_ISDIR(int(getattr(metadata, "st_mode", 0))):
+        return
+
+    pending = [candidate]
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = tuple(os.scandir(directory))
+        except OSError as exc:
+            raise ValueError("formal path tree identity is unreadable") from exc
+        for entry in entries:
+            child = directory / entry.name
+            if _formal_path_is_reparse_point(child):
+                raise ValueError("formal path tree contains a reparse point")
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(child)
+            except OSError as exc:
+                raise ValueError("formal path tree identity is unreadable") from exc
 from tokenshare.local_runtime.projection import project_protocol_run
 from tokenshare.local_runtime import (
     ExperimentAblationGateAppliedPayloadV1,
+    ExperimentPrematureMergeAttemptedPayloadV1,
     NoOpRuntimeHooks,
     ParsedCandidateContext,
     ParsedCandidateDirective,
@@ -134,6 +222,7 @@ from tokenshare.plugins.factorization.schemas import (
     PLUGIN_VERSION as FACTORIZATION_PLUGIN_VERSION,
     RANGE_RESULT_SCHEMA_VERSION,
 )
+from tokenshare.plugins.lean_proof.fixed_plan import LeanFixedDecompositionPlan
 from tokenshare.plugins.lean_proof.schemas import (
     LEAN_PROOF_CANDIDATE_SCHEMA_VERSION,
     PLUGIN_VERSION as LEAN_PLUGIN_VERSION,
@@ -613,6 +702,15 @@ def replay_paper_formal_suite(*, output_root: str | Path) -> PaperSuiteResult:
     return persisted
 
 
+def _paper_suite_result_body(result: PaperSuiteResult) -> dict[str, Any]:
+    """PaperSuiteResult v1 在无 currency map 时也必须显式保留 missingness。"""
+
+    body = result.to_dict()
+    if result.total_cost_estimate_status != "single_currency_or_legacy":
+        body["total_cost_estimate_status"] = result.total_cost_estimate_status
+    return body
+
+
 def write_paper_formal_replay_report(
     *,
     output_root: str | Path,
@@ -631,7 +729,7 @@ def write_paper_formal_replay_report(
         },
     }
     replayed_result, recomputed, comparison = _verified_replay_summary(suite_root)
-    replayed = replayed_result.to_dict()
+    replayed = _paper_suite_result_body(replayed_result)
     replayed_digest = _sha256_bytes(
         json.dumps(
             replayed,
@@ -779,6 +877,20 @@ class _RunnerExp3OnlineMetricInput(Exp3OnlineRecoveryInput):
 
 
 @dataclass(frozen=True, kw_only=True)
+class _RunnerExp4ModeInput(Exp4ModeInput):
+    """保持 Exp4 projector ABI，并让 authoritative direct rows 可重放。"""
+
+    direct_results: tuple[Any, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RunnerExp5ModelRepeatFacts(Exp5ModelRepeatFacts):
+    """保持 Exp5 projector ABI，并让每个正式 root 恰一进入 lineage。"""
+
+    direct_results: tuple[Any, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
 class _RunnerExp2TraceMetricInput(Exp2TraceHydratedRoot):
     """Authoritative direct id 在持久化层保持 frozen；metric view 另行生成。"""
 
@@ -799,6 +911,13 @@ class _RunnerExp2TraceMetricInput(Exp2TraceHydratedRoot):
                 ai_units=self.ai_units,
                 in_flight_at_witness=self.in_flight_at_witness,
                 observed_peak_concurrency=self.observed_peak_concurrency,
+                source_api_latency_total_ms=self.source_api_latency_total_ms,
+                source_api_latency_known_total_ms=(
+                    self.source_api_latency_known_total_ms
+                ),
+                source_api_latency_missing_attempt_count=(
+                    self.source_api_latency_missing_attempt_count
+                ),
             )
             del validated
             return
@@ -856,6 +975,8 @@ class _CanonicalDirectCollector:
 
 def load_paper_traceability_replay_input_root(
     output_root: str | Path,
+    *,
+    _defer_full_validation: bool = False,
 ) -> Any:
     """加载 runner factory 生成的 handle，并用官方 loader 完整验证 closure。"""
 
@@ -883,11 +1004,16 @@ def load_paper_traceability_replay_input_root(
         raise ValueError("traceability replay input handle type mismatch")
     if value.descriptor_digest != ref.get("descriptor_digest"):
         raise ValueError("traceability replay input descriptor digest mismatch")
-    _load_protected_replay_inputs(value)
+    if not _defer_full_validation:
+        _load_protected_replay_inputs(value)
     return value
 
 
-def load_paper_traceability_replay_inputs(output_root: str | Path) -> Any:
+def load_paper_traceability_replay_inputs(
+    output_root: str | Path,
+    *,
+    _defer_evidence_validation: bool = False,
+) -> Any:
     """返回已由官方 protected-root loader 验证的 typed replay inputs。"""
 
     from tokenshare.experiments.paper_traceability import (
@@ -895,7 +1021,11 @@ def load_paper_traceability_replay_inputs(output_root: str | Path) -> Any:
     )
 
     return _load_protected_replay_inputs(
-        load_paper_traceability_replay_input_root(output_root)
+        load_paper_traceability_replay_input_root(
+            output_root,
+            _defer_full_validation=True,
+        ),
+        _defer_evidence_validation=_defer_evidence_validation,
     )
 
 
@@ -905,36 +1035,32 @@ def recompute_paper_formal_metrics_from_runner_inputs(
     """从 runner 的 protected closure 重算，并只发布 derived metric files。"""
 
     from tokenshare.experiments.paper_formal_metrics import (
-        derive_paper_metric_projection_rows,
         recompute_paper_formal_metrics,
     )
 
     publication_root = Path(output_root)
-    loaded = load_paper_traceability_replay_inputs(publication_root)
+    loaded = load_paper_traceability_replay_inputs(
+        publication_root,
+        _defer_evidence_validation=True,
+    )
+    direct = loaded.direct
+    current = loaded.current
+    source = loaded.source
     with tempfile.TemporaryDirectory(
         prefix="tokenshare-formal-metrics-",
         dir=publication_root.parent,
     ) as staging_directory:
         staging_root = Path(staging_directory)
         resolved_staging_root = staging_root.resolve(strict=False)
-        for relative_name, content in loaded.current_evidence_files:
-            relative = Path(relative_name)
-            target = (staging_root / relative).resolve(strict=False)
-            if (
-                relative.is_absolute()
-                or ".." in relative.parts
-                or (
-                    target != resolved_staging_root
-                    and resolved_staging_root not in target.parents
-                )
-            ):
-                raise ValueError("runner metric evidence path escapes staging root")
-            _atomic_write_bytes(target, content)
-        current = loaded.current
-        source = loaded.source
+        _materialize_metric_evidence_files(
+            staging_root=staging_root,
+            resolved_staging_root=resolved_staging_root,
+            evidence_files=loaded.current_evidence_files,
+        )
+        del loaded
         metrics = recompute_paper_formal_metrics(
             staging_root,
-            loaded.direct,
+            direct,
             global_infrastructure_valid=bool(
                 current["global_infrastructure_valid"]
             ),
@@ -947,9 +1073,6 @@ def recompute_paper_formal_metrics_from_runner_inputs(
                 "trace_source_bindings_by_root"
             ],
             eligibility_facts_by_root=current["eligibility_facts_by_root"],
-            metric_projection_rows=derive_paper_metric_projection_rows(
-                loaded.direct
-            ),
         )
         for ref in metrics.output_refs:
             relative = Path(str(ref.get("path", "")))
@@ -966,8 +1089,482 @@ def recompute_paper_formal_metrics_from_runner_inputs(
                 )
             ):
                 raise ValueError("runner metric output path is invalid")
-            _atomic_write_bytes(target, source_path.read_bytes())
+            _atomic_copy_file(source_path, target)
         return metrics
+
+
+def recompute_paper_formal_metrics_from_runner_input_roots(
+    *,
+    publication_root: str | Path,
+    trace_suite_root: str | Path,
+    exp5_suite_root: str | Path,
+    expected_root_ids: Sequence[str],
+) -> FormalMetricsResult:
+    """分别复水两个已验证 closure，并只发布合并后的 derived metrics。"""
+
+    from tokenshare.experiments.paper_formal_metrics import (
+        recompute_paper_formal_metrics,
+    )
+    from tokenshare.experiments.paper_traceability import (
+        verify_external_source_locators,
+    )
+
+    destination = Path(publication_root)
+    if destination.exists():
+        raise ValueError("combined metric publication root is not fresh")
+
+    expected = tuple(sorted(expected_root_ids))
+    if (
+        not expected
+        or any(not isinstance(root_id, str) or not root_id for root_id in expected)
+        or len(set(expected)) != len(expected)
+    ):
+        raise ValueError("fixed denominator root inventory is invalid")
+
+    trace = load_paper_traceability_replay_inputs(Path(trace_suite_root))
+    exp5 = load_paper_traceability_replay_inputs(Path(exp5_suite_root))
+    trace_group = _validated_combined_metric_replay_group(
+        loaded=trace,
+        label="trace",
+    )
+    exp5_group = _validated_combined_metric_replay_group(
+        loaded=exp5,
+        label="exp5",
+    )
+    _validate_combined_group_root_partition(
+        trace_direct=trace_group["direct"],
+        exp5_direct=exp5_group["direct"],
+        trace_root_ids=trace_group["root_ids"],
+        exp5_root_ids=exp5_group["root_ids"],
+        expected_root_ids=expected,
+    )
+    combined_runtime_evidence = _merge_root_indexed_metric_evidence(
+        "canonical runtime evidence",
+        trace_group["runtime_evidence_by_root"],
+        exp5_group["runtime_evidence_by_root"],
+    )
+    combined_wrappers = _merge_root_indexed_metric_evidence(
+        "current trace wrappers",
+        trace_group["wrappers_by_root"],
+        exp5_group["wrappers_by_root"],
+    )
+    combined_bindings = _merge_root_indexed_metric_evidence(
+        "trace source bindings",
+        trace_group["bindings_by_root"],
+        exp5_group["bindings_by_root"],
+    )
+    combined_eligibility = _merge_root_indexed_metric_evidence(
+        "eligibility facts",
+        trace_group["eligibility_by_root"],
+        exp5_group["eligibility_by_root"],
+    )
+    combined_resolvers = _merge_combined_metric_source_resolvers(
+        trace_group["source_resolvers"],
+        exp5_group["source_resolvers"],
+    )
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="tokenshare-combined-formal-metrics-",
+        dir=destination.parent,
+    ) as staging_directory:
+        staging_root = Path(staging_directory)
+        resolved_staging_root = staging_root.resolve(strict=False)
+        trace_evidence_root = staging_root / "trace_evidence"
+        exp5_evidence_root = staging_root / "exp5_evidence"
+        _materialize_metric_evidence_files(
+            staging_root=trace_evidence_root,
+            resolved_staging_root=resolved_staging_root,
+            evidence_files=trace.current_evidence_files,
+        )
+        _materialize_metric_evidence_files(
+            staging_root=exp5_evidence_root,
+            resolved_staging_root=resolved_staging_root,
+            evidence_files=exp5.current_evidence_files,
+        )
+        trace_inputs = rehydrate_persisted_metric_inputs(
+            evidence_root=trace_evidence_root,
+            canonical_metric_inputs=trace_group["direct"],
+            source_resolvers=trace_group["source_resolvers"],
+        )
+        exp5_inputs = rehydrate_persisted_metric_inputs(
+            evidence_root=exp5_evidence_root,
+            canonical_metric_inputs=exp5_group["direct"],
+            source_resolvers=exp5_group["source_resolvers"],
+        )
+        combined = merge_canonical_metric_input_roots(
+            (trace_inputs, exp5_inputs),
+            expected_root_ids=expected,
+        )
+        metric_stage_root = staging_root / "metric_stage"
+        metrics = recompute_paper_formal_metrics(
+            metric_stage_root,
+            combined,
+            global_infrastructure_valid=(
+                trace_group["global_infrastructure_valid"]
+                and exp5_group["global_infrastructure_valid"]
+            ),
+            canonical_runtime_evidence=tuple(
+                combined_runtime_evidence[root_id] for root_id in expected
+            ),
+            requested_lineage_root_ids=expected,
+            current_trace_wrappers_by_root=combined_wrappers,
+            trace_source_bindings_by_root=combined_bindings,
+            eligibility_facts_by_root=combined_eligibility,
+            lineage_evidence_roots_by_experiment={
+                "exp1_real_ai_feasibility": trace_evidence_root,
+                "exp2_real_ai_scalability": trace_evidence_root,
+                "exp3_real_ai_fault_recovery": trace_evidence_root,
+                "exp5_real_ai_model_endpoint_comparison": exp5_evidence_root,
+            },
+        )
+        if getattr(metrics, "provider_calls", None) != 0:
+            raise ValueError("combined metric recompute attempted provider calls")
+        verify_external_source_locators(
+            metrics.metric_observations,
+            combined_resolvers,
+        )
+        _copy_combined_metric_outputs(
+            metric_stage_root=metric_stage_root,
+            publication_root=destination,
+            output_refs=metrics.output_refs,
+        )
+        return metrics
+
+
+def _validated_combined_metric_replay_group(
+    *,
+    loaded: Any,
+    label: str,
+) -> dict[str, object]:
+    """验证单个 protected closure 的 root-indexed metrics 输入。"""
+
+    direct = getattr(loaded, "direct", None)
+    current = getattr(loaded, "current", None)
+    source = getattr(loaded, "source", None)
+    if not isinstance(direct, Mapping) or not isinstance(current, Mapping) or not isinstance(source, Mapping):
+        raise ValueError(f"{label} protected replay inputs are malformed")
+    root_ids = _canonical_metric_input_root_ids(direct)
+    root_id_set = set(root_ids)
+    if not root_ids or len(root_id_set) != len(root_ids):
+        raise ValueError(f"{label} canonical metric roots are ambiguous")
+
+    global_valid = current.get("global_infrastructure_valid")
+    if type(global_valid) is not bool:
+        raise ValueError("global_infrastructure_valid must be a bool")
+    requested_root_ids = current.get("requested_lineage_root_ids")
+    if (
+        not isinstance(requested_root_ids, (tuple, list))
+        or any(not isinstance(root_id, str) or not root_id for root_id in requested_root_ids)
+        or len(set(requested_root_ids)) != len(requested_root_ids)
+        or set(requested_root_ids) != root_id_set
+        or len(requested_root_ids) != len(root_ids)
+    ):
+        raise ValueError(f"{label} requested lineage root inventory is invalid")
+
+    runtime_evidence_by_root = _root_indexed_runtime_evidence(
+        current.get("canonical_runtime_evidence"),
+        label=f"{label} canonical runtime evidence",
+        expected_root_ids=root_id_set,
+    )
+    wrappers_by_root = _validated_root_indexed_mapping(
+        current.get("current_trace_wrappers_by_root"),
+        label=f"{label} current trace wrappers",
+        expected_root_ids=root_id_set,
+    )
+    bindings_by_root = _validated_root_indexed_mapping(
+        source.get("trace_source_bindings_by_root"),
+        label=f"{label} trace source bindings",
+        expected_root_ids=root_id_set,
+    )
+    eligibility_by_root = _validated_root_indexed_mapping(
+        current.get("eligibility_facts_by_root"),
+        label=f"{label} eligibility facts",
+        expected_root_ids=root_id_set,
+    )
+    source_resolvers = source.get("source_resolvers")
+    if (
+        not isinstance(source_resolvers, Mapping)
+        or any(not isinstance(key, str) or not key for key in source_resolvers)
+    ):
+        raise ValueError(f"{label} source resolver inventory is invalid")
+    return {
+        "direct": direct,
+        "root_ids": root_ids,
+        "global_infrastructure_valid": global_valid,
+        "runtime_evidence_by_root": runtime_evidence_by_root,
+        "wrappers_by_root": wrappers_by_root,
+        "bindings_by_root": bindings_by_root,
+        "eligibility_by_root": eligibility_by_root,
+        "source_resolvers": dict(source_resolvers),
+    }
+
+
+def _canonical_metric_input_root_ids(
+    canonical_metric_inputs: Mapping[str, object],
+) -> tuple[str, ...]:
+    """从 canonical metric inputs 提取唯一 direct-root identity。"""
+
+    rows = _canonical_metric_input_direct_rows(canonical_metric_inputs)
+    root_ids = tuple(row.preregistered_root_run_id for row in rows)
+    if (
+        not root_ids
+        or any(not isinstance(root_id, str) or not root_id for root_id in root_ids)
+        or len(set(root_ids)) != len(root_ids)
+    ):
+        raise ValueError("canonical metric root inventory is invalid")
+    return root_ids
+
+
+def _canonical_metric_input_direct_rows(
+    canonical_metric_inputs: Mapping[str, object],
+) -> tuple[PaperDirectRootResult, ...]:
+    """展开 canonical metric inputs 中的 direct-root rows。"""
+
+    if set(canonical_metric_inputs) != set(_DIRECT_METRIC_INPUT_KEYS):
+        raise ValueError("canonical metric input inventory is invalid")
+
+    def direct_rows(value: object):
+        if isinstance(value, PaperDirectRootResult):
+            yield value
+            return
+        direct = getattr(value, "direct_result", None)
+        if isinstance(direct, PaperDirectRootResult):
+            yield direct
+            return
+        direct_values = getattr(value, "direct_results", None)
+        if direct_values is not None:
+            if not isinstance(direct_values, (tuple, list)):
+                raise ValueError("canonical metric direct result inventory is invalid")
+            for direct_value in direct_values:
+                yield from direct_rows(direct_value)
+            return
+        if isinstance(value, (tuple, list)):
+            for item in value:
+                yield from direct_rows(item)
+            return
+        raise ValueError("canonical metric direct result inventory is invalid")
+
+    return tuple(
+        row
+        for key in _DIRECT_METRIC_INPUT_KEYS
+        for row in direct_rows(canonical_metric_inputs[key])
+    )
+
+
+def _root_indexed_runtime_evidence(
+    evidence: object,
+    *,
+    label: str,
+    expected_root_ids: set[str],
+) -> dict[str, object]:
+    """将 runtime evidence 绑定为一根一条，防止 cross-closure 混入。"""
+
+    if not isinstance(evidence, (tuple, list)):
+        raise ValueError(f"{label} inventory is invalid")
+    result: dict[str, object] = {}
+    for value in evidence:
+        root_id = getattr(value, "preregistered_root_run_id", None)
+        if root_id is None and isinstance(value, Mapping):
+            root_id = value.get("preregistered_root_run_id")
+        if (
+            not isinstance(root_id, str)
+            or not root_id
+            or root_id in result
+        ):
+            raise ValueError(f"{label} root identity is invalid")
+        result[root_id] = value
+    if set(result) != expected_root_ids:
+        raise ValueError(f"{label} root inventory is invalid")
+    return result
+
+
+def _validated_root_indexed_mapping(
+    value: object,
+    *,
+    label: str,
+    expected_root_ids: set[str],
+) -> dict[str, object]:
+    """拒绝缺根、重复根或未知根的 closure side input。"""
+
+    if (
+        not isinstance(value, Mapping)
+        or any(not isinstance(root_id, str) or not root_id for root_id in value)
+        or set(value) != expected_root_ids
+    ):
+        raise ValueError(f"{label} root inventory is invalid")
+    return dict(value)
+
+
+def _validate_combined_group_root_partition(
+    *,
+    trace_direct: Mapping[str, object],
+    exp5_direct: Mapping[str, object],
+    trace_root_ids: object,
+    exp5_root_ids: object,
+    expected_root_ids: Sequence[str],
+) -> None:
+    """在 materialize 前锁定两个 closure 的不相交固定分母。"""
+
+    if not isinstance(trace_root_ids, tuple) or not isinstance(exp5_root_ids, tuple):
+        raise ValueError("combined canonical metric root inventory is invalid")
+    observed = (*trace_root_ids, *exp5_root_ids)
+    if len(set(observed)) != len(observed):
+        raise ValueError("duplicate canonical metric root")
+    if set(observed) != set(expected_root_ids) or len(observed) != len(expected_root_ids):
+        raise ValueError("fixed denominator mismatch")
+
+    trace_rows = _canonical_metric_input_direct_rows(trace_direct)
+    exp5_rows = _canonical_metric_input_direct_rows(exp5_direct)
+    trace_experiment_ids = {
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+    }
+    if (
+        len(trace_rows) != 99
+        or sum(
+            row.experiment_id == "exp1_real_ai_feasibility"
+            for row in trace_rows
+        ) != 12
+        or sum(
+            row.experiment_id == "exp2_real_ai_scalability"
+            for row in trace_rows
+        ) != 6
+        or sum(
+            row.experiment_id == "exp3_real_ai_fault_recovery"
+            for row in trace_rows
+        ) != 81
+        or any(
+            row.experiment_id not in trace_experiment_ids
+            or row.evidence_class != "real_model_trace_protocol_run"
+            for row in trace_rows
+        )
+        or len(exp5_rows) != 16
+        or any(
+            row.experiment_id != "exp5_real_ai_model_endpoint_comparison"
+            or row.evidence_class != "online_real_provider"
+            for row in exp5_rows
+        )
+    ):
+        raise ValueError("combined closure experiment/evidence partition is invalid")
+
+
+def _merge_root_indexed_metric_evidence(
+    label: str,
+    *mappings: object,
+) -> dict[str, object]:
+    """显式拒绝 namespace 之间重复的 direct-root key。"""
+
+    result: dict[str, object] = {}
+    for mapping in mappings:
+        if not isinstance(mapping, Mapping):
+            raise ValueError(f"{label} inventory is invalid")
+        for root_id, value in mapping.items():
+            if root_id in result:
+                raise ValueError(f"duplicate {label} root")
+            result[root_id] = value
+    return result
+
+
+def _merge_combined_metric_source_resolvers(
+    *mappings: object,
+) -> dict[str, Any]:
+    """同名 source bank 只能复用同一个已验证 resolver identity。"""
+
+    result: dict[str, Any] = {}
+    for mapping in mappings:
+        if not isinstance(mapping, Mapping):
+            raise ValueError("source resolver inventory is invalid")
+        for bank_root_id, resolver in mapping.items():
+            existing = result.get(bank_root_id)
+            if existing is not None and existing is not resolver:
+                raise ValueError("source resolver identity conflicts")
+            result[bank_root_id] = resolver
+    return result
+
+
+def _copy_combined_metric_outputs(
+    *,
+    metric_stage_root: Path,
+    publication_root: Path,
+    output_refs: object,
+) -> None:
+    """只从 temporary metric stage 复制 derived output refs。"""
+
+    if not isinstance(output_refs, (tuple, list)):
+        raise ValueError("combined metric output refs are invalid")
+    resolved_stage_root = metric_stage_root.resolve(strict=False)
+    resolved_publication_root = publication_root.resolve(strict=False)
+    copies: list[tuple[Path, Path]] = []
+    for ref in output_refs:
+        if not isinstance(ref, Mapping):
+            raise ValueError("combined metric output ref is invalid")
+        relative = Path(str(ref.get("path", "")))
+        source = (metric_stage_root / relative).resolve(strict=False)
+        target = (publication_root / relative).resolve(strict=False)
+        if (
+            not relative.parts
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or not source.is_file()
+            or (
+                source != resolved_stage_root
+                and resolved_stage_root not in source.parents
+            )
+            or (
+                target != resolved_publication_root
+                and resolved_publication_root not in target.parents
+            )
+        ):
+            raise ValueError("combined metric output path is invalid")
+        copies.append((source, target))
+    for source, target in copies:
+        _atomic_copy_file(source, target)
+
+
+def _materialize_metric_evidence_files(
+    *,
+    staging_root: Path,
+    resolved_staging_root: Path,
+    evidence_files: Any,
+) -> None:
+    """逐项落地 protected evidence，不把闭包 bytes 延长到 lineage 阶段。"""
+
+    copy_to = getattr(evidence_files, "copy_to", None)
+    if callable(copy_to):
+        copy_to(staging_root)
+        return
+    for relative_name, content in evidence_files:
+        relative = Path(relative_name)
+        target = (staging_root / relative).resolve(strict=False)
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or (
+                target != resolved_staging_root
+                and resolved_staging_root not in target.parents
+            )
+        ):
+            raise ValueError("runner metric evidence path escapes staging root")
+        _atomic_write_bytes(target, content)
+
+
+def _atomic_copy_file(source: Path, target: Path) -> None:
+    """以固定块原子复制 derived output，避免 ``read_bytes`` 全量驻留。"""
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with source.open("rb") as reader, temporary.open("xb") as writer:
+            while chunk := reader.read(1024 * 1024):
+                writer.write(chunk)
+            writer.flush()
+            os.fsync(writer.fileno())
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def _suite_file_ref(suite_root: Path, relative_path: str) -> dict[str, Any]:
@@ -1005,6 +1602,7 @@ def _build_canonical_direct_collector(
     evidence_class: str,
 ) -> _CanonicalDirectCollector:
     cases = _catalog_cases_by_id(catalog_manifest)
+    catalog_case_identity_axes = _catalog_case_identity_axes_by_id(catalog_manifest)
     inventory_id = "paper-formal-direct:" + digest_json(
         [
             {
@@ -1022,10 +1620,16 @@ def _build_canonical_direct_collector(
     for plan, items in bound_plans:
         for condition, selection in items:
             fault_type = str(condition.fault_type)
+            condition_topic_axis = _canonical_condition_topic_axis(
+                condition=condition,
+                selection=selection,
+                cases=cases,
+                catalog_case_identity_axes=catalog_case_identity_axes,
+            )
             axes = {
                 "domain": str(condition.domain),
                 "difficulty": str(condition.paper_difficulty or condition.difficulty),
-                "topic_family": condition.topic_family,
+                "topic_family": condition_topic_axis,
                 "worker_count": int(condition.worker_count),
                 "sample_slot_index": int(condition.repeat_id),
                 "fault_condition": (
@@ -1078,15 +1682,40 @@ def _build_canonical_direct_collector(
                     "factor_position_quantile": quantile,
                     "position_stratum": stratum,
                 }
+                lean_case_authority: dict[str, Any] = {}
+                if catalog_case_identity_axes[case_id][0] == "lean_proof":
+                    official_root_theorem = (
+                        LeanFixedDecompositionPlan.from_catalog_case(
+                            dict(case)
+                        ).parent_theorem_payload()
+                        if case.get("schema_version")
+                        == "tokenshare.paper_lean_lemma_graph_case.v1"
+                        else lean_theorem_payload_from_case(dict(case))
+                    )
+                    lean_case_authority = {
+                        "official_case_digest": digest_json(case),
+                        "official_root_theorem_id": (
+                            official_root_theorem.theorem_id
+                        ),
+                        "official_root_theorem_payload_digest": (
+                            official_root_theorem.payload_digest
+                        ),
+                    }
                 case_body = {
-                    "schema_version": "tokenshare.preregistered_case_record.v1",
+                    "schema_version": (
+                        "tokenshare.preregistered_lean_case_record.v1"
+                        if catalog_case_identity_axes[case_id][0] == "lean_proof"
+                        else "tokenshare.preregistered_case_record.v1"
+                    ),
                     "case_id": case_id,
-                    "domain": str(condition.domain),
-                    "difficulty": str(
-                        condition.paper_difficulty or condition.difficulty
+                    "domain": catalog_case_identity_axes[case_id][0],
+                    "difficulty": (
+                        catalog_case_identity_axes[case_id][1]
+                        or str(condition.paper_difficulty or condition.difficulty)
                     ),
                     "case_axes_digest": digest_json(case_axes),
                     **case_axes,
+                    **lean_case_authority,
                 }
                 case_record = {
                     **case_body,
@@ -1138,7 +1767,11 @@ def _build_canonical_direct_collector(
             ],
             "condition_axes": axes,
             "preregistered_case_ref": {
-                "schema_version": "tokenshare.preregistered_case_ref.v1",
+                "schema_version": (
+                    "tokenshare.preregistered_lean_case_ref.v1"
+                    if case_record["domain"] == "lean_proof"
+                    else "tokenshare.preregistered_case_ref.v1"
+                ),
                 "catalog_digest": canonical_catalog["catalog_digest"],
                 "case_record_digest": case_record["case_record_digest"],
                 "case_axes_digest": case_record["case_axes_digest"],
@@ -1146,6 +1779,21 @@ def _build_canonical_direct_collector(
                     "factor_position_quantile"
                 ],
                 "position_stratum": case_record["position_stratum"],
+                **(
+                    {
+                        "official_case_digest": case_record[
+                            "official_case_digest"
+                        ],
+                        "official_root_theorem_id": case_record[
+                            "official_root_theorem_id"
+                        ],
+                        "official_root_theorem_payload_digest": case_record[
+                            "official_root_theorem_payload_digest"
+                        ],
+                    }
+                    if case_record["domain"] == "lean_proof"
+                    else {}
+                ),
             },
             "evidence_class": evidence_class,
         }
@@ -1180,6 +1828,52 @@ def _build_canonical_direct_collector(
         catalog_manifests=(canonical_catalog,),
         rows_by_key={(row.condition_id, row.case_id): row for row in rows},
     )
+
+
+def _canonical_condition_topic_axis(
+    *,
+    condition: PaperExperimentCondition,
+    selection: Any,
+    cases: Mapping[str, Mapping[str, Any]],
+    catalog_case_identity_axes: Mapping[str, tuple[str, str | None]],
+) -> str | None:
+    """把 condition-level Lean topic coverage绑定到冻结 official selection。"""
+
+    domain = str(condition.domain)
+    declared_topic = condition.topic_family
+    if domain == "factorization":
+        if declared_topic is not None:
+            raise ValueError("factorization condition must not declare topic_family")
+        return None
+    if domain != "lean_proof":
+        raise ValueError("unsupported condition domain")
+
+    selected_topics: set[str] = set()
+    for case_id in tuple(selection.ordered_case_ids):
+        case = cases.get(case_id)
+        identity_axes = catalog_case_identity_axes.get(case_id)
+        if not isinstance(case, Mapping) or identity_axes is None:
+            raise ValueError("condition topic axis case is absent from official catalog")
+        if identity_axes[0] != "lean_proof":
+            raise ValueError("Lean condition topic axis selected a non-Lean case")
+        topic = case.get("topic_family")
+        if topic not in LEAN_TOPIC_FAMILIES:
+            raise ValueError("Lean condition topic axis case has invalid topic_family")
+        selected_topics.add(str(topic))
+
+    if declared_topic is not None:
+        if declared_topic not in LEAN_TOPIC_FAMILIES or selected_topics != {
+            declared_topic
+        }:
+            raise ValueError(
+                "Lean condition topic axis does not match official selection"
+            )
+        return str(declared_topic)
+    if selected_topics != set(LEAN_TOPIC_FAMILIES):
+        raise ValueError(
+            "mixed Lean condition topic axis requires all official topic families"
+        )
+    return LEAN_MIXED_TOPIC_FAMILY_AXIS
 
 
 def validate_paper_formal_suite_plan(
@@ -1256,10 +1950,12 @@ def execute_paper_formal_suite(
     execution_classification: Mapping[str, Any] | None = None,
     suite_id: str = "paper_formal_suite",
     pre_execution_documents: Mapping[str, Any] | None = None,
+    preexisting_paid_output_marker: Mapping[str, Any] | None = None,
     recovery_documents: Mapping[str, Any] | None = None,
     trace_context: PaperFormalTraceContext | None = None,
     online_root_callback_factory: Callable[..., Any] | None = None,
     enforce_publication_closure: bool = False,
+    enable_metric_closure: bool = False,
     bypass_nonmetric_facility_gates: bool = False,
 ) -> PaperSuiteResult:
     """校验冻结计划并通过注册 dispatcher 顺序执行 planned conditions。"""
@@ -1366,7 +2062,7 @@ def execute_paper_formal_suite(
     suite_root = Path(output_root)
     started_at = _utc_now()
     bodies = _evidence_bodies(
-        plans=plans,
+        plans=active_plans,
         active_experiment_ids=tuple(plan.experiment_id for plan in active_plans),
         catalog_manifest=catalog_manifest,
         budget=budget,
@@ -1416,6 +2112,7 @@ def execute_paper_formal_suite(
             output_root=suite_root,
             **bodies,
             capturing=(not real_transport or _is_offline_capturing_transport(transport)),
+            preexisting_paid_output_marker=preexisting_paid_output_marker,
         )
         completed_task_keys = set()
         usage = _UsageTotals()
@@ -1447,7 +2144,7 @@ def execute_paper_formal_suite(
             normalized_root_filter=normalized_root_filter,
             evidence_class=direct_evidence_class,
         )
-        if enforce_publication_closure
+        if (enforce_publication_closure or enable_metric_closure)
         and (real_transport or trace_context is not None)
         and classification is None
         and direct_evidence_class != "regression_only"
@@ -1549,10 +2246,11 @@ def execute_paper_formal_suite(
             trace_evidence=trace_context is not None,
         ),
         eligibility_report_ref=None,
-        budget_ref={
-            "budget_digest": budget.budget_digest,
-            "approval_mode": budget_approval["approval_mode"],
-        },
+        budget_ref=_paper_budget_ref(
+            budget=budget,
+            budget_approval=budget_approval,
+            usage=usage,
+        ),
         metrics_refs=(),
         audit_refs=(),
         error_summary=(),
@@ -1960,10 +2658,11 @@ def _close_disk_resource_blocked_suite(
         total_cost_estimate_status=usage.cost_estimate_status(),
         paper_eligible=False,
         eligibility_report_ref=None,
-        budget_ref={
-            "budget_digest": budget.budget_digest,
-            "approval_mode": budget_approval["approval_mode"],
-        },
+        budget_ref=_paper_budget_ref(
+            budget=budget,
+            budget_approval=budget_approval,
+            usage=usage,
+        ),
         metrics_refs=(),
         audit_refs=(),
         error_summary=error_summary,
@@ -2125,10 +2824,11 @@ def _close_blocked_formal_suite(
         total_cost_estimate_status=usage.cost_estimate_status(),
         paper_eligible=False,
         eligibility_report_ref=None,
-        budget_ref={
-            "budget_digest": budget.budget_digest,
-            "approval_mode": budget_approval["approval_mode"],
-        },
+        budget_ref=_paper_budget_ref(
+            budget=budget,
+            budget_approval=budget_approval,
+            usage=usage,
+        ),
         metrics_refs=(),
         audit_refs=(),
         error_summary=error_summary,
@@ -2206,6 +2906,14 @@ def _checkpoint_dependency_outcome(
     execution_classification: Mapping[str, Any] | None,
 ) -> None:
     terminal = blocked_error.terminal_outcome.to_dict()
+    diagnostics = (
+        blocked_error.diagnostics
+        if root_status == "blocked"
+        and isinstance(blocked_error.diagnostics, Mapping)
+        else {}
+    )
+    hard_limit_consumption = diagnostics.get("hard_limit_consumption")
+    provider_accounting = diagnostics.get("provider_accounting")
     event_type = (
         "EXPERIMENT_DEPENDENCY_BLOCKED"
         if root_status == "blocked"
@@ -2252,6 +2960,32 @@ def _checkpoint_dependency_outcome(
         "event_refs": [{"event_id": event_id, "event_type": event_type}],
         "evidence_artifact_refs": [artifact],
     }
+    if hard_limit_consumption is not None:
+        if not isinstance(hard_limit_consumption, Mapping):
+            raise ValueError("blocked hard-limit consumption is invalid")
+        task["hard_limit_consumption"] = _as_json(hard_limit_consumption)
+    if provider_accounting is not None:
+        if not isinstance(provider_accounting, Mapping):
+            raise ValueError("blocked provider accounting is invalid")
+        task.update(
+            {
+                "provider_attempt_count": _provider_accounting_json_value(
+                    provider_accounting.get("provider_attempt_count")
+                ),
+                "total_tokens": _provider_accounting_json_value(
+                    provider_accounting.get("total_tokens")
+                ),
+                "cost_estimate": _provider_accounting_json_value(
+                    provider_accounting.get("total_cost_estimate")
+                ),
+                "cost_estimate_currency": _provider_accounting_json_value(
+                    provider_accounting.get("cost_estimate_currency")
+                ),
+                "cost_estimate_status": _provider_accounting_json_value(
+                    provider_accounting.get("cost_estimate_status")
+                ),
+            }
+        )
     attempt = {
         **common,
         "attempt_id": (
@@ -2264,6 +2998,26 @@ def _checkpoint_dependency_outcome(
         "provider_attempt_index": 0,
         "error_kind": terminal["failure_kind"],
     }
+    if provider_accounting is not None:
+        attempt.update(
+            {
+                "provider_attempt_count": _provider_accounting_json_value(
+                    provider_accounting.get("provider_attempt_count")
+                ),
+                "total_tokens": _provider_accounting_json_value(
+                    provider_accounting.get("total_tokens")
+                ),
+                "cost_estimate": _provider_accounting_json_value(
+                    provider_accounting.get("total_cost_estimate")
+                ),
+                "cost_estimate_currency": _provider_accounting_json_value(
+                    provider_accounting.get("cost_estimate_currency")
+                ),
+                "cost_estimate_status": _provider_accounting_json_value(
+                    provider_accounting.get("cost_estimate_status")
+                ),
+            }
+        )
     event = {
         **common,
         "event_id": event_id,
@@ -2755,23 +3509,30 @@ def _validated_formal_disk_estimate(
             raise ValueError(f"disk estimate input drift: {field_name}")
     quota = budget.quota_preflight
     commitments = quota.get("budget_commitments") if isinstance(quota, Mapping) else None
-    request_limits = (
-        commitments.get("request_limits")
+    disk_authority = (
+        commitments.get("disk_estimate_authority")
         if isinstance(commitments, Mapping)
         else None
     )
-    frozen_max_tokens = None
-    if isinstance(request_limits, Mapping):
-        frozen_max_tokens = request_limits.get("token_upper_bound_per_provider_attempt")
-    if frozen_max_tokens is None:
-        provider_attempts = budget.max_provider_attempts
-        if (
-            provider_attempts > 0
-            and budget.token_upper_bound % provider_attempts == 0
-        ):
-            frozen_max_tokens = budget.token_upper_bound // provider_attempts
-    if frozen_max_tokens is None and isinstance(request_limits, Mapping):
-        frozen_max_tokens = request_limits.get("max_tokens")
+    if not isinstance(disk_authority, Mapping) or set(disk_authority) != {
+        "schema_version",
+        "token_upper_bound_per_provider_attempt",
+    }:
+        raise ValueError("disk estimate authority is missing or malformed")
+    if (
+        disk_authority.get("schema_version")
+        != "tokenshare.paper_disk_estimate_authority.v1"
+    ):
+        raise ValueError("disk estimate authority schema mismatch")
+    frozen_max_tokens = disk_authority.get(
+        "token_upper_bound_per_provider_attempt"
+    )
+    if (
+        isinstance(frozen_max_tokens, bool)
+        or not isinstance(frozen_max_tokens, int)
+        or frozen_max_tokens < 1
+    ):
+        raise ValueError("disk estimate authority token ceiling is invalid")
     if inputs.get("max_tokens") != frozen_max_tokens:
         raise ValueError("disk estimate token ceiling drift")
     recomputed = _paper_disk_estimate(
@@ -2828,6 +3589,133 @@ def _root_disk_attempt_upper(
     )
 
 
+def _selected_disk_commitment_projection(
+    *,
+    budget: PaperBudgetResult,
+    bound_plans: Sequence[tuple[Any, Sequence[tuple[Any, Any]]]],
+    catalog_manifest: Any,
+    ai_api_configs: Mapping[str, Any],
+    normalized_root_filter: Mapping[str, tuple[str, ...]],
+) -> tuple[
+    int,
+    int,
+    int,
+    dict[tuple[str, str, str], tuple[int, int]],
+]:
+    """从 full budget commitments 精确投影本次正式 condition/root 子集。"""
+
+    quota = budget.quota_preflight
+    commitments = quota.get("budget_commitments") if isinstance(quota, Mapping) else None
+    raw_rows = (
+        commitments.get("ai_unit_commitments")
+        if isinstance(commitments, Mapping)
+        else None
+    )
+    if not isinstance(raw_rows, Sequence) or isinstance(
+        raw_rows,
+        (str, bytes, bytearray),
+    ):
+        raise ValueError("full budget AI unit commitments are missing")
+    committed_by_root: dict[tuple[str, str, str], tuple[str, ...]] = {}
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            raise ValueError("full budget AI unit commitment is malformed")
+        condition_id = raw_row.get("condition_id")
+        condition_digest = raw_row.get("condition_digest")
+        case_id = raw_row.get("case_id")
+        raw_ai_unit_ids = raw_row.get("planned_ai_unit_ids")
+        if (
+            not isinstance(condition_id, str)
+            or not condition_id
+            or not isinstance(condition_digest, str)
+            or not condition_digest
+            or not isinstance(case_id, str)
+            or not case_id
+            or not isinstance(raw_ai_unit_ids, Sequence)
+            or isinstance(raw_ai_unit_ids, (str, bytes, bytearray))
+        ):
+            raise ValueError("full budget AI unit commitment identity is invalid")
+        ai_unit_ids = tuple(str(value) for value in raw_ai_unit_ids)
+        if (
+            not ai_unit_ids
+            or any(not value for value in ai_unit_ids)
+            or len(set(ai_unit_ids)) != len(ai_unit_ids)
+        ):
+            raise ValueError("full budget AI unit commitment order is invalid")
+        key = (condition_id, condition_digest, case_id)
+        if key in committed_by_root:
+            raise ValueError("duplicate full budget AI unit commitment")
+        committed_by_root[key] = ai_unit_ids
+
+    catalog_case_ids = set(_catalog_cases_by_id(catalog_manifest))
+    selected_by_root: dict[tuple[str, str, str], tuple[int, int]] = {}
+    selected_root_runs = 0
+    selected_ai_units = 0
+    selected_provider_attempts = 0
+    for plan, items in bound_plans:
+        if plan.status != "planned":
+            continue
+        for condition, selection in items:
+            _, request_limits, _ = _condition_endpoint_contract(
+                experiment_id=plan.experiment_id,
+                condition=condition,
+                ai_api_configs=ai_api_configs,
+            )
+            attempts_per_unit = request_limits.get("max_provider_attempts", 1)
+            if (
+                isinstance(attempts_per_unit, bool)
+                or not isinstance(attempts_per_unit, int)
+                or attempts_per_unit < 1
+            ):
+                raise ValueError("selected root provider attempt ceiling is invalid")
+            replacement_policy = _condition_replacement_policy(condition)
+            replacement_multiplier = (
+                int(replacement_policy["max_retries"])
+                if replacement_policy["replacement_attempts_allowed"] is True
+                else 0
+            )
+            selected_case_ids = normalized_root_filter.get(
+                condition.condition_id,
+                tuple(selection.ordered_case_ids),
+            )
+            for case_id in selected_case_ids:
+                if case_id not in catalog_case_ids:
+                    raise ValueError("selected disk commitment references unknown case")
+                key = (
+                    str(condition.condition_id),
+                    str(condition.condition_digest),
+                    str(case_id),
+                )
+                ai_unit_ids = committed_by_root.get(key)
+                if ai_unit_ids is None:
+                    raise ValueError("selected root is missing its full budget commitment")
+                ai_unit_count = len(ai_unit_ids)
+                provider_attempt_count = (
+                    ai_unit_count
+                    * (1 + replacement_multiplier)
+                    * attempts_per_unit
+                )
+                if key in selected_by_root:
+                    raise ValueError("duplicate selected disk commitment")
+                selected_by_root[key] = (ai_unit_count, provider_attempt_count)
+                selected_root_runs += 1
+                selected_ai_units += ai_unit_count
+                selected_provider_attempts += provider_attempt_count
+
+    if (
+        selected_root_runs > budget.planned_root_runs
+        or selected_ai_units > budget.planned_ai_units
+        or selected_provider_attempts > budget.max_provider_attempts
+    ):
+        raise ValueError("selected disk commitment exceeds full budget")
+    return (
+        selected_root_runs,
+        selected_ai_units,
+        selected_provider_attempts,
+        selected_by_root,
+    )
+
+
 def _rolling_disk_forecast_from_plan(
     *,
     budget: PaperBudgetResult,
@@ -2844,10 +3732,18 @@ def _rolling_disk_forecast_from_plan(
     inputs = _required_mapping(estimate["inputs"], "disk inputs")
     policy = _required_mapping(estimate["policy"], "disk policy")
     components = _required_mapping(estimate["components"], "disk components")
-    remaining_root_runs = int(inputs["planned_root_runs"])
-    remaining_ai_units = int(inputs["planned_ai_units"])
-    remaining_provider_attempts = int(inputs["provider_attempt_upper_bound"])
-    cases_by_id = _catalog_cases_by_id(catalog_manifest)
+    (
+        remaining_root_runs,
+        remaining_ai_units,
+        remaining_provider_attempts,
+        selected_by_root,
+    ) = _selected_disk_commitment_projection(
+        budget=budget,
+        bound_plans=bound_plans,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
+        normalized_root_filter=normalized_root_filter,
+    )
     for plan, items in bound_plans:
         if plan.status != "planned":
             continue
@@ -2863,23 +3759,18 @@ def _rolling_disk_forecast_from_plan(
             )
             if not terminal_case_ids:
                 continue
-            _, request_limits, _ = _condition_endpoint_contract(
-                experiment_id=plan.experiment_id,
-                condition=condition,
-                ai_api_configs=ai_api_configs,
-            )
             for case_id in terminal_case_ids:
-                case = cases_by_id.get(case_id)
-                if case is None:
-                    # 完整映射无法证明时仅扣 root identity，其他计数保持保守。
-                    remaining_root_runs = max(0, remaining_root_runs - 1)
-                    continue
-                frozen_case = _case_with_selection_split_profile(case, selection)
-                ai_unit_count, provider_attempt_count = _root_disk_attempt_upper(
-                    condition=condition,
-                    case=frozen_case,
-                    request_limits=request_limits,
+                key = (
+                    str(condition.condition_id),
+                    str(condition.condition_digest),
+                    str(case_id),
                 )
+                try:
+                    ai_unit_count, provider_attempt_count = selected_by_root[key]
+                except KeyError as error:
+                    raise ValueError(
+                        "terminal root is missing its selected disk commitment"
+                    ) from error
                 remaining_root_runs = max(0, remaining_root_runs - 1)
                 remaining_ai_units = max(
                     0,
@@ -3773,29 +4664,56 @@ def _persisted_provider_attempt_count(
     for attempt in attempts:
         if attempt.get("record_scope") != "protocol":
             continue
+        has_persisted_count = "provider_attempt_count" in attempt
+        has_provider_inventory = "provider_attempts" in attempt
         provider_attempts = attempt.get("provider_attempts")
-        if isinstance(provider_attempts, Sequence) and not isinstance(
-            provider_attempts,
-            (str, bytes, bytearray),
-        ):
-            count += len(provider_attempts)
-            continue
-        persisted_count = attempt.get("provider_attempt_count")
-        if (
-            isinstance(persisted_count, int)
-            and not isinstance(persisted_count, bool)
-            and persisted_count > 0
-        ):
+        if has_provider_inventory:
+            if not isinstance(provider_attempts, Sequence) or isinstance(
+                provider_attempts,
+                (str, bytes, bytearray),
+            ):
+                raise ValueError("persisted provider attempt evidence is invalid")
+            if any(not isinstance(item, Mapping) for item in provider_attempts):
+                raise ValueError("persisted provider attempt evidence is invalid")
+        if has_persisted_count:
+            persisted_count = attempt.get("provider_attempt_count")
+            if (
+                isinstance(persisted_count, bool)
+                or not isinstance(persisted_count, int)
+                or persisted_count < 0
+            ):
+                raise ValueError("persisted provider attempt evidence is invalid")
+            if has_provider_inventory and len(provider_attempts) != persisted_count:
+                raise ValueError("persisted provider attempt evidence is conflicting")
+            # v3 的显式计数是 current transport authority。provider_attempt_index
+            # 只是 fault/replacement ordinal，不能把 response-bank 消费重新算作调用。
             count += persisted_count
             continue
+        if attempt.get("schema_version") != "tokenshare.paper_attempt_result.v1":
+            raise ValueError(
+                "persisted provider attempt evidence is missing explicit current count"
+            )
+        if has_provider_inventory:
+            count += len(provider_attempts)
+            continue
         provider_attempt_index = attempt.get("provider_attempt_index")
+        if provider_attempt_index is None:
+            continue
         if (
-            isinstance(provider_attempt_index, int)
-            and not isinstance(provider_attempt_index, bool)
-            and provider_attempt_index > 0
-            and isinstance(attempt.get("provider"), str)
-            and bool(attempt.get("provider"))
+            isinstance(provider_attempt_index, bool)
+            or not isinstance(provider_attempt_index, int)
+            or provider_attempt_index < 0
         ):
+            raise ValueError("persisted provider attempt evidence is invalid")
+        if (
+            provider_attempt_index > 0
+            and (
+                not isinstance(attempt.get("provider"), str)
+                or not bool(attempt.get("provider"))
+            )
+        ):
+            raise ValueError("persisted provider attempt evidence is incomplete")
+        if provider_attempt_index > 0:
             count += 1
     return count
 
@@ -3908,7 +4826,13 @@ def _condition_endpoint_contract(
     config = ai_api_configs.get(provider_config_id)
     if not isinstance(config, AIAPIExecutorConfig):
         raise ValueError("formal condition provider config is unavailable")
-    if config.config_digest != condition.source_provider_config_digest:
+    # Exp5 条件来自不可变 response bank，source digest 是历史来源证据；
+    # 本轮执行可刷新 pricing，但仍在下方逐项验证 model/entry/reasoning/
+    # request controls，并由 approved binding 固定当前执行配置。
+    if (
+        experiment_id != EXP5_EXPERIMENT_ID
+        and config.config_digest != condition.source_provider_config_digest
+    ):
         raise ValueError("formal condition source provider config digest mismatch")
     if config.provider_family != condition.provider_family:
         raise ValueError("formal condition provider family mismatch")
@@ -3963,6 +4887,11 @@ def _condition_endpoint_contract(
 
     if experiment_id != EXP5_EXPERIMENT_ID:
         return derived_binding, request_limits, config
+
+    # Exp5 的 approved binding 描述本轮可结算的 current config；condition
+    # 里的 source digest 继续保留 frozen bank provenance，不作为 pricing
+    # refresh 的阻断条件。
+    derived_binding["source_provider_config_digest"] = config.config_digest
 
     # Exp5 的完整 cohort preflight 无法由单个 condition/config 重建；调用方必须
     # 在保留键下按 experiment_id 提供已批准 binding，普通 config map 不能冒充。
@@ -4123,12 +5052,77 @@ def _trace_bank_role_json(
     return value
 
 
+def _validate_trace_source_model_identity(
+    *,
+    entry_terminal_kind: str,
+    model_body: Mapping[str, Any],
+    request_model: object,
+    expected_model: str,
+) -> None:
+    """provider failure 可无 resolved model，但绝不能伪造成功解析身份。"""
+
+    configured_model = model_body.get("configured_model")
+    requested_model = model_body.get("requested_model")
+    resolved_model = model_body.get("resolved_model")
+    response_model_status = model_body.get("response_model_status")
+    common_matches = (
+        model_body.get("schema_version")
+        == "tokenshare.response_bank_model_record.v1"
+        and isinstance(request_model, str)
+        and request_model == expected_model
+        and isinstance(configured_model, str)
+        and configured_model == expected_model
+        and isinstance(requested_model, str)
+        and requested_model == expected_model
+    )
+    if entry_terminal_kind == "provider_failure":
+        terminal_matches = (
+            resolved_model is None
+            and response_model_status == "unavailable_provider_failure"
+        )
+    elif entry_terminal_kind == "success":
+        terminal_matches = (
+            isinstance(resolved_model, str)
+            and resolved_model == expected_model
+            and response_model_status == "present"
+        )
+    else:
+        terminal_matches = False
+    if not common_matches or not terminal_matches:
+        raise ValueError("trace source model identity mismatch")
+
+
 def _trace_usage_int(value: Any, field_name: str) -> int | None:
     if value is None:
         return None
     if type(value) is not int or value < 0:
         raise ValueError(f"trace source usage has invalid {field_name}")
     return value
+
+
+def _validate_trace_evidence_role_bundle(
+    *,
+    terminal_kind: str,
+    provenance: Mapping[str, object],
+    latency: Mapping[str, object],
+    provider_failure: Mapping[str, object] | None,
+) -> None:
+    # 与 trace executor 共用同一个严格 ABI，避免正式指标 consumer 演化出
+    # 第二套较弱的 v2 语义。
+    from tokenshare.executors.trace_backed import (
+        _validate_response_bank_evidence_role_bundle,
+    )
+
+    roles: dict[str, Mapping[str, object]] = {
+        "provenance": provenance,
+        "latency": latency,
+    }
+    if provider_failure is not None:
+        roles["provider_failure"] = provider_failure
+    _validate_response_bank_evidence_role_bundle(
+        terminal_kind=terminal_kind,
+        roles=roles,
+    )
 
 
 def _project_committed_trace_source_usage(
@@ -4140,8 +5134,7 @@ def _project_committed_trace_source_usage(
 ) -> dict[str, Any]:
     """只从 current ledger 已提交 delivery 投影不可变 source-bank 用量。"""
 
-    result_root = Path(_required_field(adapter_result, "output_root"))
-    store = ArtifactStore(result_root if result_root.is_dir() else adapter_root)
+    store = ArtifactStore(adapter_root)
     provider_call_count = 0
     for attempt in _sequence_field(adapter_result, "attempt_results", "attempts"):
         count = _optional_field(attempt, "provider_attempt_count")
@@ -4155,9 +5148,26 @@ def _project_committed_trace_source_usage(
 
     resolver = trace_runtime.resolver
     manifest = resolver.index.manifest
+    bindings_by_digest = {
+        binding.binding_digest: binding
+        for binding in _sequence_field(trace_runtime, "bindings")
+    }
+    if len(bindings_by_digest) != len(_sequence_field(trace_runtime, "bindings")):
+        raise ValueError("trace source binding identities are not unique")
     rows_by_inventory_entry_id = {
         row.inventory_entry_id: row for row in resolver.index.inventory_rows
     }
+    formal_inventory_rows = _sequence_field(trace_runtime, "inventory_rows")
+    formal_rows_by_inventory_entry_id = {
+        str(_required_field(row, "inventory_entry_id")): row
+        for row in formal_inventory_rows
+    }
+    if len(formal_rows_by_inventory_entry_id) != len(formal_inventory_rows):
+        raise ValueError("trace source formal inventory identities are not unique")
+    for inventory_entry_id, formal_row in formal_rows_by_inventory_entry_id.items():
+        canonical_row = rows_by_inventory_entry_id.get(inventory_entry_id)
+        if canonical_row is None or canonical_row.to_dict() != formal_row.to_dict():
+            raise ValueError("trace source formal inventory identity mismatch")
     consumptions: list[dict[str, Any]] = []
     seen_consumption_ids: set[str] = set()
     for event in _sequence_field(adapter_result, "event_records"):
@@ -4185,13 +5195,27 @@ def _project_committed_trace_source_usage(
         )
         if delivery.attempt_id != attempt_id:
             raise ValueError("trace commit attempt identity mismatch")
+        binding = bindings_by_digest.get(delivery.binding_digest)
+        if binding is None:
+            raise ValueError("trace committed delivery binding is unavailable")
+        try:
+            replacement = binding.replacement(delivery.attempt_ordinal)
+            attempt_delivery = binding.delivery(delivery.attempt_ordinal)
+        except KeyError as exc:
+            raise ValueError(
+                "trace committed delivery current ordinal is not frozen"
+            ) from exc
         entry = resolver.entry(delivery.entry_id)
         if (
             delivery.bank_root_id != manifest.bank_root_id
             or delivery.manifest_digest != manifest.manifest_digest
+            or binding.bank_root_id != manifest.bank_root_id
+            or binding.manifest_digest != manifest.manifest_digest
+            or replacement.entry_id != entry.entry_id
+            or replacement.inference_request_digest
+            != entry.inference_request_digest
             or delivery.inference_request_digest != entry.inference_request_digest
             or delivery.source_terminal_kind != entry.terminal_kind
-            or delivery.attempt_ordinal != entry.replacement_slot
         ):
             raise ValueError("trace committed delivery source identity mismatch")
         delivered_locators = tuple(
@@ -4209,7 +5233,14 @@ def _project_committed_trace_source_usage(
         if delivered_locators != entry_locators:
             raise ValueError("trace committed delivery locator set mismatch")
         inventory_row = rows_by_inventory_entry_id.get(entry.inventory_entry_id)
-        if inventory_row is None or inventory_row.entry_id != entry.entry_id:
+        formal_inventory_row = formal_rows_by_inventory_entry_id.get(
+            entry.inventory_entry_id
+        )
+        if (
+            inventory_row is None
+            or formal_inventory_row is None
+            or inventory_row.entry_id != entry.entry_id
+        ):
             raise ValueError("trace committed entry inventory identity mismatch")
 
         request_body = _trace_bank_role_json(
@@ -4233,39 +5264,38 @@ def _project_committed_trace_source_usage(
         model_body = _trace_bank_role_json(
             resolver=resolver, entry=entry, role="model_record"
         )
+        provider_failure_body = (
+            _trace_bank_role_json(
+                resolver=resolver,
+                entry=entry,
+                role="provider_failure",
+            )
+            if entry.terminal_kind == "provider_failure"
+            else None
+        )
         request_body_locator = next(
             locator
             for locator in entry.object_locators
             if locator.object_role == "request_body"
         )
         request_model = request_body.get("model")
-        configured_model = model_body.get("configured_model")
-        requested_model = model_body.get("requested_model")
-        resolved_model = model_body.get("resolved_model")
         expected_model = _required_field(condition, "provider_model_id")
         expected_model_entry_id = _required_field(condition, "model_entry_id")
-        expected_provider_config_digest = _required_field(
-            condition, "source_provider_config_digest"
+        expected_provider_config_digest = formal_inventory_row.provider_config_digest
+        _validate_trace_source_model_identity(
+            entry_terminal_kind=entry.terminal_kind,
+            model_body=model_body,
+            request_model=request_model,
+            expected_model=expected_model,
+        )
+        _validate_trace_evidence_role_bundle(
+            terminal_kind=entry.terminal_kind,
+            provenance=provenance_body,
+            latency=latency_body,
+            provider_failure=provider_failure_body,
         )
         if (
-            model_body.get("schema_version")
-            != "tokenshare.response_bank_model_record.v1"
-            or model_body.get("response_model_status") != "present"
-            or not isinstance(request_model, str)
-            or not request_model
-            or not isinstance(configured_model, str)
-            or not configured_model
-            or not isinstance(requested_model, str)
-            or not requested_model
-            or not isinstance(resolved_model, str)
-            or not resolved_model
-            or configured_model != expected_model
-            or requested_model != expected_model
-            or resolved_model != expected_model
-            or request_model != expected_model
-            or request_body_locator.object_digest != inventory_row.body_digest
-            or provenance_body.get("schema_version")
-            != "tokenshare.response_bank_provenance.v1"
+            request_body_locator.object_digest != inventory_row.body_digest
             or provenance_body.get("entry_id") != expected_model_entry_id
             or provenance_body.get("provider_config_digest")
             != expected_provider_config_digest
@@ -4306,10 +5336,42 @@ def _project_committed_trace_source_usage(
             raise ValueError("trace source usage status is unsupported")
 
         latency_schema = latency_body.get("schema_version")
-        if latency_schema not in {None, "tokenshare.response_bank_latency.v1"}:
+        if latency_schema is None:
             raise ValueError("trace source latency schema is unsupported")
         latency_ms = _trace_usage_int(latency_body.get("latency_ms"), "latency_ms")
-        if latency_ms is None or latency_ms != delivery.source_latency_ms:
+        latency_missing = latency_body.get("latency_missing")
+        expected_latency_ref = (
+            f"response-bank:{manifest.bank_root_id}:{entry.entry_id}:latency"
+        )
+        if latency_ms is None:
+            expected_latency_missing_count = int(
+                attempt_delivery.delivery_kind == "ordinary_attempt"
+            )
+            latency_identity_matches = (
+                (
+                    latency_missing is True
+                    or (
+                        latency_missing is None
+                        and latency_schema
+                        == "tokenshare.response_bank_latency.v1"
+                    )
+                )
+                and delivery.source_api_latency_ms is None
+                and delivery.source_api_latency_missing is True
+                and delivery.source_api_latency_missing_count
+                == expected_latency_missing_count
+            )
+        else:
+            latency_identity_matches = (
+                latency_missing in {None, False}
+                and delivery.source_api_latency_ms == latency_ms
+                and delivery.source_api_latency_missing is False
+                and delivery.source_api_latency_missing_count == 0
+            )
+        if (
+            not latency_identity_matches
+            or delivery.source_api_latency_ref != expected_latency_ref
+        ):
             raise ValueError("trace source latency does not match committed delivery")
         cost_estimate = None
         pricing_schema = pricing_body.get("schema_version")
@@ -4361,10 +5423,16 @@ def _project_committed_trace_source_usage(
             {
                 "consumption_id": consumption_id,
                 "current_attempt_id": delivery.attempt_id,
+                "current_attempt_ordinal": delivery.attempt_ordinal,
+                "delivery_kind": attempt_delivery.delivery_kind,
+                "redelivery_reason": attempt_delivery.redelivery_reason,
                 "unit_id": delivery.unit_id,
-                "planned_ai_unit_id": inventory_row.planned_ai_unit_id,
+                "planned_ai_unit_id": binding.planned_ai_unit_id,
+                "source_planned_ai_unit_id": inventory_row.planned_ai_unit_id,
                 "entry_id": entry.entry_id,
                 "replacement_slot": entry.replacement_slot,
+                "source_sample_slot_index": entry.sample_slot_index,
+                "source_replacement_slot": entry.replacement_slot,
                 "source_terminal_kind": entry.terminal_kind,
                 "source_acquisition_attempt_id": source_acquisition_attempt_id,
                 "source_model_record": dict(model_body),
@@ -4372,6 +5440,14 @@ def _project_committed_trace_source_usage(
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
                 "latency_ms": latency_ms,
+                "source_api_latency_missing": delivery.source_api_latency_missing,
+                "source_api_latency_missing_count": (
+                    delivery.source_api_latency_missing_count
+                ),
+                "source_api_latency_ref": delivery.source_api_latency_ref,
+                "protocol_operational_delay_ms": (
+                    delivery.protocol_operational_delay_ms
+                ),
                 "cost_estimate_cny": (
                     str(cost_estimate) if cost_estimate is not None else None
                 ),
@@ -4379,11 +5455,41 @@ def _project_committed_trace_source_usage(
             }
         )
 
+    source_attempt_ids = {
+        str(consumption["source_acquisition_attempt_id"])
+        for consumption in consumptions
+    }
+    typed_consumptions = tuple(consumptions)
+    source_tokens_total, source_tokens_known_total, source_tokens_missing = (
+        _trace_source_resource_coverage(typed_consumptions, "total_tokens")
+    )
+    source_latency_total, source_latency_known_total, source_latency_missing = (
+        _trace_source_resource_coverage(typed_consumptions, "latency_ms")
+    )
+    source_cost_total, source_cost_known_total, source_cost_missing = (
+        _trace_source_resource_coverage(
+            typed_consumptions,
+            "cost_estimate_cny",
+            decimal=True,
+        )
+    )
     return {
         "schema_version": "tokenshare.paper_trace_source_usage.v1",
         "attribution_kind": "immutable_response_bank",
         "current_provider_call_count": 0,
         "current_provider_spend_cny": "0",
+        "source_provider_attempt_count": len(source_attempt_ids),
+        "source_tokens_total": source_tokens_total,
+        "source_tokens_known_total": source_tokens_known_total,
+        "source_tokens_missing_attempt_count": source_tokens_missing,
+        "source_api_latency_total_ms": source_latency_total,
+        "source_api_latency_known_total_ms": source_latency_known_total,
+        "source_api_latency_missing_attempt_count": source_latency_missing,
+        "source_cost_total_cny": (
+            str(source_cost_total) if source_cost_total is not None else None
+        ),
+        "source_cost_known_total_cny": str(source_cost_known_total),
+        "source_cost_missing_attempt_count": source_cost_missing,
         "committed_consumption_count": len(consumptions),
         "consumptions": consumptions,
     }
@@ -4400,8 +5506,7 @@ def _evaluate_trace_root_evidence(
 ):
     """从当前协议 ledger/artifact 与 canonical bank 构造 Task18 事实。"""
 
-    result_root = Path(_required_field(adapter_result, "output_root"))
-    store = ArtifactStore(result_root if result_root.is_dir() else adapter_root)
+    store = ArtifactStore(adapter_root)
     events = _sequence_field(adapter_result, "event_records")
     request_events = {
         str(_required_field(event, "payload")["attempt_id"]): event
@@ -4620,6 +5725,7 @@ def _paired_trace_reference_from_runtime(
         raise ValueError("Exp3 paired trace reference must use the same sample slot")
     manifest = trace_runtime.resolver.index.manifest
     entries: list[Any] = []
+    delivery_mappings: list[dict[str, Any]] = []
     for binding in bindings:
         if (
             binding.bank_root_id != manifest.bank_root_id
@@ -4629,14 +5735,37 @@ def _paired_trace_reference_from_runtime(
         for replacement in binding.replacements:
             entry = trace_runtime.resolver.entry(replacement.entry_id)
             if (
-                entry.sample_slot_index != binding.sample_slot_index
-                or entry.replacement_slot != replacement.replacement_slot
-                or entry.inference_request_digest
+                entry.inference_request_digest
                 != replacement.inference_request_digest
             ):
                 raise ValueError("Exp3 paired trace reference entry identity mismatch")
             entries.append(entry)
-    entries.sort(key=lambda item: (item.entry_id, item.replacement_slot))
+            delivery_mappings.append(
+                {
+                    "source_binding_digest": binding.binding_digest,
+                    "current_planned_ai_unit_id": binding.planned_ai_unit_id,
+                    "current_sample_slot_index": binding.sample_slot_index,
+                    "current_attempt_ordinal": replacement.replacement_slot,
+                    "source_entry_id": entry.entry_id,
+                    "source_sample_slot_index": entry.sample_slot_index,
+                    "source_replacement_slot": entry.replacement_slot,
+                    "source_inference_request_digest": (
+                        entry.inference_request_digest
+                    ),
+                }
+            )
+    unique_entries = {
+        entry.entry_id: entry
+        for entry in sorted(
+            entries,
+            key=lambda item: (
+                item.sample_slot_index,
+                item.replacement_slot,
+                item.entry_id,
+            ),
+        )
+    }
+    entries = list(unique_entries.values())
     return {
         "schema_version": "tokenshare.paper_exp3_paired_trace_reference.v1",
         "comparison_kind": "paired_trace_reference",
@@ -4651,6 +5780,7 @@ def _paired_trace_reference_from_runtime(
         "source_binding_digests": [
             binding.binding_digest for binding in bindings
         ],
+        "current_delivery_source_mappings": delivery_mappings,
         "source_bank_object_locators": [
             locator.to_dict()
             for entry in entries
@@ -4665,11 +5795,12 @@ class _RootExecutionOutcome:
     root_status: str
     adapter_root: Path
     worker_id: str
+    adapter_output_root: Path | None = None
     task: Any = None
     adapter_result: Any = None
     provider_attempt_count: int = 0
-    total_tokens: int = 0
-    cost_estimate: float = 0.0
+    total_tokens: int | None = 0
+    cost_estimate: float | None = 0.0
     cost_estimate_currency: str | None = None
     cost_estimate_status: str | None = None
     paper_eligible: bool = False
@@ -4681,6 +5812,52 @@ class _RootExecutionOutcome:
     runtime_records: tuple[dict[str, Any], ...] = ()
     experiment_records: tuple[dict[str, Any], ...] = ()
     matched_baseline_evidence_ref: dict[str, Any] | None = None
+    hard_limit_consumption: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class PersistedDirectMetricsProjection:
+    """从已验证 checkpoint 投影出的 direct rows；不会执行实验本体。"""
+
+    direct_rows: tuple[PaperDirectRootResult, ...]
+    canonical_runtime_evidence: tuple[CanonicalDirectRootEvidence, ...]
+    producer_facts_by_root: Mapping[str, Mapping[str, Any]]
+    metric_inputs: Mapping[str, object]
+    evidence_root: Path
+    provider_calls: int = 0
+    authority_rebuild_count: int = 0
+    inventory_rebuild_count: int = 0
+
+
+def _validated_adapter_output_root(
+    *,
+    adapter_result: Any,
+    expected_output_root: Path,
+) -> Path:
+    """严格绑定 adapter 声明的实际 run root，不搜索或猜测 artifact 路径。"""
+
+    output_root = _optional_field(adapter_result, "output_root")
+    if not isinstance(output_root, str) or not output_root:
+        raise ValueError("adapter result output_root is missing or invalid")
+    actual = Path(output_root).resolve(strict=False)
+    expected = Path(expected_output_root).resolve(strict=False)
+    if actual != expected:
+        raise ValueError("adapter result output_root does not match dispatch identity")
+    return actual
+
+
+def _required_validated_adapter_output_root(
+    outcome: _RootExecutionOutcome,
+) -> Path:
+    """只消费 dispatch 边界已绑定的 typed run root。"""
+
+    value = outcome.adapter_output_root
+    if not isinstance(value, Path):
+        raise ValueError("validated adapter output_root is missing")
+    expected = (outcome.adapter_root / outcome.case_id).resolve(strict=False)
+    if value.resolve(strict=False) != expected:
+        raise ValueError("validated adapter output_root identity drift")
+    return value
 
 
 @dataclass
@@ -4833,6 +6010,35 @@ def _provider_latency_observation(
     return latency_sum_ms, "complete", None
 
 
+def _trace_current_provider_accounting_counts(
+    *,
+    task: Any,
+    attempts: Sequence[Any],
+    trace_runtime: Any,
+) -> tuple[int, int, int]:
+    """读取 trace root 的三份 current-provider 事实，不把 source 用量混入。"""
+
+    if not attempts:
+        raise ValueError("trace attempt accounting sequence is missing")
+    task_count = _required_field(task, "provider_attempt_count")
+    runtime_count = _optional_field(trace_runtime, "current_provider_call_count")
+    for label, value in (
+        ("trace task provider_attempt_count", task_count),
+        ("trace runtime current_provider_call_count", runtime_count),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{label} must be a nonnegative integer")
+    attempt_count = 0
+    for attempt in attempts:
+        value = _optional_field(attempt, "provider_attempt_count")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(
+                "trace attempt provider_attempt_count must be a nonnegative integer"
+            )
+        attempt_count += value
+    return task_count, attempt_count, runtime_count
+
+
 def _runtime_final_artifact_ref(
     *,
     events: Sequence[Any],
@@ -4850,6 +6056,8 @@ def _runtime_final_artifact_ref(
             preferred = refs.get("prime_factorization_result")
             if not isinstance(preferred, Mapping):
                 preferred = refs.get("proof")
+            if not isinstance(preferred, Mapping):
+                preferred = refs.get("lean_proof_artifact")
             if isinstance(preferred, Mapping):
                 matches.append(ArtifactRef.from_dict(preferred))
             elif len(refs) == 1:
@@ -4896,6 +6104,723 @@ def _copy_runtime_artifact_store(
             created_at=ref.created_at,
         )
     return copied
+
+
+def _artifact_identity_snapshot(ref: ArtifactRef) -> ArtifactIdentitySnapshot:
+    source = ref.source
+    return ArtifactIdentitySnapshot(
+        artifact_id=ref.artifact_id,
+        artifact_type=ref.artifact_type,
+        uri=ref.uri,
+        content_hash=ref.content_hash,
+        size_bytes=ref.size_bytes,
+        media_type=ref.media_type,
+        artifact_schema_id=ref.artifact_schema_id,
+        artifact_schema_version=ref.artifact_schema_version,
+        source_role=str(source.get("role", "")),
+        source_task_id=str(source.get("task_id", "")),
+        source_execution_id=str(source.get("execution_id", "")),
+        created_at=ref.created_at,
+    )
+
+
+def _frozen_coverage_direct_inventory_row(
+    *,
+    root: Any,
+    catalog_manifest: PaperInputCatalogManifest,
+    coverage_digest: str,
+) -> PaperDirectRootInventoryRow:
+    """只投影 frozen coverage identity，不构造新的实验 inventory authority。"""
+
+    condition = root.condition
+    if (
+        condition.experiment_id != "exp5_real_ai_model_endpoint_comparison"
+        or root.condition_digest != condition.condition_digest
+        or root.repeat_id != int(condition.repeat_id)
+    ):
+        raise ValueError("persisted Exp5 frozen root condition identity mismatch")
+    cases = _catalog_cases_by_id(catalog_manifest)
+    catalog_axes = _catalog_case_identity_axes_by_id(catalog_manifest)
+    case = cases.get(root.case_id)
+    if not isinstance(case, Mapping) or digest_json(case) != root.case_record_digest:
+        raise ValueError("persisted Exp5 frozen root case identity mismatch")
+    domain = str(condition.domain)
+    case_identity = catalog_axes.get(root.case_id)
+    if (
+        domain not in {"factorization", "lean_proof"}
+        or case_identity is None
+        or case_identity[0] != domain
+    ):
+        raise ValueError("persisted Exp5 frozen root domain identity mismatch")
+    topic_family = condition.topic_family if domain == "lean_proof" else None
+    if domain == "lean_proof" and case.get("topic_family") != topic_family:
+        raise ValueError("persisted Exp5 frozen root topic identity mismatch")
+    axes = {
+        "domain": domain,
+        "difficulty": str(condition.paper_difficulty or condition.difficulty),
+        "topic_family": topic_family,
+        "worker_count": int(condition.worker_count),
+        "sample_slot_index": int(condition.repeat_id),
+        "fault_condition": None,
+        "death_condition": None,
+        "ablation_mode": (
+            "FULL"
+            if str(condition.ablation_mode) in {"FULL", "full_protocol"}
+            else None
+        ),
+        "model_endpoint_id": (
+            condition.model_entry_id or condition.provider_model_id
+        ),
+    }
+    if not isinstance(axes["model_endpoint_id"], str) or not axes[
+        "model_endpoint_id"
+    ]:
+        raise ValueError("persisted Exp5 frozen endpoint identity is missing")
+    quantile = case.get("factor_position_quantile", "not_applicable")
+    stratum = case.get("position_stratum") or str(quantile)
+    case_axes = {
+        "factor_position_quantile": quantile,
+        "position_stratum": stratum,
+    }
+    root_body = {
+        "experiment_id": condition.experiment_id,
+        "condition_id": condition.condition_id,
+        "case_id": root.case_id,
+        "repeat_id": int(root.repeat_id),
+    }
+    values = {
+        "inventory_id": "paper-formal-frozen-coverage:" + coverage_digest,
+        "preregistered_root_run_id": "paper-direct-root:" + digest_json(root_body),
+        **root_body,
+        "preregistered_condition_ref": {
+            "schema_version": "tokenshare.preregistered_condition_ref.v1",
+            "condition_manifest_digest": coverage_digest,
+            "condition_record_digest": root.condition_digest,
+            "condition_axes_digest": digest_json(axes),
+        },
+        "condition_axes": axes,
+        "preregistered_case_ref": {
+            "schema_version": (
+                "tokenshare.preregistered_lean_case_ref.v1"
+                if domain == "lean_proof"
+                else "tokenshare.preregistered_case_ref.v1"
+            ),
+            "catalog_digest": catalog_manifest.catalog_digest,
+            "case_record_digest": root.case_record_digest,
+            "case_axes_digest": digest_json(case_axes),
+            **case_axes,
+        },
+        "evidence_class": "online_real_provider",
+    }
+    return PaperDirectRootInventoryRow(
+        **values,
+        inventory_row_digest=digest_json(
+            {
+                "schema_version": "tokenshare.paper_direct_root_inventory_row.v2",
+                **values,
+            }
+        ),
+    )
+
+
+def _materialize_persisted_runtime_store(
+    *,
+    evidence_root: Path,
+    logical: Mapping[str, Any],
+    native_store: ArtifactStore,
+) -> None:
+    records = tuple(logical.get("artifacts", ()))
+    if not records:
+        raise ValueError("persisted runtime artifact inventory is missing")
+    artifact_ids: set[str] = set()
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise ValueError("persisted runtime artifact record is invalid")
+        source_value = record.get("source_artifact_ref")
+        relative_value = record.get("path")
+        if not isinstance(source_value, Mapping) or not isinstance(
+            relative_value, str
+        ):
+            raise ValueError("persisted runtime artifact binding is invalid")
+        ref = ArtifactRef.from_dict(source_value)
+        if ref.artifact_id in artifact_ids:
+            raise ValueError("persisted runtime artifact identity is ambiguous")
+        artifact_ids.add(ref.artifact_id)
+        source_path = (evidence_root / relative_value).resolve(strict=True)
+        if evidence_root.resolve(strict=True) not in source_path.parents:
+            raise ValueError("persisted runtime artifact escapes evidence root")
+        copied = native_store.save_bytes(
+            source_path.read_bytes(),
+            artifact_id=ref.artifact_id,
+            artifact_type=ref.artifact_type,
+            media_type=ref.media_type,
+            artifact_schema_id=ref.artifact_schema_id,
+            artifact_schema_version=ref.artifact_schema_version,
+            source=dict(ref.source),
+            metadata=dict(ref.metadata),
+            created_at=ref.created_at,
+        )
+        if copied.to_dict() != ref.to_dict():
+            raise ValueError("persisted runtime artifact identity mismatch")
+
+
+def _persisted_online_role_sources(
+    *,
+    attempts: Sequence[Mapping[str, Any]],
+    copied: Mapping[str, ArtifactRef],
+) -> tuple[
+    dict[str, tuple[ArtifactRef, ...]],
+    dict[str, tuple[ArtifactRef, ...]],
+]:
+    provider: dict[str, list[ArtifactRef]] = {
+        role: []
+        for role in (
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "provider_attempt",
+            "model_record",
+        )
+    }
+    parser: dict[str, list[ArtifactRef]] = {
+        "parser_result": [],
+        "parse_failure": [],
+    }
+
+    def mapped(value: Any, *, label: str) -> ArtifactRef:
+        if not isinstance(value, Mapping):
+            raise ValueError(f"persisted Exp5 {label} ref is missing")
+        original = ArtifactRef.from_dict(value)
+        result = copied.get(original.artifact_id)
+        if result is None:
+            raise ValueError(f"persisted Exp5 {label} artifact is missing")
+        return result
+
+    for attempt in attempts:
+        count = attempt.get("provider_attempt_count")
+        if type(count) is not int or count < 0:
+            raise ValueError("persisted Exp5 provider attempt count is invalid")
+        if count:
+            if count != 1:
+                raise ValueError("persisted Exp5 provider attempt must be singular")
+            request_ref = mapped(attempt.get("request_ref"), label="request")
+            provenance_ref = mapped(
+                attempt.get("provenance_ref"), label="provenance"
+            )
+            usage_ref = mapped(attempt.get("usage_ref"), label="usage")
+            raw_value = attempt.get("raw_output_ref") or attempt.get(
+                "parse_failure_ref"
+            )
+            values = {
+                "request_body": request_ref,
+                "raw_output_or_provider_failure": mapped(raw_value, label="raw"),
+                "provenance": provenance_ref,
+                "usage_status": usage_ref,
+                "latency": provenance_ref,
+                "pricing": usage_ref,
+                "provider_attempt": provenance_ref,
+                "model_record": mapped(
+                    attempt.get("model_execution_record_ref"), label="model record"
+                ),
+            }
+            for role, ref in values.items():
+                provider[role].append(ref)
+        if attempt.get("parsed_output_ref") is not None:
+            parser["parser_result"].append(
+                mapped(attempt["parsed_output_ref"], label="parser result")
+            )
+        if attempt.get("parse_failure_ref") is not None:
+            parser["parse_failure"].append(
+                mapped(attempt["parse_failure_ref"], label="parse failure")
+            )
+    if any(not values for values in provider.values()):
+        raise ValueError("persisted Exp5 provider role inventory is incomplete")
+    if not parser["parser_result"]:
+        raise ValueError("persisted Exp5 parser result inventory is missing")
+    return (
+        {role: tuple(values) for role, values in provider.items()},
+        {role: tuple(values) for role, values in parser.items() if values},
+    )
+
+
+def _selected_final_verification_event(
+    *,
+    events: Sequence[Any],
+    root_unit_id: str,
+) -> Any:
+    merge_events = tuple(
+        event
+        for event in events
+        if _status_value(event.event_type) == "MERGE_RECORDED"
+        and event.payload.get("parent_unit_id") == root_unit_id
+    )
+    if len(merge_events) != 1:
+        raise ValueError("persisted Exp5 final merge event is ambiguous or missing")
+    selected_seq = merge_events[0].payload.get("selected_verification_event_seq")
+    matches = tuple(
+        event
+        for event in events
+        if event.event_seq == selected_seq
+        and _status_value(event.event_type) == "VERIFICATION_RECORDED"
+    )
+    if len(matches) != 1:
+        raise ValueError("persisted Exp5 final verification event is ambiguous or missing")
+    return matches[0]
+
+
+def _persisted_exp5_model_endpoint_identity(
+    *,
+    artifact_store: ArtifactStore,
+    provider_refs: Sequence[ArtifactRef],
+    condition: Any,
+) -> PaperModelEndpointIdentity:
+    """从已持久化 model records 恢复 endpoint identity，并绑定 frozen condition。"""
+
+    role_refs = tuple(
+        ref
+        for ref in provider_refs
+        if isinstance(_optional_field(ref, "source"), Mapping)
+        if _optional_field(ref, "source").get("role") == "model_record"
+    )
+    if len(role_refs) != 1:
+        raise ValueError("persisted Exp5 model record role book is ambiguous")
+    role_book = json.loads(artifact_store.read_bytes(role_refs[0]).decode("utf-8"))
+    source_values = role_book.get("source_artifact_refs")
+    if (
+        role_book.get("schema_version")
+        != "tokenshare.paper_current_provider_role_book.v1"
+        or role_book.get("role") != "model_record"
+        or not isinstance(source_values, Sequence)
+        or isinstance(source_values, (str, bytes, bytearray))
+        or not source_values
+    ):
+        raise ValueError("persisted Exp5 model record role book is invalid")
+    identities: list[PaperModelEndpointIdentity] = []
+    for value in source_values:
+        if not isinstance(value, Mapping):
+            raise ValueError("persisted Exp5 model record ref is invalid")
+        ref = ArtifactRef.from_dict(dict(value))
+        authoritative = artifact_store.load_artifact_ref(ref.artifact_id)
+        if authoritative.to_dict() != ref.to_dict():
+            raise ValueError("persisted Exp5 model record ref identity mismatch")
+        record = json.loads(artifact_store.read_bytes(ref).decode("utf-8"))
+        identity_value = record.get("expected_identity")
+        if (
+            record.get("identity_status") != "matched"
+            or record.get("mismatch_reasons") not in ([], ())
+            or not isinstance(identity_value, Mapping)
+        ):
+            raise ValueError("persisted Exp5 model execution identity is not matched")
+        body = dict(identity_value)
+        persisted_digest = body.pop("model_endpoint_identity_digest", None)
+        try:
+            identity = PaperModelEndpointIdentity(**body)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("persisted Exp5 model endpoint identity is invalid") from exc
+        if persisted_digest != identity.model_endpoint_identity_digest:
+            raise ValueError("persisted Exp5 model endpoint identity digest mismatch")
+        identities.append(identity)
+    digests = {value.model_endpoint_identity_digest for value in identities}
+    if len(digests) != 1:
+        raise ValueError("persisted Exp5 model endpoint identity is ambiguous")
+    identity = identities[0]
+    expected = {
+        "model_cohort_id": condition.model_cohort_id,
+        "model_cohort_digest": condition.model_cohort_digest,
+        "cohort_member_id": condition.cohort_member_id,
+        "provider_config_id": condition.provider_config_id,
+        "selected_entry_id": condition.model_entry_id,
+        "provider_family": condition.provider_family,
+        "provider_model_id": condition.provider_model_id,
+        "reasoning_profile_id": condition.reasoning_profile_id,
+        "source_provider_config_digest": condition.source_provider_config_digest,
+        "model_endpoint_identity_digest": condition.model_endpoint_identity_digest,
+    }
+    observed = {
+        "model_cohort_id": identity.model_cohort_id,
+        "model_cohort_digest": identity.model_cohort_digest,
+        "cohort_member_id": identity.cohort_member_id,
+        "provider_config_id": identity.provider_config_id,
+        "selected_entry_id": identity.selected_entry_id,
+        "provider_family": identity.provider_family,
+        "provider_model_id": identity.provider_model_id,
+        "reasoning_profile_id": identity.reasoning_profile_id,
+        "source_provider_config_digest": identity.source_provider_config_digest,
+        "model_endpoint_identity_digest": identity.model_endpoint_identity_digest,
+    }
+    if observed != expected:
+        raise ValueError("persisted Exp5 frozen endpoint identity mismatch")
+    return identity
+
+
+def _rehydrate_persisted_exp5_model_endpoint_identity(
+    *,
+    evidence_root: Path,
+    logical: Mapping[str, Any],
+    condition: PaperExperimentCondition,
+) -> PaperModelEndpointIdentity:
+    """只从已验证 formal record 的 model record 重建 Exp5 identity。"""
+
+    attempts = tuple(logical.get("attempts", ()))
+    if any(not isinstance(attempt, Mapping) for attempt in attempts):
+        raise ValueError("persisted Exp5 attempt records are invalid")
+    model_record_refs: list[ArtifactRef] = []
+    for attempt in attempts:
+        count = attempt.get("provider_attempt_count")
+        if type(count) is not int or count < 0:
+            raise ValueError("persisted Exp5 provider attempt count is invalid")
+        if count == 0:
+            continue
+        if count != 1:
+            raise ValueError("persisted Exp5 provider attempt must be singular")
+        value = attempt.get("model_execution_record_ref")
+        if not isinstance(value, Mapping):
+            raise ValueError("persisted Exp5 model record ref is missing")
+        model_record_refs.append(ArtifactRef.from_dict(dict(value)))
+    if not model_record_refs:
+        raise ValueError("persisted Exp5 model record ref is missing")
+
+    materialized_root = Path(evidence_root)
+    with tempfile.TemporaryDirectory(
+        prefix="tokenshare-exp5-model-record-rehydrate-",
+        dir=materialized_root.parent,
+    ) as temporary_directory:
+        artifact_store = ArtifactStore(Path(temporary_directory) / "artifacts")
+        _materialize_persisted_runtime_store(
+            evidence_root=materialized_root,
+            logical=logical,
+            native_store=artifact_store,
+        )
+        verified_refs: list[ArtifactRef] = []
+        for source_ref in model_record_refs:
+            authoritative = artifact_store.load_artifact_ref(source_ref.artifact_id)
+            if authoritative.to_dict() != source_ref.to_dict():
+                raise ValueError("persisted Exp5 model record ref identity mismatch")
+            if (
+                authoritative.artifact_type != PaperModelExecutionRecord.__name__
+                or authoritative.artifact_schema_id
+                != "tokenshare.paper_model_execution_record"
+                or authoritative.artifact_schema_version != "v2"
+            ):
+                raise ValueError("persisted Exp5 model record artifact contract is invalid")
+            verified_refs.append(authoritative)
+        role_book = artifact_store.save_json(
+            {
+                "schema_version": "tokenshare.paper_current_provider_role_book.v1",
+                "role": "model_record",
+                "source_artifact_refs": [ref.to_dict() for ref in verified_refs],
+            },
+            artifact_id=(
+                "rehydrated_exp5_model_record_role_book_"
+                + digest_json([ref.to_dict() for ref in verified_refs])
+                .removeprefix("sha256:")[:24]
+            ),
+            artifact_type="PaperCurrentProviderRoleBook",
+            artifact_schema_id="tokenshare.paper_current_provider_role_book.v1",
+            artifact_schema_version="v1",
+            source={
+                "kind": "persisted_exp5_metric_rehydrate",
+                "role": "model_record",
+            },
+            metadata={"source_artifact_count": len(verified_refs)},
+            created_at=verified_refs[0].created_at,
+        )
+        return _persisted_exp5_model_endpoint_identity(
+            artifact_store=artifact_store,
+            provider_refs=(role_book,),
+            condition=condition,
+        )
+
+
+def project_persisted_exp5_direct_metrics(
+    *,
+    source_suite_root: str | Path,
+    projection_root: str | Path,
+    frozen_roots: Sequence[Any],
+    catalog_manifest: PaperInputCatalogManifest,
+    coverage_digest: str,
+) -> PersistedDirectMetricsProjection:
+    """从 Exp5 terminal checkpoints 投影 direct metrics；provider/checker 调用恒为零。"""
+
+    source_root = Path(source_suite_root)
+    target_root = Path(projection_root)
+    roots = tuple(frozen_roots)
+    if target_root.exists():
+        raise FileExistsError("persisted Exp5 projection root must be fresh")
+    if len(roots) != 16 or len(
+        {
+            (root.condition.condition_id, root.case_id, root.repeat_id)
+            for root in roots
+        }
+    ) != 16:
+        raise ValueError("persisted Exp5 projection requires exact 16 frozen roots")
+    if (
+        not isinstance(coverage_digest, str)
+        or not coverage_digest.startswith("sha256:")
+    ):
+        raise ValueError("persisted Exp5 coverage digest is invalid")
+    _reject_formal_reparse_path(
+        source_root,
+        recursive=True,
+        check_existing_parents=True,
+    )
+    evidence_root = target_root / "exp5-formal-evidence"
+    target_root.mkdir(parents=True)
+    shutil.copytree(source_root, evidence_root)
+    for name in ("condition_results.jsonl", "formal_runner_result.json"):
+        path = evidence_root / name
+        if path.is_file():
+            path.unlink()
+    metrics_root = evidence_root / "metrics"
+    if metrics_root.is_dir():
+        shutil.rmtree(metrics_root)
+    store = FormalEvidenceStore(evidence_root)
+    store._refresh_evidence_manifest()
+    store._validate_evidence_manifest()
+    rows: list[PaperDirectRootResult] = []
+    evidence_values: list[CanonicalDirectRootEvidence] = []
+    producer_facts: dict[str, Mapping[str, Any]] = {}
+    seen_condition_ids: set[str] = set()
+    for root in sorted(
+        roots,
+        key=lambda value: (
+            value.condition.condition_id,
+            value.case_id,
+            value.repeat_id,
+        ),
+    ):
+        row = _frozen_coverage_direct_inventory_row(
+            root=root,
+            catalog_manifest=catalog_manifest,
+            coverage_digest=coverage_digest,
+        )
+        condition_id = root.condition.condition_id
+        if condition_id in seen_condition_ids:
+            raise ValueError("persisted Exp5 condition identity is ambiguous")
+        seen_condition_ids.add(condition_id)
+        logical = store.load_logical_run_records(
+            experiment_id=root.condition.experiment_id,
+            condition_id=condition_id,
+            repeat_id=int(root.repeat_id),
+        )
+        tasks = tuple(logical.get("tasks", ()))
+        attempts = tuple(logical.get("attempts", ()))
+        persisted_case_id = (
+            tasks[0].get("case_id") or tasks[0].get("task_id")
+            if len(tasks) == 1
+            else None
+        )
+        if (
+            len(tasks) != 1
+            or persisted_case_id != root.case_id
+            or tasks[0].get("condition_id") != condition_id
+        ):
+            raise ValueError("persisted Exp5 canonical task identity mismatch")
+        task = tasks[0]
+        runtime_identity = task.get("runtime_generation_identity")
+        if not isinstance(runtime_identity, Mapping):
+            raise ValueError("persisted Exp5 runtime identity is missing")
+        execution_id = str(runtime_identity.get("run_id", ""))
+        task_id = str(runtime_identity.get("task_id", ""))
+        root_unit_id = str(runtime_identity.get("root_unit_id", ""))
+        if not all((execution_id, task_id, root_unit_id)):
+            raise ValueError("persisted Exp5 runtime identity is incomplete")
+        root_hash = hashlib.sha256(
+            row.preregistered_root_run_id.encode("utf-8")
+        ).hexdigest()
+        native_store = ArtifactStore(target_root / "native-runtime" / root_hash)
+        _materialize_persisted_runtime_store(
+            evidence_root=evidence_root,
+            logical=logical,
+            native_store=native_store,
+        )
+        generation_roots = tuple(logical.get("source_generation_roots", ()))
+        if len(generation_roots) != 1:
+            raise ValueError("persisted Exp5 generation identity is ambiguous")
+        ledger = EventLedger(Path(generation_roots[0]) / "events" / "event_log.jsonl")
+        events = tuple(ledger.read_all())
+        if not events or not ledger.verify_hash_chain():
+            raise ValueError("persisted Exp5 event ledger is invalid")
+        runtime = project_protocol_run(
+            run_id=execution_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            event_ledger=ledger,
+            artifact_store=native_store,
+        )
+        final_native = _runtime_final_artifact_ref(
+            events=events,
+            root_unit_id=root_unit_id,
+        )
+        canonical_root = evidence_root.with_name(
+            evidence_root.name + ".canonical_direct_evidence"
+        ) / root_hash
+        canonical_store = ArtifactStore(canonical_root)
+        copied = _copy_runtime_artifact_store(
+            native_store=native_store,
+            target_store=canonical_store,
+            execution_id=execution_id,
+            task_id=task_id,
+            final_artifact_id=final_native.artifact_id,
+        )
+        final_ref = copied[final_native.artifact_id]
+        canonical_runtime = replace(
+            runtime,
+            artifact_refs=tuple(copied[ref.artifact_id] for ref in runtime.artifact_refs),
+        )
+        provider_sources, parser_sources = _persisted_online_role_sources(
+            attempts=attempts,
+            copied=copied,
+        )
+        verification_event = _selected_final_verification_event(
+            events=events,
+            root_unit_id=root_unit_id,
+        )
+        verdict_body = build_persisted_verification_event_verdict_body(
+            inventory_row=row,
+            execution_id=execution_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            final_result_ref=_artifact_identity_snapshot(final_ref),
+            verification_event=verification_event.to_dict(),
+        )
+        domain = str(row.condition_axes["domain"])
+        verdict_role = (
+            "independent_verdict"
+            if domain == "factorization"
+            else "lean_checker_verdict"
+        )
+        verdict_ref = canonical_store.save_json(
+            verdict_body,
+            artifact_id="persisted_verification_event_verdict_" + root_hash[:24],
+            artifact_type="PaperPersistedVerificationEventVerdict",
+            artifact_schema_id=(
+                "tokenshare.paper_persisted_verification_event_verdict.v1"
+            ),
+            artifact_schema_version="v1",
+            source={
+                "kind": "persisted_verification_event_projection",
+                "role": verdict_role,
+                "task_id": task_id,
+                "execution_id": execution_id,
+            },
+            metadata={"verification_event_seq": verification_event.event_seq},
+            created_at=final_ref.created_at,
+        )
+        domain_report_refs: tuple[ArtifactRef, ...] = ()
+        if domain == "lean_proof":
+            report = verification_event.payload.get("verification_report")
+            metadata = report.get("metadata") if isinstance(report, Mapping) else None
+            checker_value = (
+                metadata.get("checker_report_ref")
+                if isinstance(metadata, Mapping)
+                else None
+            )
+            domain_report_refs = (
+                _copy_native_root_checker_report(
+                    native_store=native_store,
+                    target_store=canonical_store,
+                    native_value=checker_value,
+                    root_id=row.preregistered_root_run_id,
+                    execution_id=execution_id,
+                    task_id=task_id,
+                    ordinal=1,
+                ),
+            )
+        bundle = persist_native_online_direct_artifacts(
+            artifact_store=canonical_store,
+            execution_id=execution_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            final_result_ref=final_ref,
+            oracle_verdict_ref=verdict_ref,
+            oracle_kind=(
+                "independent_verifier"
+                if domain == "factorization"
+                else "lean_checker"
+            ),
+            oracle_correct=True,
+            current_provider_object_refs=provider_sources,
+            parser_object_refs=parser_sources,
+            domain_report_refs=domain_report_refs,
+        )
+        if bundle.actual_resource_book_ref is None:
+            raise ValueError("persisted Exp5 actual resource book is missing")
+        resource_body = json.loads(
+            canonical_store.read_bytes(bundle.actual_resource_book_ref).decode("utf-8")
+        )
+        provider_refs = tuple(
+            ArtifactRef.from_dict(value)
+            for value in resource_body["current_provider_object_refs"]
+        )
+        model_endpoint_identity = _persisted_exp5_model_endpoint_identity(
+            artifact_store=canonical_store,
+            provider_refs=provider_refs,
+            condition=root.condition,
+        )
+        verifier_refs = (
+            *((bundle.independent_verdict_ref,) if bundle.independent_verdict_ref else ()),
+            *bundle.domain_report_refs,
+        )
+        evidence = build_canonical_direct_evidence(
+            inventory_row=row,
+            execution_id=execution_id,
+            event_ledger=ledger,
+            artifact_store=canonical_store,
+            runtime_result=canonical_runtime,
+            final_result_ref=final_ref,
+            parser_refs=bundle.parser_refs,
+            verifier_checker_refs=verifier_refs,
+            current_provider_object_refs=provider_refs,
+            actual_resource_book_ref=bundle.actual_resource_book_ref,
+        )
+        direct = _observed_row(row, evidence)
+        rows.append(direct)
+        evidence_values.append(evidence)
+        producer_facts[direct.preregistered_root_run_id] = {
+            "task": dict(task),
+            "attempts": tuple(dict(attempt) for attempt in attempts),
+            "faults": tuple(dict(value) for value in logical.get("faults", ())),
+            "events": tuple(dict(value) for value in logical.get("events", ())),
+            "run_evidence": {
+                "protocol_runtime": {
+                    "runtime_observation": task.get("runtime_observation", {})
+                }
+            },
+            "ledger_root_clock": _root_clock_from_verified_ledger(
+                events=events,
+                run_id=execution_id,
+                task_id=task_id,
+                root_unit_id=root_unit_id,
+                row=row,
+                task=task,
+            ),
+            "model_endpoint_identity": model_endpoint_identity,
+        }
+    root_ids = tuple(row.preregistered_root_run_id for row in rows)
+    if len(set(root_ids)) != 16:
+        raise ValueError("persisted Exp5 direct root identity is ambiguous")
+    metric_inputs = _canonical_metric_inputs(
+        rows,
+        producer_facts_by_root=producer_facts,
+    )
+    if len(metric_inputs["experiment_5"]) != 4:
+        raise ValueError("persisted Exp5 model-arm projection is incomplete")
+    _prepare_protected_formal_evidence_closure(
+        evidence_root,
+        suite_root=evidence_root,
+        canonical_direct_rows=rows,
+    )
+    return PersistedDirectMetricsProjection(
+        direct_rows=tuple(rows),
+        canonical_runtime_evidence=tuple(evidence_values),
+        producer_facts_by_root=MappingProxyType(dict(producer_facts)),
+        metric_inputs=MappingProxyType(dict(metric_inputs)),
+        evidence_root=evidence_root,
+    )
 
 
 def _copy_native_direct_role_artifact(
@@ -4961,7 +6886,9 @@ def _native_direct_role_refs(
     tuple[ArtifactRef, ...],
     ArtifactRef | None,
 ]:
-    del task
+    domain = str(_required_field(task, "domain"))
+    if domain not in {"factorization", "lean_proof"}:
+        raise ValueError("native paper direct task domain is unsupported")
     run_evidence = _optional_field(adapter_result, "run_evidence")
     bundle = (
         run_evidence.get("paper_direct_native_artifacts")
@@ -4970,7 +6897,7 @@ def _native_direct_role_refs(
     )
     if not isinstance(bundle, Mapping):
         raise ValueError("native paper direct artifact bundle is missing")
-    if bundle.get("schema_version") != "tokenshare.paper_direct_native_artifacts.v1":
+    if bundle.get("schema_version") != "tokenshare.paper_direct_native_artifacts.v2":
         raise ValueError("unsupported native paper direct artifact bundle")
 
     def copy_bound_ref(
@@ -5064,17 +6991,44 @@ def _native_direct_role_refs(
         for ordinal, value in enumerate(parser_values)
     )
     verdict_value = bundle.get("independent_verdict_ref")
-    verifier_refs = (
+    primary_verifier_refs = (
         (
-            copy_bound_ref(
-                verdict_value,
-                allowed_roles=frozenset({"independent_verdict"}),
+            _copy_native_domain_verdict_artifact(
+                native_store=native_store,
+                target_store=target_store,
+                native_value=verdict_value,
+                root_id=root_id,
+                domain=domain,
+                execution_id=execution_id,
+                task_id=task_id,
                 ordinal=0,
             ),
         )
         if verdict_value is not None
         else ()
     )
+    domain_report_values = bundle.get("domain_report_refs", [])
+    if not isinstance(domain_report_values, list):
+        raise ValueError("native domain report inventory is invalid")
+    if domain == "factorization" and domain_report_values:
+        raise ValueError("Factor native verdict cannot carry checker reports")
+    if domain == "lean_proof" and verdict_value is not None and len(
+        domain_report_values
+    ) != 1:
+        raise ValueError("Lean native root checker report inventory is incomplete")
+    domain_report_copies = tuple(
+        _copy_native_root_checker_report(
+            native_store=native_store,
+            target_store=target_store,
+            native_value=value,
+            root_id=root_id,
+            execution_id=execution_id,
+            task_id=task_id,
+            ordinal=ordinal + 1,
+        )
+        for ordinal, value in enumerate(domain_report_values)
+    )
+    verifier_refs = (*primary_verifier_refs, *domain_report_copies)
     copied_resource_ref = (
         copy_bound_ref(
             resource_value,
@@ -5085,6 +7039,89 @@ def _native_direct_role_refs(
         else None
     )
     return parser_refs, verifier_refs, provider_refs, copied_resource_ref
+
+
+def _copy_native_domain_verdict_artifact(
+    *,
+    native_store: ArtifactStore,
+    target_store: ArtifactStore,
+    native_value: Any,
+    root_id: str,
+    domain: str,
+    execution_id: str,
+    task_id: str,
+    ordinal: int,
+) -> ArtifactRef:
+    if not isinstance(native_value, Mapping):
+        raise ValueError("native domain verdict artifact ref is missing")
+    native_ref = ArtifactRef.from_dict(native_value)
+    authoritative = native_store.load_artifact_ref(native_ref.artifact_id)
+    if authoritative.to_dict() != native_ref.to_dict():
+        raise ValueError("native domain verdict artifact identity mismatch")
+    try:
+        body = json.loads(native_store.read_bytes(authoritative).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("native domain verdict artifact is invalid JSON") from exc
+    if not isinstance(body, Mapping):
+        raise ValueError("native domain verdict artifact must be an object")
+    if domain == "factorization":
+        if body.get("schema_version") != (
+            "tokenshare.paper_factorization_domain_verifier_report.v1"
+        ):
+            raise ValueError("Factor native domain verifier report is missing")
+        role = "independent_verdict"
+    else:
+        if body.get("schema_version") != (
+            "tokenshare.paper_lean_domain_verdict_binding.v2"
+        ):
+            raise ValueError("Lean native domain verdict binding is missing")
+        role = "lean_checker_verdict"
+    return _copy_native_direct_role_artifact(
+        native_store=native_store,
+        target_store=target_store,
+        native_ref=authoritative,
+        root_id=root_id,
+        role=role,
+        execution_id=execution_id,
+        task_id=task_id,
+        ordinal=ordinal,
+    )
+
+
+def _copy_native_root_checker_report(
+    *,
+    native_store: ArtifactStore,
+    target_store: ArtifactStore,
+    native_value: Any,
+    root_id: str,
+    execution_id: str,
+    task_id: str,
+    ordinal: int,
+) -> ArtifactRef:
+    if not isinstance(native_value, Mapping):
+        raise ValueError("native root checker report ref is missing")
+    native_ref = ArtifactRef.from_dict(native_value)
+    authoritative = native_store.load_artifact_ref(native_ref.artifact_id)
+    if authoritative.to_dict() != native_ref.to_dict():
+        raise ValueError("native root checker report identity mismatch")
+    try:
+        body = json.loads(native_store.read_bytes(authoritative).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("native root checker report is invalid JSON") from exc
+    if not isinstance(body, Mapping) or body.get(
+        "schema_version"
+    ) != "lean_proof.checker_report.v1":
+        raise ValueError("Lean native root checker report is missing")
+    return _copy_native_direct_role_artifact(
+        native_store=native_store,
+        target_store=target_store,
+        native_ref=authoritative,
+        root_id=root_id,
+        role="root_checker_report",
+        execution_id=execution_id,
+        task_id=task_id,
+        ordinal=ordinal,
+    )
 
 
 def _persist_trace_resource_book(
@@ -5168,6 +7205,54 @@ def _persist_trace_resource_book(
         },
         created_at=native_last.created_at,
     )
+
+
+def _select_current_trace_wrapper_refs(
+    *,
+    events: Sequence[Any],
+    current_wrappers: Sequence[CurrentTraceWrapper],
+) -> tuple[ArtifactRef, ...]:
+    """把 canonical current wrapper 精确绑定到其原生 commit artifact。"""
+
+    by_attempt: dict[str, tuple[str, ArtifactRef]] = {}
+    for event in events:
+        if _optional_field(event, "event_type") != "TRACE_DELIVERY_COMMITTED.v1":
+            continue
+        event_id = _required_field(event, "event_id")
+        payload = _required_field(event, "payload")
+        if not isinstance(event_id, str) or not event_id or not isinstance(
+            payload, Mapping
+        ):
+            raise ValueError("trace wrapper commit identity is invalid")
+        attempt_id = payload.get("attempt_id")
+        wrapper_value = payload.get("current_wrapper_ref")
+        if not isinstance(attempt_id, str) or not attempt_id or not isinstance(
+            wrapper_value, Mapping
+        ):
+            raise ValueError("trace wrapper commit identity is invalid")
+        if attempt_id in by_attempt:
+            raise ValueError("duplicate trace wrapper commit attempt identity")
+        by_attempt[attempt_id] = (event_id, ArtifactRef.from_dict(wrapper_value))
+
+    selected: list[ArtifactRef] = []
+    selected_attempt_ids: set[str] = set()
+    for wrapper in current_wrappers:
+        if not isinstance(wrapper, CurrentTraceWrapper):
+            raise TypeError("current trace wrappers must be typed")
+        attempt_id = wrapper.current_attempt_id
+        if attempt_id in selected_attempt_ids:
+            raise ValueError("duplicate current trace wrapper attempt identity")
+        selected_attempt_ids.add(attempt_id)
+        committed = by_attempt.get(attempt_id)
+        if committed is None:
+            raise ValueError("current trace wrapper commit is missing")
+        event_id, ref = committed
+        if wrapper.current_ledger_ref != event_id:
+            raise ValueError("current trace wrapper ledger identity mismatch")
+        selected.append(ref)
+    if not selected:
+        raise ValueError("canonical trace resource book is missing")
+    return tuple(selected)
 
 
 def _canonical_direct_evidence_digest(
@@ -5410,6 +7495,57 @@ def _restore_canonical_direct_checkpoints(
             collector.producer_facts_by_root[root_id] = producer_facts
 
 
+def _native_event_ledger_path(
+    *,
+    native_root: Path,
+    protocol_runtime: Mapping[str, Any],
+) -> Path:
+    """从 adapter 显式绑定解析 native ledger，禁止按插件名称猜路径。"""
+
+    value = protocol_runtime.get("event_ledger_path")
+    if not isinstance(value, str) or not value:
+        raise ValueError("native event ledger path binding is missing")
+    relative = PurePosixPath(value)
+    if (
+        "\\" in value
+        or Path(value).is_absolute()
+        or relative.is_absolute()
+        or not relative.parts
+        or relative.as_posix() == "."
+        or relative.as_posix() != value
+        or ".." in relative.parts
+    ):
+        raise ValueError("native event ledger path binding is invalid")
+    resolved_root = native_root.resolve(strict=False)
+    resolved_path = (resolved_root / Path(*relative.parts)).resolve(strict=False)
+    if resolved_root not in resolved_path.parents:
+        raise ValueError("native event ledger path escapes output root")
+    return resolved_path
+
+
+def _validated_native_event_ledger(
+    *,
+    native_root: Path,
+    protocol_runtime: Mapping[str, Any],
+) -> tuple[EventLedger, tuple[Any, ...]]:
+    try:
+        ledger = EventLedger(
+            _native_event_ledger_path(
+                native_root=native_root,
+                protocol_runtime=protocol_runtime,
+            )
+        )
+        events = tuple(ledger.read_all())
+        hash_chain_valid = ledger.verify_hash_chain()
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "canonical direct evidence native ledger is invalid"
+        ) from error
+    if not events or not hash_chain_valid:
+        raise ValueError("canonical direct evidence native ledger is invalid")
+    return ledger, events
+
+
 def _capture_canonical_direct_evidence(
     *,
     collector: _CanonicalDirectCollector,
@@ -5418,6 +7554,7 @@ def _capture_canonical_direct_evidence(
     case_id: str,
     task: Any,
     adapter_result: Any,
+    adapter_output_root: Path,
 ) -> None:
     row = collector.rows_by_key.get((condition.condition_id, case_id))
     if row is None or row.evidence_class not in {
@@ -5436,14 +7573,12 @@ def _capture_canonical_direct_evidence(
     execution_id = str(protocol_runtime["run_id"])
     protocol_task_id = str(protocol_runtime["task_id"])
     root_unit_id = str(protocol_runtime["root_unit_id"])
-    native_root = Path(str(_required_field(adapter_result, "output_root")))
+    native_root = adapter_output_root
     native_store = ArtifactStore(native_root)
-    native_ledger = EventLedger(
-        native_root / "events" / f"{protocol_task_id}.jsonl"
+    native_ledger, events = _validated_native_event_ledger(
+        native_root=native_root,
+        protocol_runtime=protocol_runtime,
     )
-    events = tuple(native_ledger.read_all())
-    if not events or not native_ledger.verify_hash_chain():
-        raise ValueError("canonical direct evidence native ledger is invalid")
     native_runtime = project_protocol_run(
         run_id=execution_id,
         task_id=protocol_task_id,
@@ -5536,25 +7671,15 @@ def _capture_canonical_direct_evidence(
                         )
                     ] = converted
         source_locators = tuple(locator_values[key] for key in sorted(locator_values))
-        wrapper_values = tuple(
-            _required_field(event, "payload").get("current_wrapper_ref")
-            for event in events
-            if _optional_field(event, "event_type") == "TRACE_DELIVERY_COMMITTED.v1"
-        )
-        wrapper_refs = tuple(
-            ArtifactRef.from_dict(value)
-            for value in wrapper_values
-            if isinstance(value, Mapping)
-        )
-        if not wrapper_refs:
-            raise ValueError("canonical trace resource book is missing")
         with collector.lock:
             current_wrappers = collector.current_trace_wrappers_by_root.get(
                 row.preregistered_root_run_id,
                 (),
             )
-        if len(current_wrappers) != len(wrapper_refs):
-            raise ValueError("canonical trace wrapper projection is incomplete")
+        wrapper_refs = _select_current_trace_wrapper_refs(
+            events=events,
+            current_wrappers=current_wrappers,
+        )
         trace_resource_book_ref = _persist_trace_resource_book(
             native_store=native_store,
             canonical_store=canonical_store,
@@ -5609,6 +7734,8 @@ def _capture_canonical_direct_evidence(
             run_id=execution_id,
             task_id=protocol_task_id,
             root_unit_id=root_unit_id,
+            row=row,
+            task=task,
         ),
     }
     with collector.lock:
@@ -5642,7 +7769,9 @@ def _root_scheduler_worker_count(
 ) -> int:
     """在线检查按权威计划逐 root 调度，协议 worker_count 仍保留在 condition 中。"""
 
-    if online_root_callback_factory is not None:
+    if online_root_callback_factory is not None and bool(
+        getattr(online_root_callback_factory, "serialize_roots", True)
+    ):
         return 1
     return int(protocol_worker_count)
 
@@ -5792,6 +7921,10 @@ class _FormalConditionExecutionCallback:
                     task=outcome.task,
                     adapter_result=outcome.adapter_result,
                     adapter_root=outcome.adapter_root,
+                    adapter_output_root=_required_validated_adapter_output_root(
+                        outcome
+                    ),
+                    hard_limit_consumption=outcome.hard_limit_consumption,
                     extra_events=(),
                 )
 
@@ -5923,16 +8056,23 @@ class _FormalConditionExecutionCallback:
             )
             if online_hook is not None and not callable(online_hook):
                 raise TypeError("online root callback factory must return a callable hook")
-        reservation = (
-            _root_budget_reservation(
+        if _has_resource_hard_limit(self.hard_limits):
+            exact_exp5_reservation = _exp5_root_budget_reservation(
+                condition=condition,
+                selection=selection,
+                case_id=case_id,
+                online_hook=online_hook,
+                online_root_callback_factory=self.online_root_callback_factory,
+                config_currency=_config_currency(self.config),
+            )
+            reservation = exact_exp5_reservation or _root_budget_reservation(
                 case=case,
                 request_limits=self.request_limits,
                 budget=self.budget,
                 currency=_config_currency(self.config),
             )
-            if _has_resource_hard_limit(self.hard_limits)
-            else _RootBudgetReservation(0, 0, 0.0)
-        )
+        else:
+            reservation = _RootBudgetReservation(0, 0, 0.0)
         with self.usage_lock:
             if not _reserve_hard_limit_capacity(
                 usage=self.usage,
@@ -5945,37 +8085,206 @@ class _FormalConditionExecutionCallback:
                     adapter_root=self.output_root,
                     worker_id=worker_id,
                 )
-        experiment_records: list[dict[str, Any]] = []
-        post_raw_output_hook = _compose_official_runtime_hooks(
-            online_hook,
-            self._exp3_post_raw_output_hook(
+        reservation_settled = False
+        root_hard_limit_consumption: dict[str, Any] | None = None
+        root_provider_accounting: dict[str, Any] | None = None
+
+        def settle_once(
+            *,
+            accounting: PaperProviderExceptionAccounting | None = None,
+            provider_attempt_count: int = 0,
+            total_tokens: int = 0,
+            total_cost_estimate: float = 0.0,
+            cost_estimate_currency: str | None = None,
+            cost_estimate_status: str | None = None,
+            usage_missing_count: int | None = None,
+            hard_limit_provider_attempt_count: int | None = None,
+            hard_limit_total_tokens: int | None = None,
+            hard_limit_total_cost_estimate: float | None = None,
+            hard_limit_cost_estimate_currency: str | None = None,
+        ) -> None:
+            nonlocal reservation_settled, root_hard_limit_consumption
+            nonlocal root_provider_accounting
+            if reservation_settled:
+                return
+            with self.usage_lock:
+                if accounting is not None:
+                    _settle_provider_exception_accounting(
+                        usage=self.usage,
+                        reservation=reservation,
+                        accounting=accounting,
+                    )
+                    hard_provider_count = accounting.provider_attempt_count
+                    hard_tokens = (
+                        accounting.conservative_total_tokens
+                        if accounting.cost_estimate_status == "usage_missing"
+                        else accounting.total_tokens
+                    )
+                    hard_cost = (
+                        accounting.conservative_total_cost_estimate
+                        if accounting.cost_estimate_status == "usage_missing"
+                        else accounting.total_cost_estimate
+                    )
+                    hard_currency = accounting.cost_estimate_currency
+                    hard_missing_count = accounting.usage_missing_count
+                    actual_provider_count = accounting.provider_attempt_count
+                    actual_tokens = accounting.total_tokens
+                    actual_cost = accounting.total_cost_estimate
+                    actual_currency = accounting.cost_estimate_currency
+                    actual_status = accounting.cost_estimate_status
+                else:
+                    _settle_hard_limit_reservation(
+                        usage=self.usage,
+                        reservation=reservation,
+                        provider_attempt_count=provider_attempt_count,
+                        total_tokens=total_tokens,
+                        total_cost_estimate=total_cost_estimate,
+                        cost_estimate_currency=cost_estimate_currency,
+                        cost_estimate_status=cost_estimate_status,
+                        usage_missing_count=usage_missing_count,
+                        hard_limit_provider_attempt_count=(
+                            hard_limit_provider_attempt_count
+                        ),
+                        hard_limit_total_tokens=hard_limit_total_tokens,
+                        hard_limit_total_cost_estimate=(
+                            hard_limit_total_cost_estimate
+                        ),
+                        hard_limit_cost_estimate_currency=(
+                            hard_limit_cost_estimate_currency
+                        ),
+                    )
+                    hard_provider_count = (
+                        provider_attempt_count
+                        if hard_limit_provider_attempt_count is None
+                        else hard_limit_provider_attempt_count
+                    )
+                    hard_tokens = (
+                        total_tokens
+                        if hard_limit_total_tokens is None
+                        else hard_limit_total_tokens
+                    )
+                    hard_cost = (
+                        total_cost_estimate
+                        if hard_limit_total_cost_estimate is None
+                        else hard_limit_total_cost_estimate
+                    )
+                    hard_currency = (
+                        cost_estimate_currency
+                        if hard_limit_cost_estimate_currency is None
+                        else hard_limit_cost_estimate_currency
+                    )
+                    hard_missing_count = usage_missing_count or 0
+                    actual_provider_count = provider_attempt_count
+                    actual_tokens = (
+                        None
+                        if cost_estimate_status == "usage_missing"
+                        else total_tokens
+                    )
+                    actual_cost = (
+                        None
+                        if cost_estimate_status == "usage_missing"
+                        else total_cost_estimate
+                    )
+                    actual_currency = cost_estimate_currency
+                    actual_status = cost_estimate_status
+                if (
+                    hard_tokens is None
+                    or hard_cost is None
+                    or isinstance(hard_provider_count, bool)
+                    or not isinstance(hard_provider_count, int)
+                ):
+                    raise ValueError("root hard-limit settlement projection is invalid")
+                root_hard_limit_consumption = (
+                    _root_hard_limit_consumption_body(
+                        provider_attempt_count=hard_provider_count,
+                        total_tokens=hard_tokens,
+                        total_cost_estimate=float(hard_cost),
+                        cost_estimate_currency=hard_currency,
+                        usage_missing_count=hard_missing_count,
+                    )
+                )
+                root_provider_accounting = {
+                    "provider_attempt_count": actual_provider_count,
+                    "total_tokens": actual_tokens,
+                    "total_cost_estimate": actual_cost,
+                    "cost_estimate_currency": actual_currency,
+                    "cost_estimate_status": actual_status,
+                    "usage_missing_count": hard_missing_count,
+                }
+                reservation_settled = True
+
+        def settle_conservative_missing(
+            *,
+            observed_provider_attempt_count: int | None = 0,
+        ) -> None:
+            numeric_provider_attempt_count = (
+                observed_provider_attempt_count
+                if observed_provider_attempt_count is not None
+                else 0
+            )
+            settle_once(
+                provider_attempt_count=numeric_provider_attempt_count,
+                total_tokens=0,
+                total_cost_estimate=0.0,
+                cost_estimate_currency=None,
+                cost_estimate_status="usage_missing",
+                usage_missing_count=max(1, numeric_provider_attempt_count),
+                hard_limit_provider_attempt_count=reservation.provider_attempt_count,
+                hard_limit_total_tokens=reservation.total_tokens,
+                hard_limit_total_cost_estimate=reservation.total_cost_estimate,
+                hard_limit_cost_estimate_currency=reservation.currency,
+            )
+            if (
+                observed_provider_attempt_count is None
+                and root_provider_accounting is not None
+            ):
+                root_provider_accounting["provider_attempt_count"] = None
+
+        def settlement_diagnostics(
+            extra: Mapping[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            diagnostics = dict(extra or {})
+            if root_hard_limit_consumption is not None:
+                diagnostics["hard_limit_consumption"] = dict(
+                    root_hard_limit_consumption
+                )
+            if root_provider_accounting is not None:
+                diagnostics["provider_accounting"] = dict(
+                    root_provider_accounting
+                )
+            return diagnostics
+
+        try:
+            experiment_records: list[dict[str, Any]] = []
+            post_raw_output_hook = _compose_official_runtime_hooks(
+                online_hook,
+                self._exp3_post_raw_output_hook(
+                    condition=condition,
+                    case_id=case_id,
+                    callback_kwargs=callback_kwargs,
+                    runtime_records=experiment_records,
+                ),
+            )
+            ablation_mode = None
+            if condition.experiment_id == "exp4_real_ai_protocol_ablation":
+                mode_config = callback_kwargs.get("mode_config")
+                ablation_mode = str(
+                    _optional_field(mode_config, "ablation_mode")
+                    or condition.ablation_mode
+                )
+            worker_termination_policy = self._exp3_worker_termination_policy(
                 condition=condition,
                 case_id=case_id,
                 callback_kwargs=callback_kwargs,
-                runtime_records=experiment_records,
-            ),
-        )
-        ablation_mode = None
-        if condition.experiment_id == "exp4_real_ai_protocol_ablation":
-            mode_config = callback_kwargs.get("mode_config")
-            ablation_mode = str(
-                _optional_field(mode_config, "ablation_mode")
-                or condition.ablation_mode
             )
-        worker_termination_policy = self._exp3_worker_termination_policy(
-            condition=condition,
-            case_id=case_id,
-            callback_kwargs=callback_kwargs,
-        )
-        trace_runtime = (
-            self.trace_context.runtime_for(
-                condition_id=condition.condition_id,
-                case_id=case_id,
+            trace_runtime = (
+                self.trace_context.runtime_for(
+                    condition_id=condition.condition_id,
+                    case_id=case_id,
+                )
+                if self.trace_context is not None
+                else None
             )
-            if self.trace_context is not None
-            else None
-        )
-        try:
             adapter_result = dispatch_paper_case(
                 case=case,
                 condition=condition,
@@ -5991,35 +8300,305 @@ class _FormalConditionExecutionCallback:
                 worker_termination_policy=worker_termination_policy,
                 trace_context=trace_runtime,
             )
-        except (RuntimeError, OSError, TimeoutError) as error:
-            with self.usage_lock:
-                _settle_hard_limit_reservation(
-                    usage=self.usage,
-                    reservation=reservation,
+            adapter_output_root = _validated_adapter_output_root(
+                adapter_result=adapter_result,
+                expected_output_root=adapter_root / case_id,
+            )
+            task = _required_field(adapter_result, "task_result")
+            provider_attempt_count = _optional_field(task, "provider_attempt_count")
+            total_tokens = _optional_field(task, "total_tokens")
+            cost_estimate = _optional_field(task, "cost_estimate")
+            cost_estimate_currency = _optional_field(task, "cost_estimate_currency")
+            cost_estimate_status = _optional_field(task, "cost_estimate_status")
+            attempts: tuple[Any, ...] = ()
+            trace_counts: tuple[int, int, int] | None = None
+
+            def observed_provider_usage_diagnostics() -> dict[str, Any]:
+                raw_attempt_sequence = _optional_field(
+                    adapter_result, "attempt_results"
                 )
-            raise PaperInfrastructureBlockedError(
-                str(error),
-                evidence_integrity=PaperEvidenceIntegrity.INVALID,
-                failure_stage="adapter_runtime",
-                failure_kind=type(error).__name__,
-                condition_id=condition.condition_id,
-                task_id=case_id,
-            ) from error
-        task = _required_field(adapter_result, "task_result")
-        provider_attempt_count = int(
-            _required_field(task, "provider_attempt_count")
-        )
-        total_tokens = int(_optional_field(task, "total_tokens") or 0)
-        cost_estimate = float(_optional_field(task, "cost_estimate") or 0.0)
-        cost_estimate_currency = _optional_field(task, "cost_estimate_currency")
-        cost_estimate_status = _optional_field(task, "cost_estimate_status")
-        with self.usage_lock:
-            _settle_hard_limit_reservation(
-                usage=self.usage,
-                reservation=reservation,
+                if raw_attempt_sequence is None:
+                    raw_attempt_sequence = _optional_field(adapter_result, "attempts")
+                if isinstance(raw_attempt_sequence, Sequence) and not isinstance(
+                    raw_attempt_sequence, (str, bytes, bytearray)
+                ):
+                    raw_attempt_counts: Any = [
+                        _optional_field(attempt, "provider_attempt_count")
+                        for attempt in raw_attempt_sequence
+                    ]
+                else:
+                    raw_attempt_counts = raw_attempt_sequence
+                return {
+                    "provider_attempt_count": _as_json(provider_attempt_count),
+                    "total_tokens": _as_json(total_tokens),
+                    "total_cost_estimate": _as_json(cost_estimate),
+                    "attempt_provider_attempt_counts": _as_json(
+                        raw_attempt_counts
+                    ),
+                    "runtime_current_provider_call_count": _as_json(
+                        _optional_field(
+                            trace_runtime, "current_provider_call_count"
+                        )
+                    ),
+                    "trace_counts": (
+                        list(trace_counts) if trace_counts is not None else None
+                    ),
+                }
+
+            try:
+                provider_attempt_count = _required_field(
+                    task, "provider_attempt_count"
+                )
+                attempts = _sequence_field(
+                    adapter_result, "attempt_results", "attempts"
+                )
+                if trace_runtime is not None:
+                    trace_counts = _trace_current_provider_accounting_counts(
+                        task=task,
+                        attempts=attempts,
+                        trace_runtime=trace_runtime,
+                    )
+                _validate_root_usage_observation_within_reservation(
+                    reservation=reservation,
+                    provider_attempt_count=provider_attempt_count,
+                    total_tokens=total_tokens,
+                    total_cost_estimate=cost_estimate,
+                )
+            except ValueError as accounting_error:
+                valid_observed_provider_count = (
+                    provider_attempt_count
+                    if (
+                        (trace_runtime is None or trace_counts is not None)
+                        and not isinstance(provider_attempt_count, bool)
+                        and isinstance(provider_attempt_count, int)
+                        and 0 <= provider_attempt_count
+                        <= reservation.provider_attempt_count
+                    )
+                    else None
+                )
+                settle_conservative_missing(
+                    observed_provider_attempt_count=valid_observed_provider_count,
+                )
+                raise PaperInfrastructureBlockedError(
+                    str(accounting_error),
+                    evidence_integrity=PaperEvidenceIntegrity.INVALID,
+                    failure_stage="provider_accounting",
+                    failure_kind=type(accounting_error).__name__,
+                    condition_id=condition.condition_id,
+                    task_id=case_id,
+                    diagnostics=settlement_diagnostics(
+                        {
+                            "observed_provider_usage": (
+                                observed_provider_usage_diagnostics()
+                            ),
+                        }
+                    ),
+                ) from accounting_error
+            if trace_runtime is not None:
+                try:
+                    if trace_counts != (0, 0, 0):
+                        raise ValueError(
+                            "trace current provider accounting must be explicit zero"
+                        )
+                except ValueError as accounting_error:
+                    observed_count: int | None = None
+                    if trace_counts is not None:
+                        observed_count = max(trace_counts)
+                        if observed_count > reservation.provider_attempt_count:
+                            observed_count = None
+                    settle_conservative_missing(
+                        observed_provider_attempt_count=observed_count,
+                    )
+                    raise PaperInfrastructureBlockedError(
+                        "trace current provider accounting is invalid: "
+                        f"{accounting_error}",
+                        evidence_integrity=PaperEvidenceIntegrity.INVALID,
+                        failure_stage="provider_accounting",
+                        failure_kind=type(accounting_error).__name__,
+                        condition_id=condition.condition_id,
+                        task_id=case_id,
+                        diagnostics=settlement_diagnostics(
+                            {
+                                "observed_provider_usage": (
+                                    observed_provider_usage_diagnostics()
+                                ),
+                            }
+                        ),
+                    ) from accounting_error
+                provider_attempt_count = 0
+                total_tokens = 0
+                cost_estimate = 0.0
+                cost_estimate_currency = None
+                cost_estimate_status = "not_applicable"
+                task = _as_json(task)
+                task.update(
+                    {
+                        "provider_attempt_count": 0,
+                        "total_tokens": 0,
+                        "cost_estimate": 0.0,
+                        "cost_estimate_currency": None,
+                        "cost_estimate_status": "not_applicable",
+                    }
+                )
+                settle_once(
+                    provider_attempt_count=0,
+                    total_tokens=0,
+                    total_cost_estimate=0.0,
+                    cost_estimate_currency=None,
+                    cost_estimate_status="not_applicable",
+                    usage_missing_count=0,
+                )
+            elif (
+                cost_estimate_status == "usage_missing"
+                or total_tokens is None
+                or cost_estimate is None
+            ):
+                reconcile_accounting = getattr(
+                    online_hook,
+                    "reconcile_exception_accounting",
+                    None,
+                )
+                if callable(reconcile_accounting):
+                    try:
+                        accounting = reconcile_accounting(
+                            artifact_store=ArtifactStore(adapter_output_root),
+                        )
+                    except Exception as accounting_error:
+                        settle_conservative_missing(
+                            observed_provider_attempt_count=provider_attempt_count,
+                        )
+                        raise PaperInfrastructureBlockedError(
+                            "official provider success accounting failed",
+                            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+                            failure_stage="provider_accounting",
+                            failure_kind=type(accounting_error).__name__,
+                            condition_id=condition.condition_id,
+                            task_id=case_id,
+                            diagnostics=settlement_diagnostics(
+                                {
+                                    "accounting_failure": str(accounting_error),
+                                }
+                            ),
+                        ) from accounting_error
+                    if (
+                        accounting.provider_attempt_count
+                        != provider_attempt_count
+                    ):
+                        settle_conservative_missing(
+                            observed_provider_attempt_count=(
+                                accounting.provider_attempt_count
+                            ),
+                        )
+                        raise PaperInfrastructureBlockedError(
+                            "official provider success accounting count mismatch",
+                            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+                            failure_stage="provider_accounting",
+                            failure_kind="provider_attempt_count_mismatch",
+                            condition_id=condition.condition_id,
+                            task_id=case_id,
+                            diagnostics=settlement_diagnostics(
+                                {
+                                    "provider_accounting_mismatch": {
+                                        "task_provider_attempt_count": (
+                                            provider_attempt_count
+                                        ),
+                                        "official_provider_attempt_count": (
+                                            accounting.provider_attempt_count
+                                        ),
+                                        "official_cost_estimate_status": (
+                                            accounting.cost_estimate_status
+                                        ),
+                                    },
+                                }
+                            ),
+                        )
+                    try:
+                        if (
+                            accounting.cost_estimate_status != "usage_missing"
+                            or accounting.usage_missing_count < 1
+                        ):
+                            raise ValueError(
+                                "official provider accounting contradicts "
+                                "task usage-missing evidence"
+                            )
+                        settle_once(accounting=accounting)
+                    except Exception as accounting_error:
+                        settle_conservative_missing(
+                            observed_provider_attempt_count=provider_attempt_count,
+                        )
+                        raise PaperInfrastructureBlockedError(
+                            "official provider success accounting failed",
+                            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+                            failure_stage="provider_accounting",
+                            failure_kind=type(accounting_error).__name__,
+                            condition_id=condition.condition_id,
+                            task_id=case_id,
+                            diagnostics=settlement_diagnostics(
+                                {
+                                    "accounting_failure": str(accounting_error),
+                                }
+                            ),
+                        ) from accounting_error
+                else:
+                    settle_conservative_missing(
+                        observed_provider_attempt_count=provider_attempt_count,
+                    )
+            else:
+                settle_once(
+                    provider_attempt_count=provider_attempt_count,
+                    total_tokens=total_tokens,
+                    total_cost_estimate=cost_estimate,
+                    cost_estimate_currency=(
+                        str(cost_estimate_currency)
+                        if isinstance(cost_estimate_currency, str)
+                        else None
+                    ),
+                    cost_estimate_status=(
+                        str(cost_estimate_status)
+                        if isinstance(cost_estimate_status, str)
+                        else None
+                    ),
+                )
+            eligibility = _optional_field(adapter_result, "eligibility_report")
+            if trace_runtime is not None:
+                # model/source identity 必须先通过；否则不能先生成 identity_consistent=True evidence。
+                trace_source_usage = _project_committed_trace_source_usage(
+                    adapter_result=adapter_result,
+                    adapter_root=adapter_output_root,
+                    trace_runtime=trace_runtime,
+                    condition=condition,
+                )
+                eligibility = _evaluate_trace_root_evidence(
+                    adapter_result=adapter_result,
+                    adapter_root=adapter_output_root,
+                    trace_runtime=trace_runtime,
+                    direct_collector=self.direct_collector,
+                    condition=condition,
+                    case_id=case_id,
+                )
+                task = _as_json(task)
+                task["paper_eligible"] = eligibility.paper_eligible
+                task["versioned_paper_evidence_report"] = eligibility.to_dict()
+                task["trace_source_usage"] = trace_source_usage
+            (
+                provider_latency_ms,
+                provider_latency_evidence_status,
+                provider_latency_unavailable_reason,
+            ) = _provider_latency_observation(
+                attempts=attempts,
+                expected_provider_attempt_count=provider_attempt_count,
+            )
+            return _RootExecutionOutcome(
+                case_id=case_id,
+                root_status=_status_value(_required_field(task, "root_status")),
+                adapter_root=adapter_root,
+                worker_id=worker_id,
+                adapter_output_root=adapter_output_root,
+                task=task,
+                adapter_result=adapter_result,
                 provider_attempt_count=provider_attempt_count,
                 total_tokens=total_tokens,
-                total_cost_estimate=cost_estimate,
+                cost_estimate=cost_estimate,
                 cost_estimate_currency=(
                     str(cost_estimate_currency)
                     if isinstance(cost_estimate_currency, str)
@@ -6030,74 +8609,69 @@ class _FormalConditionExecutionCallback:
                     if isinstance(cost_estimate_status, str)
                     else None
                 ),
-            )
-        eligibility = _optional_field(adapter_result, "eligibility_report")
-        attempts = _sequence_field(adapter_result, "attempt_results", "attempts")
-        if trace_runtime is not None:
-            # model/source identity 必须先通过；否则不能先生成 identity_consistent=True evidence。
-            trace_source_usage = _project_committed_trace_source_usage(
-                adapter_result=adapter_result,
-                adapter_root=adapter_root,
-                trace_runtime=trace_runtime,
-                condition=condition,
-            )
-            eligibility = _evaluate_trace_root_evidence(
-                adapter_result=adapter_result,
-                adapter_root=adapter_root,
-                trace_runtime=trace_runtime,
-                direct_collector=self.direct_collector,
-                condition=condition,
-                case_id=case_id,
-            )
-            task = _as_json(task)
-            task["paper_eligible"] = eligibility.paper_eligible
-            task["versioned_paper_evidence_report"] = eligibility.to_dict()
-            task["trace_source_usage"] = trace_source_usage
-        (
-            provider_latency_ms,
-            provider_latency_evidence_status,
-            provider_latency_unavailable_reason,
-        ) = _provider_latency_observation(
-            attempts=attempts,
-            expected_provider_attempt_count=provider_attempt_count,
-        )
-        return _RootExecutionOutcome(
-            case_id=case_id,
-            root_status=_status_value(_required_field(task, "root_status")),
-            adapter_root=adapter_root,
-            worker_id=worker_id,
-            task=task,
-            adapter_result=adapter_result,
-            provider_attempt_count=provider_attempt_count,
-            total_tokens=total_tokens,
-            cost_estimate=cost_estimate,
-            cost_estimate_currency=(
-                str(cost_estimate_currency)
-                if isinstance(cost_estimate_currency, str)
-                else None
-            ),
-            cost_estimate_status=(
-                str(cost_estimate_status)
-                if isinstance(cost_estimate_status, str)
-                else None
-            ),
-            paper_eligible=_optional_field(eligibility, "paper_eligible") is True,
-            provider_latency_ms=provider_latency_ms,
-            provider_latency_evidence_status=provider_latency_evidence_status,
-            provider_latency_unavailable_reason=(
-                provider_latency_unavailable_reason
-            ),
-            provider_error_kind=next(
-                (
-                    str(_optional_field(attempt, "error_kind"))
-                    for attempt in attempts
-                    if _optional_field(attempt, "error_kind") is not None
+                paper_eligible=_optional_field(eligibility, "paper_eligible") is True,
+                provider_latency_ms=provider_latency_ms,
+                provider_latency_evidence_status=provider_latency_evidence_status,
+                provider_latency_unavailable_reason=(
+                    provider_latency_unavailable_reason
                 ),
-                None,
-            ),
-            experiment_records=tuple(experiment_records),
-            matched_baseline_evidence_ref=matched_baseline_evidence_ref,
-        )
+                provider_error_kind=next(
+                    (
+                        str(_optional_field(attempt, "error_kind"))
+                        for attempt in attempts
+                        if _optional_field(attempt, "error_kind") is not None
+                    ),
+                    None,
+                ),
+                experiment_records=tuple(experiment_records),
+                matched_baseline_evidence_ref=matched_baseline_evidence_ref,
+                hard_limit_consumption=root_hard_limit_consumption,
+            )
+        except Exception as error:
+            if not reservation_settled:
+                reconcile_accounting = getattr(
+                    online_hook,
+                    "reconcile_exception_accounting",
+                    None,
+                )
+                if callable(reconcile_accounting):
+                    try:
+                        accounting = reconcile_accounting(
+                            artifact_store=ArtifactStore(adapter_root / case_id),
+                        )
+                        settle_once(accounting=accounting)
+                    except Exception as accounting_error:
+                        settle_conservative_missing()
+                        raise PaperInfrastructureBlockedError(
+                            "official provider exception accounting failed",
+                            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+                            failure_stage="provider_accounting",
+                            failure_kind=type(accounting_error).__name__,
+                            condition_id=condition.condition_id,
+                            task_id=case_id,
+                            diagnostics=settlement_diagnostics(
+                                {
+                                    "adapter_failure_kind": type(error).__name__,
+                                    "accounting_failure": str(accounting_error),
+                                }
+                            ),
+                        ) from accounting_error
+                elif self.trace_context is not None:
+                    settle_once()
+                else:
+                    settle_conservative_missing()
+            if isinstance(error, PaperInfrastructureBlockedError):
+                error.diagnostics = settlement_diagnostics(error.diagnostics)
+                raise
+            raise PaperInfrastructureBlockedError(
+                str(error),
+                evidence_integrity=PaperEvidenceIntegrity.INVALID,
+                failure_stage="adapter_runtime",
+                failure_kind=type(error).__name__,
+                condition_id=condition.condition_id,
+                task_id=case_id,
+                diagnostics=settlement_diagnostics(),
+            ) from error
 
     def _prepare_exp3_trace_reference(
         self,
@@ -6788,6 +9362,11 @@ class _FormalConditionExecutionCallback:
             task_id=outcome.case_id,
         )
         task_body.setdefault("paper_eligible", outcome.paper_eligible)
+        adapter_output_root = _required_validated_adapter_output_root(outcome)
+        identity_task_body = dict(task_body)
+        protocol_task_id = identity_task_body.get("protocol_task_id")
+        if isinstance(protocol_task_id, str) and protocol_task_id:
+            identity_task_body["task_id"] = protocol_task_id
         strategy = run_exp5_identity_strategy(
             attempts=attempts,
             approved_identity={
@@ -6797,8 +9376,8 @@ class _FormalConditionExecutionCallback:
             },
             condition_id=condition.condition_id,
             cohort_member_id=str(condition.cohort_member_id),
-            adapter_root=outcome.adapter_root,
-            task=task_body,
+            adapter_root=adapter_output_root,
+            task=identity_task_body,
             transport_kind=("ai_api" if self.real_transport else "capturing"),
             model_policy=str(condition.model_policy),
             pilot_only=bool(self.execution_classification),
@@ -6944,6 +9523,8 @@ class _FormalConditionExecutionCallback:
         task: Any,
         adapter_result: Any,
         adapter_root: Path,
+        adapter_output_root: Path,
+        hard_limit_consumption: Mapping[str, Any] | None = None,
         extra_events: Sequence[Mapping[str, Any]] = (),
     ) -> bool:
         task_body = _record_with_context(
@@ -6951,6 +9532,10 @@ class _FormalConditionExecutionCallback:
             condition=condition,
             task_id=task_id,
         )
+        if hard_limit_consumption is not None:
+            task_body["hard_limit_consumption"] = _as_json(
+                hard_limit_consumption
+            )
         run_evidence = _optional_field(adapter_result, "run_evidence")
         protocol_runtime = (
             run_evidence.get("protocol_runtime")
@@ -7018,6 +9603,29 @@ class _FormalConditionExecutionCallback:
                     }
                 ),
             ).to_dict()
+        )
+        _normalize_exp4_no_requeue_stuck_checkpoint_task(
+            condition=condition,
+            task=task_body,
+        )
+        _normalize_exp4_no_merge_gate_premature_merge_checkpoint_task(
+            condition=condition,
+            task=task_body,
+            run_id=(
+                protocol_runtime.get("run_id")
+                if isinstance(protocol_runtime, Mapping)
+                else None
+            ),
+            task_id=(
+                protocol_runtime.get("task_id")
+                if isinstance(protocol_runtime, Mapping)
+                else None
+            ),
+            root_unit_id=(
+                protocol_runtime.get("root_unit_id")
+                if isinstance(protocol_runtime, Mapping)
+                else None
+            ),
         )
         versioned_report = task_body.get("versioned_paper_evidence_report")
         trace_evidence_reasons = (
@@ -7135,14 +9743,15 @@ class _FormalConditionExecutionCallback:
                 suite_root=self.evidence_store.output_root,
                 condition=condition,
                 case_id=task_id,
-                task=task,
+                task=task_body,
                 adapter_result=adapter_result,
+                adapter_output_root=adapter_output_root,
             )
         artifact_refs = _materialize_artifacts(
             suite_root=self.evidence_store.output_root,
             condition=condition,
             task_id=task_id,
-            adapter_root=adapter_root,
+            adapter_root=adapter_output_root,
             source_refs=_adapter_artifact_refs(
                 task_body,
                 attempts,
@@ -7369,6 +9978,9 @@ class _FormalConditionExecutionCallback:
                     ),
                     "cost_estimate_status": self.usage.cost_estimate_status(),
                     "usage_missing_count": self.usage.usage_missing_count,
+                    "hard_limit_consumption": _hard_limit_consumption_body(
+                        self.usage
+                    ),
                 },
             },
         )
@@ -7417,19 +10029,126 @@ class _FormalConditionExecutionCallback:
         )
 
 
+def _decimal_cost(value: Any, label: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise ValueError(f"{label} must be a nonnegative number")
+    normalized = value if isinstance(value, Decimal) else Decimal(str(value))
+    if not normalized.is_finite() or normalized < 0:
+        raise ValueError(f"{label} must be a nonnegative number")
+    return normalized
+
+
+def _canonical_decimal_cost_text(value: Decimal) -> str:
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _decimal_cost_from_canonical_text(value: Any, label: str) -> Decimal:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a canonical decimal string")
+    try:
+        normalized = Decimal(value)
+    except Exception as exc:
+        raise ValueError(f"{label} must be a canonical decimal string") from exc
+    if (
+        not normalized.is_finite()
+        or normalized < 0
+        or value != _canonical_decimal_cost_text(normalized)
+    ):
+        raise ValueError(f"{label} must be a canonical decimal string")
+    return normalized
+
+
+def _hard_limit_decimal_cost_projection(
+    body: Mapping[str, Any],
+    label: str,
+) -> tuple[Decimal, dict[str, Decimal]]:
+    raw_total = body.get("total_cost_estimate")
+    raw_costs = body.get("cost_estimate_by_currency")
+    if not isinstance(raw_costs, Mapping):
+        raise ValueError(f"{label} currency costs are invalid")
+    numeric_total = _decimal_cost(raw_total, f"{label} total cost")
+    numeric_costs: dict[str, Decimal] = {}
+    for currency, value in raw_costs.items():
+        if not isinstance(currency, str) or not currency:
+            raise ValueError(f"{label} currency costs are invalid")
+        numeric_costs[currency] = _decimal_cost(value, f"{label} currency cost")
+
+    raw_decimal_total = body.get("total_cost_estimate_decimal")
+    raw_decimal_costs = body.get("cost_estimate_decimal_by_currency")
+    if raw_decimal_total is None and raw_decimal_costs is None:
+        return numeric_total, numeric_costs
+    if raw_decimal_total is None or not isinstance(raw_decimal_costs, Mapping):
+        raise ValueError(f"{label} decimal authority is incomplete")
+    exact_total = _decimal_cost_from_canonical_text(
+        raw_decimal_total,
+        f"{label} total decimal cost",
+    )
+    exact_costs: dict[str, Decimal] = {}
+    for currency, value in raw_decimal_costs.items():
+        if not isinstance(currency, str) or not currency:
+            raise ValueError(f"{label} decimal currency costs are invalid")
+        exact_costs[currency] = _decimal_cost_from_canonical_text(
+            value,
+            f"{label} decimal currency cost",
+        )
+    if set(numeric_costs) != set(exact_costs):
+        raise ValueError(f"{label} numeric/decimal currency identities drifted")
+    if float(exact_total) != float(numeric_total) or any(
+        float(exact_costs[currency]) != float(numeric_costs[currency])
+        for currency in exact_costs
+    ):
+        raise ValueError(f"{label} numeric/decimal cost projections drifted")
+    if len(exact_costs) == 1 and next(iter(exact_costs.values())) != exact_total:
+        raise ValueError(f"{label} decimal total cost is inconsistent")
+    return exact_total, exact_costs
+
+
 @dataclass
 class _UsageTotals:
-    """当前 runner 进程内已经消费的受限资源。"""
+    """区分可报告 actual 与 hard-limit conservative consumption。"""
 
     provider_attempt_count: int = 0
     total_tokens: int = 0
     total_cost_estimate: float = 0.0
     cost_estimate_by_currency: dict[str, float] = field(default_factory=dict)
     usage_missing_count: int = 0
+    hard_limit_provider_attempt_count: int = 0
+    hard_limit_total_tokens: int = 0
+    hard_limit_total_cost_estimate: Decimal = field(
+        default_factory=lambda: Decimal("0")
+    )
+    hard_limit_cost_estimate_by_currency: dict[str, Decimal] = field(
+        default_factory=dict
+    )
     reserved_provider_attempt_count: int = 0
     reserved_total_tokens: int = 0
-    reserved_total_cost_estimate: float = 0.0
-    reserved_cost_estimate_by_currency: dict[str, float] = field(default_factory=dict)
+    reserved_total_cost_estimate: Decimal = field(
+        default_factory=lambda: Decimal("0")
+    )
+    reserved_cost_estimate_by_currency: dict[str, Decimal] = field(
+        default_factory=dict
+    )
+
+    def __post_init__(self) -> None:
+        self.hard_limit_total_cost_estimate = _decimal_cost(
+            self.hard_limit_total_cost_estimate,
+            "hard-limit total cost",
+        )
+        self.reserved_total_cost_estimate = _decimal_cost(
+            self.reserved_total_cost_estimate,
+            "reserved total cost",
+        )
+        self.hard_limit_cost_estimate_by_currency = {
+            currency: _decimal_cost(value, "hard-limit currency cost")
+            for currency, value in self.hard_limit_cost_estimate_by_currency.items()
+        }
+        self.reserved_cost_estimate_by_currency = {
+            currency: _decimal_cost(value, "reserved currency cost")
+            for currency, value in self.reserved_cost_estimate_by_currency.items()
+        }
 
     def reportable_total_cost_estimate(self) -> float:
         if len(self.cost_estimate_by_currency) > 1:
@@ -7448,12 +10167,97 @@ class _UsageTotals:
         return "single_currency_or_legacy"
 
 
+def _root_hard_limit_consumption_body(
+    *,
+    provider_attempt_count: int,
+    total_tokens: int,
+    total_cost_estimate: Decimal | float,
+    cost_estimate_currency: str | None,
+    usage_missing_count: int,
+) -> dict[str, Any]:
+    exact_cost = _decimal_cost(total_cost_estimate, "hard-limit total cost")
+    exact_cost_text = _canonical_decimal_cost_text(exact_cost)
+    return {
+        "schema_version": "tokenshare.paper_hard_limit_consumption.v1",
+        "provider_attempt_count": provider_attempt_count,
+        "total_tokens": total_tokens,
+        "total_cost_estimate": float(exact_cost),
+        "total_cost_estimate_decimal": exact_cost_text,
+        "cost_estimate_by_currency": (
+            {cost_estimate_currency: float(exact_cost)}
+            if cost_estimate_currency is not None
+            else {}
+        ),
+        "cost_estimate_decimal_by_currency": (
+            {cost_estimate_currency: exact_cost_text}
+            if cost_estimate_currency is not None
+            else {}
+        ),
+        "usage_missing_count": usage_missing_count,
+    }
+
+
+def _hard_limit_consumption_body(usage: _UsageTotals) -> dict[str, Any]:
+    """持久化独立上界域；该域不得被当作 provider actual。"""
+
+    hard_total_cost = (
+        next(iter(usage.hard_limit_cost_estimate_by_currency.values()))
+        if len(usage.hard_limit_cost_estimate_by_currency) == 1
+        else usage.hard_limit_total_cost_estimate
+    )
+    body = _root_hard_limit_consumption_body(
+        provider_attempt_count=usage.hard_limit_provider_attempt_count,
+        total_tokens=usage.hard_limit_total_tokens,
+        total_cost_estimate=hard_total_cost,
+        cost_estimate_currency=(
+            next(iter(usage.hard_limit_cost_estimate_by_currency))
+            if len(usage.hard_limit_cost_estimate_by_currency) == 1
+            else None
+        ),
+        usage_missing_count=usage.usage_missing_count,
+    )
+    if len(usage.hard_limit_cost_estimate_by_currency) > 1:
+        body["cost_estimate_by_currency"] = dict(
+            sorted(
+                (currency, float(value))
+                for currency, value in usage.hard_limit_cost_estimate_by_currency.items()
+            )
+        )
+        body["cost_estimate_decimal_by_currency"] = dict(
+            sorted(
+                (currency, _canonical_decimal_cost_text(value))
+                for currency, value in usage.hard_limit_cost_estimate_by_currency.items()
+            )
+        )
+    return body
+
+
+def _paper_budget_ref(
+    *,
+    budget: PaperBudgetResult,
+    budget_approval: Mapping[str, Any],
+    usage: _UsageTotals,
+) -> dict[str, Any]:
+    return {
+        "budget_digest": budget.budget_digest,
+        "approval_mode": budget_approval["approval_mode"],
+        "hard_limit_consumption": _hard_limit_consumption_body(usage),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class _RootBudgetReservation:
     provider_attempt_count: int
     total_tokens: int
-    total_cost_estimate: float
+    total_cost_estimate: Decimal
     currency: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "total_cost_estimate",
+            _decimal_cost(self.total_cost_estimate, "root reservation cost"),
+        )
 
 
 def _evidence_bodies(
@@ -7603,12 +10407,30 @@ def _verified_replay_summary(
         **{f"expected_{name}": body for name, body in bodies.items()},
     )
     persisted = _suite_result_from_evidence(suite_root)
+    persisted_budget_ref = _required_replay_mapping(
+        persisted.budget_ref,
+        "formal runner budget_ref",
+    )
+    persisted_hard_consumption = _required_replay_mapping(
+        persisted_budget_ref.get("hard_limit_consumption"),
+        "formal runner hard-limit consumption",
+    )
+    canonical_hard_consumption = _hard_limit_consumption_body(
+        _usage_from_current_checkpoints(suite_root)
+    )
+    if not _hard_limit_consumption_equal(
+        persisted_hard_consumption,
+        canonical_hard_consumption,
+    ):
+        raise ValueError(
+            "formal hard-limit consumption does not match canonical tasks"
+        )
     recomputed = _independently_recomputed_suite_summary(
         suite_root=suite_root,
         bodies=bodies,
     )
     mismatched_fields = _replay_summary_mismatches(
-        persisted=persisted.to_dict(),
+        persisted=_paper_suite_result_body(persisted),
         recomputed=recomputed,
     )
     comparison = {
@@ -7622,6 +10444,32 @@ def _verified_replay_summary(
             + ", ".join(mismatched_fields)
         )
     return persisted, recomputed, comparison
+
+
+def _hard_limit_consumption_equal(
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+) -> bool:
+    for field_name in (
+        "schema_version",
+        "provider_attempt_count",
+        "total_tokens",
+        "usage_missing_count",
+    ):
+        if left.get(field_name) != right.get(field_name):
+            return False
+    try:
+        left_total, left_costs = _hard_limit_decimal_cost_projection(
+            left,
+            "persisted hard-limit consumption",
+        )
+        right_total, right_costs = _hard_limit_decimal_cost_projection(
+            right,
+            "canonical hard-limit consumption",
+        )
+    except ValueError:
+        return False
+    return left_total == right_total and left_costs == right_costs
 
 
 def _independently_recomputed_suite_summary(
@@ -8376,8 +11224,14 @@ def _formal_suite_closure_complete(
         return False
 
 
+def _required_nonnegative_int(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label} must be a nonnegative integer")
+    return value
+
+
 def _usage_from_evidence(suite_root: Path) -> _UsageTotals:
-    """resume 时以已持久化 suite result 继续累计硬预算。"""
+    """resume 时分别恢复 actual reporting 与 durable hard consumption。"""
 
     path = suite_root / "formal_runner_result.json"
     if not path.is_file():
@@ -8394,6 +11248,79 @@ def _usage_from_evidence(suite_root: Path) -> _UsageTotals:
         if isinstance(currency_costs, Mapping)
         else {}
     )
+    budget_ref = body.get("budget_ref")
+    hard_body = (
+        budget_ref.get("hard_limit_consumption")
+        if isinstance(budget_ref, Mapping)
+        else None
+    )
+    if hard_body is None:
+        if body.get("total_cost_estimate_status") == "usage_missing":
+            raise ValueError(
+                "usage-missing formal resume lacks hard-limit consumption evidence"
+            )
+        hard_provider_attempt_count = int(body.get("provider_attempt_count", 0))
+        hard_total_tokens = int(body.get("total_tokens", 0))
+        hard_currency_costs = {
+            currency: _decimal_cost(value, "hard-limit currency cost")
+            for currency, value in normalized_currency_costs.items()
+        }
+        hard_total_cost_estimate = (
+            Decimal("0")
+            if hard_currency_costs
+            else _decimal_cost(
+                body.get("total_cost_estimate", 0.0),
+                "hard-limit total cost",
+            )
+        )
+        restored_usage_missing_count = 0
+    else:
+        if (
+            not isinstance(hard_body, Mapping)
+            or hard_body.get("schema_version")
+            != "tokenshare.paper_hard_limit_consumption.v1"
+        ):
+            raise ValueError("formal hard-limit consumption evidence is invalid")
+        hard_provider_attempt_count = _required_nonnegative_int(
+            hard_body.get("provider_attempt_count"),
+            "hard-limit provider_attempt_count",
+        )
+        hard_total_tokens = _required_nonnegative_int(
+            hard_body.get("total_tokens"),
+            "hard-limit total_tokens",
+        )
+        hard_exact_total, hard_currency_costs = _hard_limit_decimal_cost_projection(
+            hard_body,
+            "formal hard-limit consumption",
+        )
+        hard_total_cost_estimate = (
+            Decimal("0")
+            if hard_currency_costs
+            else hard_exact_total
+        )
+        raw_hard_missing = hard_body.get("usage_missing_count")
+        if (
+            isinstance(raw_hard_missing, bool)
+            or not isinstance(raw_hard_missing, int)
+            or raw_hard_missing < 0
+        ):
+            raise ValueError("formal hard-limit missingness is invalid")
+        expected_missing = (
+            1 if body.get("total_cost_estimate_status") == "usage_missing" else 0
+        )
+        if (raw_hard_missing > 0) != (expected_missing > 0):
+            raise ValueError("formal hard-limit missingness drifted from actual report")
+        restored_usage_missing_count = raw_hard_missing
+        if (
+            hard_provider_attempt_count < int(body.get("provider_attempt_count", 0))
+            or hard_total_tokens < int(body.get("total_tokens", 0))
+            or hard_exact_total
+            < _decimal_cost(
+                body.get("total_cost_estimate", 0.0),
+                "actual total cost",
+            )
+        ):
+            raise ValueError("formal actual usage exceeds hard-limit consumption")
     return _UsageTotals(
         provider_attempt_count=int(body.get("provider_attempt_count", 0)),
         total_tokens=int(body.get("total_tokens", 0)),
@@ -8403,16 +11330,178 @@ def _usage_from_evidence(suite_root: Path) -> _UsageTotals:
             else float(body.get("total_cost_estimate", 0.0))
         ),
         cost_estimate_by_currency=normalized_currency_costs,
-        usage_missing_count=(
-            1 if body.get("total_cost_estimate_status") == "usage_missing" else 0
-        ),
+        usage_missing_count=restored_usage_missing_count,
+        hard_limit_provider_attempt_count=hard_provider_attempt_count,
+        hard_limit_total_tokens=hard_total_tokens,
+        hard_limit_total_cost_estimate=hard_total_cost_estimate,
+        hard_limit_cost_estimate_by_currency=hard_currency_costs,
     )
+
+
+def _is_qualified_legacy_trace_zero_provider_current(
+    *,
+    suite_manifest: Mapping[str, Any],
+    task: Mapping[str, Any],
+    attempts: Sequence[Mapping[str, Any]],
+) -> bool:
+    """仅为已冻结的旧 response-bank CURRENT 投影零 hard consumption。"""
+
+    if (
+        suite_manifest.get("schema_version")
+        != "tokenshare.paper_formal_runner.v1"
+        or suite_manifest.get("formal") is not True
+        or suite_manifest.get("pilot_only") is not False
+        or suite_manifest.get("regression_only") is not True
+        or suite_manifest.get("capturing") is not True
+        or suite_manifest.get("execution_scope") != "formal_matrix"
+    ):
+        return False
+    root_status = _status_value(task.get("root_status") or "")
+    terminal_matches = (
+        root_status == "completed"
+        and task.get("outcome_status") == "succeeded"
+    ) or (
+        root_status == "failed"
+        and task.get("outcome_status") == "failed_experimental"
+    )
+    if (
+        task.get("schema_version") != "tokenshare.paper_task_result.v2"
+        or not terminal_matches
+        or task.get("evidence_integrity") != "complete"
+        or not _is_explicit_zero_int(task.get("provider_attempt_count"))
+        or task.get("total_tokens") is not None
+        or task.get("cost_estimate") is not None
+        or task.get("cost_estimate_currency") is not None
+        or task.get("cost_estimate_status") != "usage_missing"
+        or "hard_limit_consumption" in task
+        or "provider_accounting" in task
+        or not attempts
+    ):
+        return False
+    trace_usage = task.get("trace_source_usage")
+    report = task.get("versioned_paper_evidence_report")
+    if not isinstance(trace_usage, Mapping) or not isinstance(report, Mapping):
+        return False
+    consumptions = trace_usage.get("consumptions")
+    committed_count = trace_usage.get("committed_consumption_count")
+    if (
+        trace_usage.get("schema_version")
+        != "tokenshare.paper_trace_source_usage.v1"
+        or trace_usage.get("attribution_kind") != "immutable_response_bank"
+        or not _is_explicit_zero_int(
+            trace_usage.get("current_provider_call_count")
+        )
+        or not _is_zero_decimal(trace_usage.get("current_provider_spend_cny"))
+        or isinstance(committed_count, bool)
+        or not isinstance(committed_count, int)
+        or committed_count < 1
+        or not isinstance(consumptions, list)
+        or len(consumptions) != committed_count
+        or any(
+            not _legacy_trace_consumption_has_complete_source_usage(consumption)
+            for consumption in consumptions
+        )
+    ):
+        return False
+    if (
+        report.get("schema_version")
+        != "tokenshare.paper_evidence_eligibility_report.v2"
+        or report.get("evidence_class") != "real_model_trace_protocol_run"
+        or report.get("source_classification")
+        != "approved_real_full_acquisition"
+        or not _is_explicit_zero_int(report.get("current_provider_call_count"))
+        or isinstance(report.get("source_provider_call_count"), bool)
+        or not isinstance(report.get("source_provider_call_count"), int)
+        or int(report["source_provider_call_count"]) < 1
+        or report.get("identity_consistent") is not True
+        or report.get("direct_evidence_complete") is not True
+    ):
+        return False
+    attempt_ids = [attempt.get("attempt_id") for attempt in attempts]
+    if (
+        any(
+            not isinstance(attempt_id, str) or not attempt_id
+            for attempt_id in attempt_ids
+        )
+        or len(set(attempt_ids)) != len(attempt_ids)
+    ):
+        return False
+    return all(
+        attempt.get("schema_version") == "tokenshare.paper_attempt_result.v3"
+        and attempt.get("record_scope") == "protocol"
+        and _is_explicit_zero_int(attempt.get("provider_attempt_count"))
+        and isinstance(attempt.get("provider_attempt_index"), int)
+        and not isinstance(attempt.get("provider_attempt_index"), bool)
+        and int(attempt["provider_attempt_index"]) >= 0
+        and attempt.get("attempt_status")
+        in {
+            "checker_rejected",
+            "lease_expired",
+            "provider_error",
+            "succeeded",
+            "verification_rejected",
+            "worker_died",
+        }
+        and attempt.get("total_tokens") is None
+        and attempt.get("cost_estimate") is None
+        and attempt.get("cost_estimate_currency") is None
+        and attempt.get("cost_estimate_status") == "usage_missing"
+        and "hard_limit_consumption" not in attempt
+        and "provider_accounting" not in attempt
+        for attempt in attempts
+    )
+
+
+def _is_explicit_zero_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value == 0
+
+
+def _is_zero_decimal(value: Any) -> bool:
+    try:
+        normalized = Decimal(str(value))
+    except Exception:
+        return False
+    return normalized.is_finite() and normalized == 0
+
+
+def _legacy_trace_consumption_has_complete_source_usage(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    source_attempt_id = value.get("source_acquisition_attempt_id")
+    source_roles = value.get("source_bank_roles")
+    total_tokens = value.get("total_tokens")
+    if (
+        not isinstance(source_attempt_id, str)
+        or not source_attempt_id
+        or not isinstance(source_roles, list)
+        or any(not isinstance(role, str) or not role for role in source_roles)
+        or not {"usage_status", "pricing", "acquisition_attempt"}.issubset(
+            set(source_roles)
+        )
+        or isinstance(total_tokens, bool)
+        or not isinstance(total_tokens, int)
+        or total_tokens < 0
+    ):
+        return False
+    try:
+        cost = Decimal(str(value.get("cost_estimate_cny")))
+    except Exception:
+        return False
+    return cost.is_finite() and cost >= 0
 
 
 def _usage_from_current_checkpoints(suite_root: Path) -> _UsageTotals:
     """suite finalizer 未提交时，从每个 canonical CURRENT generation 恢复 usage。"""
 
     usage = _UsageTotals()
+    hard_rows: list[Mapping[str, Any]] = []
+    accounted_experiment_task_keys: set[tuple[str, str, str, str]] = set()
+    protocol_tasks: dict[tuple[str, str, str, str], Mapping[str, Any]] = {}
+    protocol_attempts: dict[
+        tuple[str, str, str, str],
+        list[Mapping[str, Any]],
+    ] = {}
+    missing_hard_task_keys: list[tuple[str, str, str, str]] = []
     for pointer_path in sorted(
         suite_root.glob("experiments/*/runs/*/*/CURRENT.json")
     ):
@@ -8420,34 +11509,200 @@ def _usage_from_current_checkpoints(suite_root: Path) -> _UsageTotals:
         generation_root = (
             pointer_path.parent / ".generations" / str(pointer["generation_id"])
         )
+        path_parts = pointer_path.relative_to(suite_root).parts
+        experiment_id = path_parts[1]
+        condition_id = path_parts[3]
+        repeat_id = path_parts[4]
+        seen_task_keys: set[tuple[str, str, str, str]] = set()
+        for task in _read_jsonl_records(
+            generation_root / "per_task_results.jsonl"
+        ):
+            task_id = task.get("task_id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValueError("CURRENT task identity is invalid")
+            task_key = (experiment_id, condition_id, repeat_id, task_id)
+            if task_key in seen_task_keys:
+                raise ValueError("CURRENT protocol task identity is duplicate")
+            seen_task_keys.add(task_key)
+            hard_row = task.get("hard_limit_consumption")
+            if task.get("record_scope") == "protocol":
+                protocol_tasks[task_key] = task
+                protocol_attempts[task_key] = []
+                if hard_row is None:
+                    missing_hard_task_keys.append(task_key)
+            if hard_row is not None:
+                if not isinstance(hard_row, Mapping):
+                    raise ValueError(
+                        "CURRENT hard-limit consumption must be a mapping"
+                    )
+                hard_rows.append(hard_row)
+                if task.get("record_scope") != "protocol":
+                    if (
+                        _status_value(task.get("root_status") or "") != "blocked"
+                        or task.get("outcome_status") != "blocked_dependency"
+                    ):
+                        raise ValueError(
+                            "CURRENT experiment hard-limit consumption is not "
+                            "a settled blocked root"
+                        )
+                    accounted_experiment_task_keys.add(task_key)
+            if task.get("cost_estimate_status") == "usage_missing":
+                usage.usage_missing_count += 1
         for attempt in _read_jsonl_records(
             generation_root / "per_attempt_results.jsonl"
         ):
-            if attempt.get("record_scope") != "protocol":
+            attempt_task_id = attempt.get("task_id")
+            attempt_key = (
+                experiment_id,
+                condition_id,
+                repeat_id,
+                str(attempt_task_id),
+            )
+            is_protocol = attempt.get("record_scope") == "protocol"
+            is_accounted_block = attempt_key in accounted_experiment_task_keys
+            if not is_protocol and not is_accounted_block:
                 continue
-            usage.provider_attempt_count += _persisted_provider_attempt_count(
-                (attempt,)
-            )
-            total_tokens = attempt.get("total_tokens", 0)
-            if isinstance(total_tokens, int) and not isinstance(total_tokens, bool):
-                usage.total_tokens += max(0, total_tokens)
-            cost_estimate = attempt.get("cost_estimate", 0.0)
-            normalized_cost = (
-                float(cost_estimate)
-                if isinstance(cost_estimate, (int, float))
-                and not isinstance(cost_estimate, bool)
-                else 0.0
-            )
-            currency = attempt.get("cost_estimate_currency")
-            if isinstance(currency, str) and currency:
-                usage.cost_estimate_by_currency[currency] = (
-                    usage.cost_estimate_by_currency.get(currency, 0.0)
-                    + normalized_cost
+            if is_protocol:
+                if attempt_key not in protocol_attempts:
+                    raise ValueError(
+                        "CURRENT protocol attempt has no canonical task"
+                    )
+                protocol_attempts[attempt_key].append(attempt)
+                usage.provider_attempt_count += _persisted_provider_attempt_count(
+                    (attempt,)
                 )
             else:
-                usage.total_cost_estimate += normalized_cost
-            if attempt.get("cost_estimate_status") == "usage_missing":
-                usage.usage_missing_count += 1
+                blocked_provider_count = attempt.get("provider_attempt_count")
+                if (
+                    blocked_provider_count is None
+                    and attempt.get("cost_estimate_status") == "usage_missing"
+                ):
+                    # blocked observation 无法合法聚合时保持 nullable；missingness
+                    # 与逐 root hard row 才是保守 authority，不能伪造成 exact zero。
+                    blocked_provider_count = 0
+                usage.provider_attempt_count += _required_nonnegative_int(
+                    blocked_provider_count,
+                    "CURRENT blocked provider_attempt_count",
+                )
+            total_tokens = attempt.get("total_tokens", 0)
+            if total_tokens is not None and (
+                isinstance(total_tokens, bool) or not isinstance(total_tokens, int)
+            ):
+                raise ValueError("CURRENT provider tokens are invalid")
+            if isinstance(total_tokens, int) and not isinstance(total_tokens, bool):
+                if total_tokens < 0:
+                    raise ValueError("CURRENT provider tokens are invalid")
+                usage.total_tokens += max(0, total_tokens)
+            cost_estimate = attempt.get("cost_estimate")
+            if cost_estimate is not None:
+                if (
+                    isinstance(cost_estimate, bool)
+                    or not isinstance(cost_estimate, (int, float))
+                    or cost_estimate < 0
+                ):
+                    raise ValueError("CURRENT provider cost is invalid")
+                normalized_cost = float(cost_estimate)
+                currency = attempt.get("cost_estimate_currency")
+                if isinstance(currency, str) and currency:
+                    usage.cost_estimate_by_currency[currency] = (
+                        usage.cost_estimate_by_currency.get(currency, 0.0)
+                        + normalized_cost
+                    )
+                else:
+                    usage.total_cost_estimate += normalized_cost
+    if missing_hard_task_keys:
+        if hard_rows:
+            raise ValueError(
+                "CURRENT protocol task is missing hard-limit consumption"
+            )
+        suite_manifest_path = suite_root / "suite_manifest.json"
+        suite_manifest = (
+            _required_json_object(suite_manifest_path, "suite manifest")
+            if suite_manifest_path.is_file()
+            else {}
+        )
+        for task_key in missing_hard_task_keys:
+            task = protocol_tasks[task_key]
+            attempts = protocol_attempts[task_key]
+            if not _is_qualified_legacy_trace_zero_provider_current(
+                suite_manifest=suite_manifest,
+                task=task,
+                attempts=attempts,
+            ):
+                raise ValueError(
+                    "CURRENT protocol task is missing hard-limit consumption"
+                )
+            usage.usage_missing_count -= int(
+                task.get("cost_estimate_status") == "usage_missing"
+            )
+            hard_rows.append(
+                _root_hard_limit_consumption_body(
+                    provider_attempt_count=0,
+                    total_tokens=0,
+                    total_cost_estimate=0.0,
+                    cost_estimate_currency=None,
+                    usage_missing_count=0,
+                )
+            )
+    hard_missing_count = 0
+    for hard_row in hard_rows:
+        if (
+            hard_row.get("schema_version")
+            != "tokenshare.paper_hard_limit_consumption.v1"
+        ):
+            raise ValueError("CURRENT hard-limit consumption schema is invalid")
+        hard_provider_count = _required_nonnegative_int(
+            hard_row.get("provider_attempt_count"),
+            "CURRENT hard-limit provider_attempt_count",
+        )
+        hard_tokens = _required_nonnegative_int(
+            hard_row.get("total_tokens"),
+            "CURRENT hard-limit total_tokens",
+        )
+        raw_missing = hard_row.get("usage_missing_count")
+        if (
+            isinstance(raw_missing, bool)
+            or not isinstance(raw_missing, int)
+            or raw_missing < 0
+        ):
+            raise ValueError("CURRENT hard-limit consumption values are invalid")
+        exact_total_cost, normalized_costs = _hard_limit_decimal_cost_projection(
+            hard_row,
+            "CURRENT hard-limit consumption",
+        )
+        if len(normalized_costs) > 1:
+            raise ValueError(
+                "CURRENT root hard-limit consumption has multiple currencies"
+            )
+        usage.hard_limit_provider_attempt_count += hard_provider_count
+        usage.hard_limit_total_tokens += hard_tokens
+        if normalized_costs:
+            for currency, value in normalized_costs.items():
+                usage.hard_limit_cost_estimate_by_currency[currency] = (
+                    usage.hard_limit_cost_estimate_by_currency.get(
+                        currency, Decimal("0")
+                    )
+                    + value
+                )
+        else:
+            usage.hard_limit_total_cost_estimate += exact_total_cost
+        hard_missing_count += raw_missing
+    if hard_missing_count != usage.usage_missing_count:
+        raise ValueError("CURRENT hard-limit missingness drifted from actual usage")
+    if (
+        usage.hard_limit_provider_attempt_count < usage.provider_attempt_count
+        or usage.hard_limit_total_tokens < usage.total_tokens
+        or usage.hard_limit_total_cost_estimate
+        < _decimal_cost(usage.total_cost_estimate, "CURRENT actual total cost")
+        or any(
+            usage.hard_limit_cost_estimate_by_currency.get(
+                currency, Decimal("0")
+            )
+            < _decimal_cost(actual_cost, "CURRENT actual currency cost")
+            for currency, actual_cost in usage.cost_estimate_by_currency.items()
+        )
+    ):
+        raise ValueError("CURRENT actual usage exceeds hard-limit consumption")
     return usage
 
 
@@ -8522,13 +11777,32 @@ def _resume_provider_attempts_by_condition(
                 / str(pointer["generation_id"])
             )
             condition_id = pointer_path.parent.parent.name
+            attempt_records = tuple(
+                _read_jsonl_records(
+                    generation_root / "per_attempt_results.jsonl"
+                )
+            )
+            blocked_provider_attempt_count = 0
+            for attempt in attempt_records:
+                if (
+                    attempt.get("record_scope") != "experiment"
+                    or attempt.get("attempt_status") != "blocked_dependency"
+                ):
+                    continue
+                raw_count = attempt.get("provider_attempt_count")
+                if (
+                    raw_count is None
+                    and attempt.get("cost_estimate_status") == "usage_missing"
+                ):
+                    continue
+                blocked_provider_attempt_count += _required_nonnegative_int(
+                    raw_count,
+                    "formal resume blocked provider_attempt_count",
+                )
             attempts_by_condition[condition_id] = (
                 attempts_by_condition.get(condition_id, 0)
-                + _persisted_provider_attempt_count(
-                    _read_jsonl_records(
-                        generation_root / "per_attempt_results.jsonl"
-                    )
-                )
+                + _persisted_provider_attempt_count(attempt_records)
+                + blocked_provider_attempt_count
             )
         return attempts_by_condition
     summaries: Sequence[Mapping[str, Any]] = ()
@@ -8629,6 +11903,46 @@ def _root_budget_reservation(
     )
 
 
+def _exp5_root_budget_reservation(
+    *,
+    condition: Any,
+    selection: Any,
+    case_id: str,
+    online_hook: Any,
+    online_root_callback_factory: Any,
+    config_currency: str | None,
+) -> _RootBudgetReservation | None:
+    """从 Exp5 callback 的 frozen prepared slots 绑定逐 root exact hard 上界。"""
+
+    authority = getattr(online_hook, "root_hard_limit_authority", None)
+    if condition.experiment_id != EXP5_EXPERIMENT_ID:
+        if authority is not None:
+            raise ValueError("non-Exp5 root cannot carry Exp5 hard-limit authority")
+        return None
+    if not isinstance(authority, Exp5RootHardLimitAuthority):
+        raise ValueError("Exp5 root is missing typed hard-limit authority")
+    factory_inventory_digest = getattr(
+        online_root_callback_factory, "inventory_digest", None
+    )
+    if (
+        authority.condition_id != condition.condition_id
+        or authority.condition_digest != condition.condition_digest
+        or authority.case_id != case_id
+        or authority.selection_digest != selection.selection_digest
+        or authority.model_endpoint_identity_digest
+        != condition.model_endpoint_identity_digest
+        or authority.inventory_digest != factory_inventory_digest
+        or authority.currency != config_currency
+    ):
+        raise ValueError("Exp5 root hard-limit authority drifted before reservation")
+    return _RootBudgetReservation(
+        provider_attempt_count=authority.provider_attempt_count,
+        total_tokens=authority.total_tokens,
+        total_cost_estimate=authority.total_cost_estimate,
+        currency=authority.currency,
+    )
+
+
 def _config_currency(config: AIAPIExecutorConfig) -> str | None:
     currencies = {
         str(entry.pricing["currency"])
@@ -8642,7 +11956,7 @@ def _config_currency(config: AIAPIExecutorConfig) -> str | None:
 
 def _has_resource_hard_limit(hard_limits: Mapping[str, Any]) -> bool:
     return any(
-        isinstance(hard_limits.get(field_name), (int, float))
+        isinstance(hard_limits.get(field_name), (int, float, Decimal))
         and not isinstance(hard_limits.get(field_name), bool)
         for field_name in (
             "max_total_provider_attempts",
@@ -8668,25 +11982,25 @@ def _reserve_hard_limit_capacity(
     projected = (
         (
             "max_total_provider_attempts",
-            usage.provider_attempt_count
+            usage.hard_limit_provider_attempt_count
             + usage.reserved_provider_attempt_count
             + reservation.provider_attempt_count,
         ),
         (
             "max_provider_attempts",
-            usage.provider_attempt_count
+            usage.hard_limit_provider_attempt_count
             + usage.reserved_provider_attempt_count
             + reservation.provider_attempt_count,
         ),
         (
             "max_total_tokens",
-            usage.total_tokens
+            usage.hard_limit_total_tokens
             + usage.reserved_total_tokens
             + reservation.total_tokens,
         ),
         (
             "max_tokens",
-            usage.total_tokens
+            usage.hard_limit_total_tokens
             + usage.reserved_total_tokens
             + reservation.total_tokens,
         ),
@@ -8702,9 +12016,12 @@ def _reserve_hard_limit_capacity(
     for field_name in ("max_cost_estimate", "max_total_cost_estimate"):
         limit = hard_limits.get(field_name)
         if (
-            isinstance(limit, (int, float))
+            isinstance(limit, (int, float, Decimal))
             and not isinstance(limit, bool)
-            and any(value > limit for value in projected_costs.values())
+            and any(
+                value > _decimal_cost(limit, field_name)
+                for value in projected_costs.values()
+            )
         ):
             return False
     usage.reserved_provider_attempt_count += reservation.provider_attempt_count
@@ -8713,7 +12030,9 @@ def _reserve_hard_limit_capacity(
         usage.reserved_total_cost_estimate += reservation.total_cost_estimate
     else:
         usage.reserved_cost_estimate_by_currency[reservation.currency] = (
-            usage.reserved_cost_estimate_by_currency.get(reservation.currency, 0.0)
+            usage.reserved_cost_estimate_by_currency.get(
+                reservation.currency, Decimal("0")
+            )
             + reservation.total_cost_estimate
         )
     return True
@@ -8728,57 +12047,252 @@ def _settle_hard_limit_reservation(
     total_cost_estimate: float = 0.0,
     cost_estimate_currency: str | None = None,
     cost_estimate_status: str | None = None,
+    usage_missing_count: int | None = None,
+    hard_limit_provider_attempt_count: int | None = None,
+    hard_limit_total_tokens: int | None = None,
+    hard_limit_total_cost_estimate: Decimal | float | None = None,
+    hard_limit_cost_estimate_currency: str | None = None,
 ) -> None:
+    hard_provider_attempt_count = (
+        provider_attempt_count
+        if hard_limit_provider_attempt_count is None
+        else hard_limit_provider_attempt_count
+    )
+    hard_total_tokens = (
+        total_tokens
+        if hard_limit_total_tokens is None
+        else hard_limit_total_tokens
+    )
+    hard_total_cost = (
+        total_cost_estimate
+        if hard_limit_total_cost_estimate is None
+        else hard_limit_total_cost_estimate
+    )
+    hard_cost_currency = (
+        cost_estimate_currency
+        if hard_limit_cost_estimate_currency is None
+        else hard_limit_cost_estimate_currency
+    )
+    _validate_root_usage_observation_within_reservation(
+        reservation=_RootBudgetReservation(0, 0, Decimal("0")),
+        provider_attempt_count=provider_attempt_count,
+        total_tokens=total_tokens,
+        total_cost_estimate=total_cost_estimate,
+    )
+    _validate_root_usage_observation_within_reservation(
+        reservation=reservation,
+        provider_attempt_count=hard_provider_attempt_count,
+        total_tokens=hard_total_tokens,
+        total_cost_estimate=hard_total_cost,
+    )
+    if provider_attempt_count > hard_provider_attempt_count:
+        raise ValueError("actual provider calls exceed hard-limit consumption")
+    if total_tokens > hard_total_tokens:
+        raise ValueError("actual provider tokens exceed hard-limit consumption")
+    actual_cost = _decimal_cost(total_cost_estimate, "actual provider cost")
+    normalized_hard_cost = _decimal_cost(hard_total_cost, "hard-limit provider cost")
+    if actual_cost > normalized_hard_cost:
+        raise ValueError("actual provider cost exceeds hard-limit consumption")
+    if usage_missing_count is not None and (
+        isinstance(usage_missing_count, bool)
+        or not isinstance(usage_missing_count, int)
+        or usage_missing_count < 0
+    ):
+        raise ValueError("usage_missing_count must be a nonnegative integer")
+    if cost_estimate_currency is not None and (
+        not isinstance(cost_estimate_currency, str) or not cost_estimate_currency
+    ):
+        raise ValueError("provider usage currency is invalid")
+    if reservation.currency not in (None, cost_estimate_currency) and (
+        cost_estimate_currency is not None
+    ):
+        raise ValueError("provider usage currency drifted from the reservation")
+    if hard_cost_currency is not None and (
+        not isinstance(hard_cost_currency, str) or not hard_cost_currency
+    ):
+        raise ValueError("hard-limit usage currency is invalid")
+    if reservation.currency not in (None, hard_cost_currency) and (
+        hard_cost_currency is not None
+    ):
+        raise ValueError("hard-limit usage currency drifted from the reservation")
+    if cost_estimate_status == "usage_missing":
+        missing_increment = max(1, usage_missing_count or 0)
+    elif usage_missing_count not in (None, 0):
+        raise ValueError("complete usage cannot carry usage-missing observations")
+    else:
+        missing_increment = 0
+    if (
+        usage.reserved_provider_attempt_count < reservation.provider_attempt_count
+        or usage.reserved_total_tokens < reservation.total_tokens
+    ):
+        raise ValueError("root hard-limit reservation is already settled")
+    if reservation.currency is None:
+        if usage.reserved_total_cost_estimate < reservation.total_cost_estimate:
+            raise ValueError("root hard-limit cost reservation is already settled")
+    elif (
+        usage.reserved_cost_estimate_by_currency.get(
+            reservation.currency, Decimal("0")
+        )
+        < reservation.total_cost_estimate
+    ):
+        raise ValueError("root hard-limit currency reservation is already settled")
     usage.reserved_provider_attempt_count -= reservation.provider_attempt_count
     usage.reserved_total_tokens -= reservation.total_tokens
     if reservation.currency is None:
         usage.reserved_total_cost_estimate -= reservation.total_cost_estimate
     else:
         remaining = (
-            usage.reserved_cost_estimate_by_currency.get(reservation.currency, 0.0)
+            usage.reserved_cost_estimate_by_currency.get(
+                reservation.currency, Decimal("0")
+            )
             - reservation.total_cost_estimate
         )
-        if abs(remaining) <= 1e-12:
+        if remaining == 0:
             usage.reserved_cost_estimate_by_currency.pop(reservation.currency, None)
         else:
             usage.reserved_cost_estimate_by_currency[reservation.currency] = remaining
     usage.provider_attempt_count += provider_attempt_count
     usage.total_tokens += total_tokens
     if cost_estimate_currency is None:
-        usage.total_cost_estimate += total_cost_estimate
+        usage.total_cost_estimate += float(actual_cost)
     else:
-        if reservation.currency not in (None, cost_estimate_currency):
-            raise ValueError("provider usage currency drifted from the reservation")
         usage.cost_estimate_by_currency[cost_estimate_currency] = (
             usage.cost_estimate_by_currency.get(cost_estimate_currency, 0.0)
-            + total_cost_estimate
+            + float(actual_cost)
         )
-    if cost_estimate_status == "usage_missing":
-        usage.usage_missing_count += 1
+    usage.usage_missing_count += missing_increment
+    usage.hard_limit_provider_attempt_count += hard_provider_attempt_count
+    usage.hard_limit_total_tokens += hard_total_tokens
+    if hard_cost_currency is None:
+        usage.hard_limit_total_cost_estimate += normalized_hard_cost
+    else:
+        usage.hard_limit_cost_estimate_by_currency[hard_cost_currency] = (
+            usage.hard_limit_cost_estimate_by_currency.get(
+                hard_cost_currency, Decimal("0")
+            )
+            + normalized_hard_cost
+        )
+
+
+def _validate_root_usage_observation_within_reservation(
+    *,
+    reservation: _RootBudgetReservation,
+    provider_attempt_count: Any,
+    total_tokens: Any,
+    total_cost_estimate: Any,
+) -> None:
+    """结算前验证 typed actual 未超过该 root 的冻结上界。"""
+
+    for name, value in (
+        ("provider_attempt_count", provider_attempt_count),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{name} must be a nonnegative integer")
+    if total_tokens is not None and (
+        isinstance(total_tokens, bool)
+        or not isinstance(total_tokens, int)
+        or total_tokens < 0
+    ):
+        raise ValueError("total_tokens must be null or a nonnegative integer")
+    if total_cost_estimate is not None and (
+        isinstance(total_cost_estimate, bool)
+        or not isinstance(total_cost_estimate, (int, float, Decimal))
+        or total_cost_estimate < 0
+    ):
+        raise ValueError("total_cost_estimate must be null or a nonnegative number")
+    if reservation == _RootBudgetReservation(0, 0, Decimal("0")):
+        return
+    if provider_attempt_count > reservation.provider_attempt_count:
+        raise ValueError("provider usage exceeds root call reservation")
+    if total_tokens is not None and total_tokens > reservation.total_tokens:
+        raise ValueError("provider usage exceeds root token reservation")
+    if (
+        total_cost_estimate is not None
+        and _decimal_cost(total_cost_estimate, "provider usage cost")
+        > reservation.total_cost_estimate
+    ):
+        raise ValueError("provider usage exceeds root cost reservation")
+
+
+def _settle_provider_exception_accounting(
+    *,
+    usage: _UsageTotals,
+    reservation: _RootBudgetReservation,
+    accounting: PaperProviderExceptionAccounting,
+) -> None:
+    """异常路径用 durable official accounting 释放一次 root capacity。"""
+
+    if not isinstance(accounting, PaperProviderExceptionAccounting):
+        raise TypeError("official exception accounting type is invalid")
+    if accounting.provider_attempt_count > reservation.provider_attempt_count:
+        raise ValueError("official exception accounting exceeds call reservation")
+    if (
+        accounting.conservative_total_tokens > reservation.total_tokens
+        or accounting.conservative_total_cost_estimate
+        > reservation.total_cost_estimate
+    ):
+        raise ValueError("official exception accounting exceeds root reservation")
+    if accounting.cost_estimate_currency not in (None, reservation.currency):
+        raise ValueError("official exception accounting currency drifted")
+    actual_total_tokens = accounting.total_tokens
+    actual_total_cost_estimate = accounting.total_cost_estimate
+    hard_total_tokens = actual_total_tokens
+    hard_total_cost_estimate = actual_total_cost_estimate
+    if actual_total_tokens is None or actual_total_cost_estimate is None:
+        if accounting.cost_estimate_status != "usage_missing":
+            raise ValueError("nullable exception accounting must be usage-missing")
+        actual_total_tokens = 0
+        actual_total_cost_estimate = Decimal("0")
+        hard_total_tokens = accounting.conservative_total_tokens
+        hard_total_cost_estimate = accounting.conservative_total_cost_estimate
+    _settle_hard_limit_reservation(
+        usage=usage,
+        reservation=reservation,
+        provider_attempt_count=accounting.provider_attempt_count,
+        total_tokens=actual_total_tokens,
+        total_cost_estimate=actual_total_cost_estimate,
+        cost_estimate_currency=(
+            None
+            if accounting.cost_estimate_status == "usage_missing"
+            else accounting.cost_estimate_currency
+        ),
+        cost_estimate_status=accounting.cost_estimate_status,
+        usage_missing_count=accounting.usage_missing_count,
+        hard_limit_provider_attempt_count=accounting.provider_attempt_count,
+        hard_limit_total_tokens=hard_total_tokens,
+        hard_limit_total_cost_estimate=hard_total_cost_estimate,
+        hard_limit_cost_estimate_currency=accounting.cost_estimate_currency,
+    )
 
 
 def _hard_limit_reached(usage: _UsageTotals, hard_limits: Mapping[str, Any]) -> bool:
     limits = (
-        ("max_total_provider_attempts", usage.provider_attempt_count),
-        ("max_provider_attempts", usage.provider_attempt_count),
-        ("max_total_tokens", usage.total_tokens),
-        ("max_tokens", usage.total_tokens),
+        (
+            "max_total_provider_attempts",
+            usage.hard_limit_provider_attempt_count,
+        ),
+        ("max_provider_attempts", usage.hard_limit_provider_attempt_count),
+        ("max_total_tokens", usage.hard_limit_total_tokens),
+        ("max_tokens", usage.hard_limit_total_tokens),
     )
     for field_name, consumed in limits:
         limit = hard_limits.get(field_name)
         if isinstance(limit, (int, float)) and not isinstance(limit, bool) and consumed >= limit:
             return True
     cost_values = (
-        tuple(usage.cost_estimate_by_currency.values())
-        if usage.cost_estimate_by_currency
-        else (usage.total_cost_estimate,)
+        tuple(usage.hard_limit_cost_estimate_by_currency.values())
+        if usage.hard_limit_cost_estimate_by_currency
+        else (usage.hard_limit_total_cost_estimate,)
     )
     for field_name in ("max_cost_estimate", "max_total_cost_estimate"):
         limit = hard_limits.get(field_name)
         if (
-            isinstance(limit, (int, float))
+            isinstance(limit, (int, float, Decimal))
             and not isinstance(limit, bool)
-            and any(consumed >= limit for consumed in cost_values)
+            and any(
+                consumed >= _decimal_cost(limit, field_name)
+                for consumed in cost_values
+            )
         ):
             return True
     return False
@@ -8788,27 +12302,31 @@ def _projected_cost_estimates_by_currency(
     *,
     usage: _UsageTotals,
     reservation: _RootBudgetReservation,
-) -> dict[str, float]:
+) -> dict[str, Decimal]:
     if reservation.currency is None:
         return {
             "legacy_or_unspecified": (
-                usage.total_cost_estimate
+                usage.hard_limit_total_cost_estimate
                 + usage.reserved_total_cost_estimate
                 + reservation.total_cost_estimate
             )
         }
-    currencies = set(usage.cost_estimate_by_currency) | set(
+    currencies = set(usage.hard_limit_cost_estimate_by_currency) | set(
         usage.reserved_cost_estimate_by_currency
     )
     currencies.add(reservation.currency)
     return {
         currency: (
-            usage.cost_estimate_by_currency.get(currency, 0.0)
-            + usage.reserved_cost_estimate_by_currency.get(currency, 0.0)
+            usage.hard_limit_cost_estimate_by_currency.get(
+                currency, Decimal("0")
+            )
+            + usage.reserved_cost_estimate_by_currency.get(
+                currency, Decimal("0")
+            )
             + (
                 reservation.total_cost_estimate
                 if currency == reservation.currency
-                else 0.0
+                else Decimal("0")
             )
         )
         for currency in currencies
@@ -9395,6 +12913,16 @@ def _as_json(value: Any) -> Any:
     raise ValueError(f"value is not JSON serializable: {type(value).__name__}")
 
 
+def _provider_accounting_json_value(value: Any) -> Any:
+    """只规范化 exception-accounting 的 Decimal 成本到既有 JSON number 字段。"""
+
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("provider accounting Decimal cost is not finite")
+        return float(value)
+    return _as_json(value)
+
+
 def _artifact_task_directory(task_id: str) -> str:
     """避免同一 condition 内不同 root 的同名 adapter artifact 相互覆盖。"""
 
@@ -9707,32 +13235,47 @@ _SOURCE_BANK_METRIC_ROLE_ORDER = (
     "acquisition_attempt",
     "model_record",
 )
+_DIRECT_METRIC_INPUT_ROUTES = MappingProxyType(
+    {
+        (
+            "exp1_real_ai_feasibility",
+            "online_real_provider",
+        ): "exp1_feasibility",
+        (
+            "exp1_real_ai_feasibility",
+            "real_model_trace_protocol_run",
+        ): "exp1_feasibility",
+        (
+            "exp2_real_ai_scalability",
+            "real_model_trace_protocol_run",
+        ): "exp2_trace_scalability",
+        (
+            "exp2_real_ai_scalability",
+            "online_real_provider",
+        ): "exp2_online_concurrency",
+        (
+            "exp3_real_ai_fault_recovery",
+            "real_model_trace_protocol_run",
+        ): "exp3_trace_robustness",
+        (
+            "exp3_real_ai_fault_recovery",
+            "online_real_provider",
+        ): "exp3_online_recovery",
+        (
+            "exp4_real_ai_protocol_ablation",
+            "real_model_trace_protocol_run",
+        ): "exp4_ablation",
+        (
+            "exp5_real_ai_model_endpoint_comparison",
+            "online_real_provider",
+        ): "experiment_5",
+    }
+)
 
 
 def _direct_metric_input_key(*, experiment_id: str, evidence_class: str) -> str:
-    routes = {
-        ("exp1_real_ai_feasibility", "online_real_provider"): "exp1_feasibility",
-        ("exp2_real_ai_scalability", "real_model_trace_protocol_run"): (
-            "exp2_trace_scalability"
-        ),
-        ("exp2_real_ai_scalability", "online_real_provider"): (
-            "exp2_online_concurrency"
-        ),
-        ("exp3_real_ai_fault_recovery", "real_model_trace_protocol_run"): (
-            "exp3_trace_robustness"
-        ),
-        ("exp3_real_ai_fault_recovery", "online_real_provider"): (
-            "exp3_online_recovery"
-        ),
-        ("exp4_real_ai_protocol_ablation", "real_model_trace_protocol_run"): (
-            "exp4_ablation"
-        ),
-        ("exp5_real_ai_model_endpoint_comparison", "online_real_provider"): (
-            "experiment_5"
-        ),
-    }
     try:
-        return routes[(experiment_id, evidence_class)]
+        return _DIRECT_METRIC_INPUT_ROUTES[(experiment_id, evidence_class)]
     except KeyError as exc:
         raise ValueError(
             "no official metric input route for frozen experiment/evidence class"
@@ -9743,6 +13286,7 @@ def _canonical_metric_inputs(
     projection_rows: Sequence[Any],
     *,
     producer_facts_by_root: Mapping[str, Mapping[str, Any]],
+    source_resolvers: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     routed: dict[str, list[Any]] = {key: [] for key in _DIRECT_METRIC_INPUT_KEYS}
     facts_by_root: dict[str, Mapping[str, Any]] = {}
@@ -9762,6 +13306,8 @@ def _canonical_metric_inputs(
             experiment_id=row.experiment_id,
             evidence_class=row.evidence_class,
         )
+        if row.evidence_class == "real_model_trace_protocol_run":
+            _validate_trace_metric_producer_facts(row, facts)
         routed[key].append(row)
 
     result: dict[str, object] = {key: () for key in _DIRECT_METRIC_INPUT_KEYS}
@@ -9817,6 +13363,7 @@ def _canonical_metric_inputs(
                     row,
                     facts_by_root[row.preregistered_root_run_id],
                     observation_type=Exp3PersistedObservation,
+                    source_resolvers=source_resolvers,
                 )
             ),
             direct_results=tuple(trace_groups[
@@ -9849,7 +13396,7 @@ def _canonical_metric_inputs(
             (row.condition_id, domain, row.repeat_id, mode), []
         ).append(row)
     result["exp4_ablation"] = tuple(
-        Exp4ModeInput(
+        _RunnerExp4ModeInput(
             condition_id=condition_id,
             domain=domain,
             repeat_id=repeat_id,
@@ -9882,6 +13429,9 @@ def _canonical_metric_inputs(
                 row.infrastructure_valid
                 for row in exp4_groups[(condition_id, domain, repeat_id, mode)]
             ),
+            direct_results=tuple(
+                exp4_groups[(condition_id, domain, repeat_id, mode)]
+            ),
         )
         for condition_id, domain, repeat_id, mode in sorted(exp4_groups)
     )
@@ -9890,6 +13440,260 @@ def _canonical_metric_inputs(
         facts_by_root,
     )
     return result
+
+
+def merge_canonical_metric_input_roots(
+    input_groups: Sequence[Mapping[str, object]],
+    *,
+    expected_root_ids: Sequence[str],
+) -> dict[str, object]:
+    """合并独立 persisted suite 的 metric inputs，并严格锁定统一分母。"""
+
+    groups = tuple(input_groups)
+    expected = tuple(expected_root_ids)
+    if (
+        not groups
+        or any(not isinstance(group, Mapping) for group in groups)
+        or any(set(group) != set(_DIRECT_METRIC_INPUT_KEYS) for group in groups)
+    ):
+        raise ValueError("canonical metric input group inventory is invalid")
+    if (
+        not expected
+        or any(not isinstance(root_id, str) or not root_id for root_id in expected)
+        or len(set(expected)) != len(expected)
+    ):
+        raise ValueError("fixed denominator root inventory is invalid")
+
+    merged: dict[str, list[object]] = {
+        key: [] for key in _DIRECT_METRIC_INPUT_KEYS
+    }
+    observed_root_ids: list[str] = []
+
+    def direct_rows(value: object):
+        if isinstance(value, PaperDirectRootResult):
+            yield value
+            return
+        direct = getattr(value, "direct_result", None)
+        if isinstance(direct, PaperDirectRootResult):
+            yield direct
+            return
+        direct_values = getattr(value, "direct_results", None)
+        if direct_values is not None:
+            if not isinstance(direct_values, (tuple, list)):
+                raise ValueError("canonical metric direct result inventory is invalid")
+            for direct_value in direct_values:
+                yield from direct_rows(direct_value)
+            return
+        if isinstance(value, (tuple, list)):
+            for item in value:
+                yield from direct_rows(item)
+
+    for group in groups:
+        for key in _DIRECT_METRIC_INPUT_KEYS:
+            values = group[key]
+            if not isinstance(values, (tuple, list)):
+                raise ValueError("canonical metric input rows must be a sequence")
+            normalized = tuple(values)
+            merged[key].extend(normalized)
+            observed_root_ids.extend(
+                row.preregistered_root_run_id
+                for row in direct_rows(normalized)
+            )
+
+    if len(set(observed_root_ids)) != len(observed_root_ids):
+        raise ValueError("duplicate canonical metric root")
+    if set(observed_root_ids) != set(expected) or len(observed_root_ids) != len(
+        expected
+    ):
+        raise ValueError("canonical metric fixed denominator mismatch")
+    return {key: tuple(merged[key]) for key in _DIRECT_METRIC_INPUT_KEYS}
+
+
+def rehydrate_persisted_metric_inputs(
+    *,
+    evidence_root: str | Path,
+    canonical_metric_inputs: Mapping[str, object],
+    source_resolvers: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    """从已验证 formal records 重建 metric view，不消费旧 pickle 中的派生值。"""
+
+    if (
+        not isinstance(canonical_metric_inputs, Mapping)
+        or set(canonical_metric_inputs) != set(_DIRECT_METRIC_INPUT_KEYS)
+    ):
+        raise ValueError("persisted metric input inventory is invalid")
+
+    def direct_rows(value: object):
+        if isinstance(value, PaperDirectRootResult):
+            yield value
+            return
+        direct = getattr(value, "direct_result", None)
+        if isinstance(direct, PaperDirectRootResult):
+            yield direct
+            return
+        values = getattr(value, "direct_results", None)
+        if values is not None:
+            if not isinstance(values, (tuple, list)):
+                raise ValueError("persisted metric direct results are malformed")
+            for item in values:
+                yield from direct_rows(item)
+            return
+        if isinstance(value, (tuple, list)):
+            for item in value:
+                yield from direct_rows(item)
+
+    rows = tuple(
+        row
+        for key in _DIRECT_METRIC_INPUT_KEYS
+        for row in direct_rows(canonical_metric_inputs[key])
+    )
+    root_ids = tuple(row.preregistered_root_run_id for row in rows)
+    if not rows or len(set(root_ids)) != len(root_ids):
+        raise ValueError("persisted metric direct root inventory is ambiguous")
+
+    store = FormalEvidenceStore(Path(evidence_root))
+    producer_facts: dict[str, Mapping[str, Any]] = {}
+    for row in rows:
+        logical = store.load_logical_run_records(
+            experiment_id=row.experiment_id,
+            condition_id=row.condition_id,
+            repeat_id=row.repeat_id,
+        )
+        facts = _persisted_metric_producer_facts(row=row, logical=logical)
+        if row.experiment_id == "exp5_real_ai_model_endpoint_comparison":
+            condition_body = store._conditions.get(
+                (row.experiment_id, row.condition_id)
+            )
+            if not isinstance(condition_body, Mapping):
+                raise ValueError("persisted Exp5 condition identity is missing")
+            condition_values = dict(condition_body)
+            condition_values.pop("condition_digest", None)
+            try:
+                condition = PaperExperimentCondition(**condition_values)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "persisted Exp5 condition identity is invalid"
+                ) from exc
+            if (
+                condition.experiment_id != row.experiment_id
+                or condition.condition_id != row.condition_id
+                or condition.repeat_id != row.repeat_id
+            ):
+                raise ValueError("persisted Exp5 condition identity mismatch")
+            facts = MappingProxyType(
+                {
+                    **facts,
+                    "model_endpoint_identity": (
+                        _rehydrate_persisted_exp5_model_endpoint_identity(
+                            evidence_root=Path(evidence_root),
+                            logical=logical,
+                            condition=condition,
+                        )
+                    ),
+                }
+            )
+        producer_facts[row.preregistered_root_run_id] = facts
+    return _canonical_metric_inputs(
+        rows,
+        producer_facts_by_root=producer_facts,
+        source_resolvers=source_resolvers,
+    )
+
+
+def _persisted_metric_producer_facts(
+    *,
+    row: PaperDirectRootResult,
+    logical: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """把 store 已验证的 records 严格绑定到唯一 canonical direct root。"""
+
+    tasks = tuple(logical.get("tasks", ()))
+    attempts = tuple(logical.get("attempts", ()))
+    faults = tuple(logical.get("faults", ()))
+    events = tuple(logical.get("events", ()))
+    if (
+        len(tasks) != 1
+        or any(not isinstance(value, Mapping) for value in (*tasks, *attempts, *faults, *events))
+    ):
+        raise ValueError("persisted metric producer record inventory is invalid")
+    task = tasks[0]
+    binding = row.execution_binding
+    runtime_identity = task.get("runtime_generation_identity")
+    if (
+        task.get("preregistered_root_run_id") != row.preregistered_root_run_id
+        or task.get("experiment_id") != row.experiment_id
+        or task.get("condition_id") != row.condition_id
+        or task.get("repeat_id") != row.repeat_id
+        or task.get("case_id") != row.case_id
+        or task.get("task_id") != binding.task_id
+        or task.get("protocol_task_id") != binding.task_id
+        or not isinstance(runtime_identity, Mapping)
+        or runtime_identity.get("run_id") != binding.execution_id
+        or runtime_identity.get("task_id") != binding.task_id
+        or runtime_identity.get("root_unit_id") != binding.root_unit_id
+    ):
+        raise ValueError("persisted metric producer root identity mismatch")
+    for attempt in attempts:
+        if (
+            attempt.get("condition_id") != row.condition_id
+            or attempt.get("repeat_id") != row.repeat_id
+            or attempt.get("task_id") != binding.task_id
+            or attempt.get("protocol_task_id") != binding.task_id
+            or attempt.get("run_id") != binding.execution_id
+        ):
+            raise ValueError("persisted metric attempt identity mismatch")
+    if any(event.get("task_id") != binding.task_id for event in events):
+        raise ValueError("persisted metric event task identity mismatch")
+    protocol_events = tuple(event for event in events if _is_protocol_ledger_event(event))
+    persisted_event_identities = tuple(
+        (
+            event.get("event_seq"),
+            event.get("event_id"),
+            event.get("event_type"),
+            event.get("event_hash"),
+            event.get("prev_event_hash"),
+            event.get("task_id"),
+            event.get("object_type"),
+            event.get("object_id"),
+        )
+        for event in protocol_events
+    )
+    bound_event_identities = tuple(
+        (
+            event.event_seq,
+            event.event_id,
+            event.event_type,
+            event.event_hash,
+            event.prev_event_hash,
+            event.task_id,
+            event.object_type,
+            event.object_id,
+        )
+        for event in binding.events
+    )
+    if persisted_event_identities != bound_event_identities:
+        raise ValueError("persisted metric event ledger identity mismatch")
+    return MappingProxyType(
+        {
+            "task": dict(task),
+            "attempts": tuple(dict(value) for value in attempts),
+            "faults": tuple(dict(value) for value in faults),
+            "events": tuple(dict(value) for value in events),
+            "run_evidence": {
+                "protocol_runtime": {
+                    "runtime_observation": task.get("runtime_observation", {})
+                }
+            },
+            "ledger_root_clock": _root_clock_from_verified_ledger(
+                events=events,
+                run_id=binding.execution_id,
+                task_id=binding.task_id,
+                root_unit_id=binding.root_unit_id,
+                row=row,
+                task=task,
+            ),
+        }
+    )
 
 
 def _producer_parts(
@@ -9922,13 +13726,262 @@ def _runtime_observation(run_evidence: Mapping[str, Any]) -> Mapping[str, Any]:
     return observation
 
 
+def _validate_trace_metric_producer_facts(
+    row: Any,
+    facts: Mapping[str, Any],
+) -> None:
+    """集中校验 Exp1--4 trace metric 的 current-provider 双域边界。"""
+
+    if _current_roles(row) is not None:
+        raise ValueError("trace metric current provider facts are inconsistent")
+    if not facts:
+        return
+    task, attempts, _run_evidence = _producer_parts(facts)
+    summary = task.get("trace_source_usage")
+    task_count = task.get("provider_attempt_count")
+    attempt_counts = tuple(
+        attempt.get("provider_attempt_count") for attempt in attempts
+    )
+    header_count = (
+        summary.get("current_provider_call_count")
+        if isinstance(summary, Mapping)
+        else None
+    )
+    if (
+        type(task_count) is not int
+        or task_count != 0
+        or any(type(value) is not int or value != 0 for value in attempt_counts)
+        or type(header_count) is not int
+        or header_count != task_count
+        or sum(attempt_counts) != task_count
+    ):
+        raise ValueError("trace metric current provider facts are inconsistent")
+    _persisted_trace_source_consumptions(task)
+
+
+def _is_exp4_no_requeue_stuck_clock_binding(
+    *,
+    row: Any,
+    task: Mapping[str, Any] | None,
+) -> bool:
+    condition_axes = getattr(row, "condition_axes", None)
+    runtime_flags = (
+        task.get("ablation_runtime_flags") if isinstance(task, Mapping) else None
+    )
+    return bool(
+        getattr(row, "experiment_id", None)
+        == "exp4_real_ai_protocol_ablation"
+        and isinstance(condition_axes, Mapping)
+        and condition_axes.get("ablation_mode") == "NO_REQUEUE"
+        and isinstance(task, Mapping)
+        and task.get("ablation_mode") == "NO_REQUEUE"
+        and task.get("ablation_applicable") is True
+        and isinstance(runtime_flags, Mapping)
+        and runtime_flags.get("stuck_after_rejection") is True
+        # 此时仅接受 checkpoint 已归类的完整实验失败；native ledger 仍保持非终态。
+        and _status_value(task.get("root_status", "")) == "failed"
+        and task.get("outcome_status") == "failed_experimental"
+        and task.get("evidence_integrity") == "complete"
+    )
+
+
+def _normalize_exp4_no_requeue_stuck_checkpoint_task(
+    *,
+    condition: Any,
+    task: dict[str, Any],
+) -> bool:
+    """将唯一允许的 NO_REQUEUE 卡住 root 归类为实验失败。"""
+
+    runtime_flags = task.get("ablation_runtime_flags")
+    applicable = (
+        getattr(condition, "experiment_id", None)
+        == "exp4_real_ai_protocol_ablation"
+        and getattr(condition, "ablation_mode", None) == "NO_REQUEUE"
+        and task.get("ablation_mode") == "NO_REQUEUE"
+        and task.get("ablation_applicable") is True
+        and isinstance(runtime_flags, Mapping)
+        and runtime_flags.get("stuck_after_rejection") is True
+        and _status_value(task.get("root_status", "")) == "blocked"
+        and task.get("outcome_status") == "failed_experimental"
+        and task.get("evidence_integrity") == "complete"
+    )
+    if not applicable:
+        return False
+    # 协议 root 保持非终态，但这是预注册消融造成的实验失败而非基础设施阻断。
+    task["root_status"] = "failed"
+    task["wall_clock_ms"] = None
+    return True
+
+
+def _has_exp4_no_merge_gate_premature_merge_evidence(
+    task: Mapping[str, Any] | None,
+    *,
+    run_id: str | None,
+    task_id: str | None,
+    root_unit_id: str | None,
+) -> bool:
+    """验证 NO_MERGE_GATE 非终态投影所需的两个原生 hook 证据。"""
+
+    if not all(isinstance(value, str) and value for value in (
+        run_id,
+        task_id,
+        root_unit_id,
+    )):
+        return False
+    runtime = task.get("ablation_runtime") if isinstance(task, Mapping) else None
+    raw_observations = (
+        runtime.get("hook_observations") if isinstance(runtime, Mapping) else None
+    )
+    if not isinstance(raw_observations, Sequence) or isinstance(
+        raw_observations, (str, bytes, bytearray)
+    ):
+        return False
+    try:
+        observations = tuple(
+            RuntimeHookObservationV1.from_dict(item)
+            for item in raw_observations
+            if isinstance(item, Mapping)
+        )
+    except (TypeError, ValueError):
+        return False
+    if len(observations) != len(raw_observations):
+        return False
+    gate_bypassed = any(
+        observation.kind
+        is RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED
+        and isinstance(
+            observation.payload,
+            ExperimentAblationGateAppliedPayloadV1,
+        )
+        and observation.payload.ablation_mode == "NO_MERGE_GATE"
+        and observation.payload.disabled_mechanism == "merge_gate"
+        and observation.payload.hook_result.get("bypass") is True
+        for observation in observations
+    )
+    premature_merge_failed = any(
+        observation.kind
+        is RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED
+        and isinstance(
+            observation.payload,
+            ExperimentPrematureMergeAttemptedPayloadV1,
+        )
+        and observation.payload.root_check_passed is False
+        and observation.payload.failure_kind == "merge_readiness_unsatisfied"
+        and observation.payload.run_id == run_id
+        and observation.payload.task_id == task_id
+        and observation.payload.parent_unit_id == root_unit_id
+        for observation in observations
+    )
+    return gate_bypassed and premature_merge_failed
+
+
+def _is_exp4_no_merge_gate_premature_merge_clock_binding(
+    *,
+    row: Any,
+    task: Mapping[str, Any] | None,
+    run_id: str | None = None,
+    task_id: str | None = None,
+    root_unit_id: str | None = None,
+) -> bool:
+    condition_axes = getattr(row, "condition_axes", None)
+    runtime_flags = (
+        task.get("ablation_runtime_flags") if isinstance(task, Mapping) else None
+    )
+    runtime_identity = _exp4_no_merge_gate_runtime_identity(task)
+    return bool(
+        getattr(row, "experiment_id", None)
+        == "exp4_real_ai_protocol_ablation"
+        and isinstance(condition_axes, Mapping)
+        and condition_axes.get("ablation_mode") == "NO_MERGE_GATE"
+        and isinstance(task, Mapping)
+        and task.get("ablation_mode") == "NO_MERGE_GATE"
+        and task.get("ablation_applicable") is True
+        and isinstance(runtime_flags, Mapping)
+        and runtime_flags.get("premature_merge_attempted") is True
+        and runtime_identity is not None
+        and _has_exp4_no_merge_gate_premature_merge_evidence(
+            task,
+            run_id=runtime_identity[0],
+            task_id=runtime_identity[1],
+            root_unit_id=runtime_identity[2],
+        )
+        and (run_id is None or run_id == runtime_identity[0])
+        and (task_id is None or task_id == runtime_identity[1])
+        and (root_unit_id is None or root_unit_id == runtime_identity[2])
+        and _status_value(task.get("root_status", "")) == "failed"
+        and task.get("outcome_status") == "failed_experimental"
+        and task.get("evidence_integrity") == "complete"
+    )
+
+
+def _exp4_no_merge_gate_runtime_identity(
+    task: Mapping[str, Any] | None,
+) -> tuple[str, str, str] | None:
+    """读取 adapter 已验证的 NO_MERGE_GATE native runtime 三元组。"""
+
+    identity = (
+        task.get("runtime_generation_identity")
+        if isinstance(task, Mapping)
+        else None
+    )
+    if not isinstance(identity, Mapping):
+        return None
+    values = (
+        identity.get("run_id"),
+        identity.get("task_id"),
+        identity.get("root_unit_id"),
+    )
+    if not all(isinstance(value, str) and value for value in values):
+        return None
+    return values
+
+
+def _normalize_exp4_no_merge_gate_premature_merge_checkpoint_task(
+    *,
+    condition: Any,
+    task: dict[str, Any],
+    run_id: str | None,
+    task_id: str | None,
+    root_unit_id: str | None,
+) -> bool:
+    """将有完整原生 premature-merge 证据的 Exp4 root 投影为实验失败。"""
+
+    runtime_flags = task.get("ablation_runtime_flags")
+    applicable = (
+        getattr(condition, "experiment_id", None)
+        == "exp4_real_ai_protocol_ablation"
+        and getattr(condition, "ablation_mode", None) == "NO_MERGE_GATE"
+        and task.get("ablation_mode") == "NO_MERGE_GATE"
+        and task.get("ablation_applicable") is True
+        and isinstance(runtime_flags, Mapping)
+        and runtime_flags.get("premature_merge_attempted") is True
+        and _has_exp4_no_merge_gate_premature_merge_evidence(
+            task,
+            run_id=run_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+        )
+        and _status_value(task.get("root_status", "")) == "blocked"
+        and task.get("outcome_status") == "failed_experimental"
+        and task.get("evidence_integrity") == "complete"
+    )
+    if not applicable:
+        return False
+    # native ledger 保持非终态；checkpoint 仅如实投影预注册的实验失败。
+    task["root_status"] = "failed"
+    task["wall_clock_ms"] = None
+    return True
+
+
 def _root_clock_from_verified_ledger(
     *,
     events: Sequence[object],
     run_id: str,
     task_id: str,
     root_unit_id: str,
-) -> dict[str, str]:
+    row: Any | None = None,
+    task: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """从已通过 hash-chain 校验的 native ledger 提取 root 生命周期时钟。"""
 
     root_events = []
@@ -9953,13 +14006,39 @@ def _root_clock_from_verified_ledger(
             and str(unit.get("state") or "").lower() in terminal_states
         ):
             terminal_events.append(event)
-    if not root_events or not terminal_events:
+    if not root_events:
         raise ValueError("verified ledger root lifecycle clock is incomplete")
     started_at = str(_required_field(root_events[0], "occurred_at"))
-    terminal_at = str(_required_field(terminal_events[-1], "occurred_at"))
     started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    if started.utcoffset() is None:
+        raise ValueError("verified ledger root clock must include timezone")
+    if not terminal_events:
+        if _is_exp4_no_requeue_stuck_clock_binding(row=row, task=task):
+            incomplete_reason = "no_requeue_stuck_after_rejection"
+            schema_version = "tokenshare.paper_ledger_root_clock.v2"
+        elif _is_exp4_no_merge_gate_premature_merge_clock_binding(
+            row=row,
+            task=task,
+            run_id=run_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+        ):
+            incomplete_reason = "no_merge_gate_premature_merge_unsatisfied"
+            schema_version = "tokenshare.paper_ledger_root_clock.v3"
+        else:
+            raise ValueError("verified ledger root lifecycle clock is incomplete")
+        return {
+            "schema_version": schema_version,
+            "run_id": run_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "root_started_at": started_at,
+            "root_terminal_at": None,
+            "incomplete_reason": incomplete_reason,
+        }
+    terminal_at = str(_required_field(terminal_events[-1], "occurred_at"))
     terminal = datetime.fromisoformat(terminal_at.replace("Z", "+00:00"))
-    if started.utcoffset() is None or terminal.utcoffset() is None:
+    if terminal.utcoffset() is None:
         raise ValueError("verified ledger root clock must include timezone")
     if terminal < started:
         raise ValueError("verified ledger root terminal clock precedes start")
@@ -9980,38 +14059,93 @@ def _persisted_ledger_root_clock_ms(
     clock = facts.get("ledger_root_clock")
     if clock is None:
         return None, None
-    if not isinstance(clock, Mapping) or set(clock) != {
+    common_fields = {
         "schema_version",
         "run_id",
         "task_id",
         "root_unit_id",
         "root_started_at",
         "root_terminal_at",
-    }:
+    }
+    if not isinstance(clock, Mapping):
+        raise ValueError("persisted ledger root clock is malformed")
+    schema_version = clock.get("schema_version")
+    if schema_version == "tokenshare.paper_ledger_root_clock.v1":
+        if set(clock) != common_fields:
+            raise ValueError("persisted ledger root clock is malformed")
+    elif schema_version == "tokenshare.paper_ledger_root_clock.v2":
+        if (
+            set(clock) != {*common_fields, "incomplete_reason"}
+            or clock.get("root_terminal_at") is not None
+            or clock.get("incomplete_reason")
+            != "no_requeue_stuck_after_rejection"
+        ):
+            raise ValueError("persisted ledger root clock is malformed")
+        task = facts.get("task")
+        if not _is_exp4_no_requeue_stuck_clock_binding(row=row, task=task):
+            raise ValueError(
+                "persisted incomplete ledger root clock binding is invalid"
+            )
+    elif schema_version == "tokenshare.paper_ledger_root_clock.v3":
+        if (
+            set(clock) != {*common_fields, "incomplete_reason"}
+            or clock.get("root_terminal_at") is not None
+            or clock.get("incomplete_reason")
+            != "no_merge_gate_premature_merge_unsatisfied"
+        ):
+            raise ValueError("persisted ledger root clock is malformed")
+        task = facts.get("task")
+        if not _is_exp4_no_merge_gate_premature_merge_clock_binding(
+            row=row,
+            task=task,
+        ):
+            raise ValueError(
+                "persisted incomplete ledger root clock binding is invalid"
+            )
+    else:
         raise ValueError("persisted ledger root clock is malformed")
     binding = getattr(row, "execution_binding", None)
+    if binding is not None:
+        expected_identity = (
+            binding.execution_id,
+            binding.task_id,
+            binding.root_unit_id,
+        )
+    elif schema_version == "tokenshare.paper_ledger_root_clock.v3":
+        expected_identity = _exp4_no_merge_gate_runtime_identity(facts.get("task"))
+        if expected_identity is None:
+            raise ValueError("persisted ledger root clock identity mismatch")
+    else:
+        raise ValueError("persisted ledger root clock identity mismatch")
     if (
-        clock.get("schema_version") != "tokenshare.paper_ledger_root_clock.v1"
-        or binding is None
-        or clock.get("run_id") != binding.execution_id
-        or clock.get("task_id") != binding.task_id
-        or clock.get("root_unit_id") != binding.root_unit_id
+        clock.get("run_id") != expected_identity[0]
+        or clock.get("task_id") != expected_identity[1]
+        or clock.get("root_unit_id") != expected_identity[2]
     ):
         raise ValueError("persisted ledger root clock identity mismatch")
     try:
         started = datetime.fromisoformat(
             str(clock["root_started_at"]).replace("Z", "+00:00")
         )
-        terminal = datetime.fromisoformat(
-            str(clock["root_terminal_at"]).replace("Z", "+00:00")
+        terminal = (
+            datetime.fromisoformat(
+                str(clock["root_terminal_at"]).replace("Z", "+00:00")
+            )
+            if clock["root_terminal_at"] is not None
+            else None
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("persisted ledger root clock timestamp is invalid") from exc
-    if started.utcoffset() is None or terminal.utcoffset() is None:
+    if started.utcoffset() is None or (
+        terminal is not None and terminal.utcoffset() is None
+    ):
         raise ValueError("persisted ledger root clock must include timezone")
-    if terminal < started:
+    if terminal is not None and terminal < started:
         raise ValueError("persisted ledger root terminal clock precedes start")
-    return _datetime_epoch_ms(started), _datetime_epoch_ms(terminal)
+    return (
+        _datetime_epoch_ms(started),
+        _datetime_epoch_ms(terminal) if terminal is not None else None,
+    )
 
 
 def _datetime_epoch_ms(value: datetime) -> Decimal:
@@ -10086,6 +14220,104 @@ def _source_roles(row: Any) -> tuple[str, ...] | None:
     return roles or None
 
 
+def _is_persisted_exp3_worker_death_first_redelivery(
+    *,
+    task: Mapping[str, Any],
+    redelivery: Mapping[str, Any],
+) -> bool:
+    """只接纳 worker 在首个普通投递前死亡时的冻结重投来源。"""
+
+    experiment_id = task.get("experiment_id")
+    condition_id = task.get("condition_id")
+    worker_death_target = task.get("dead_worker_count_target")
+    worker_death_count = task.get("worker_death_count")
+    if (
+        experiment_id != "exp3_real_ai_fault_recovery"
+        or not isinstance(condition_id, str)
+        or not condition_id
+        or type(worker_death_target) is not int
+        or worker_death_target < 1
+        or type(worker_death_count) is not int
+        or worker_death_count != worker_death_target
+        or redelivery.get("current_attempt_ordinal", 0) < 1
+        or redelivery.get("redelivery_reason")
+        != (
+            f"{experiment_id}:{condition_id}:worker_death:FULL:"
+            "saved_terminal_artifact_redelivery"
+        )
+    ):
+        return False
+    paired = task.get("paired_trace_reference")
+    if not isinstance(paired, Mapping):
+        return False
+    raw_entry_ids = paired.get("source_entry_ids")
+    raw_bindings = paired.get("source_binding_digests")
+    raw_mappings = paired.get("current_delivery_source_mappings")
+    if (
+        not isinstance(raw_entry_ids, Sequence)
+        or isinstance(raw_entry_ids, (str, bytes, bytearray))
+        or not isinstance(raw_bindings, Sequence)
+        or isinstance(raw_bindings, (str, bytes, bytearray))
+        or not isinstance(raw_mappings, Sequence)
+        or isinstance(raw_mappings, (str, bytes, bytearray))
+    ):
+        return False
+    planned_ai_unit_id = redelivery.get("planned_ai_unit_id")
+    sample_slot_index = redelivery.get("source_sample_slot_index")
+    ordinal = redelivery.get("current_attempt_ordinal")
+    entry_id = redelivery.get("entry_id")
+    source_replacement_slot = redelivery.get("source_replacement_slot")
+    if (
+        not isinstance(planned_ai_unit_id, str)
+        or not planned_ai_unit_id
+        or type(sample_slot_index) is not int
+        or type(ordinal) is not int
+        or not isinstance(entry_id, str)
+        or not entry_id
+        or type(source_replacement_slot) is not int
+        or entry_id not in raw_entry_ids
+    ):
+        return False
+    matching_mappings = tuple(
+        mapping
+        for mapping in raw_mappings
+        if isinstance(mapping, Mapping)
+        and mapping.get("current_planned_ai_unit_id") == planned_ai_unit_id
+        and mapping.get("current_sample_slot_index") == sample_slot_index
+        and mapping.get("current_attempt_ordinal") == ordinal
+    )
+    if len(matching_mappings) != 1:
+        return False
+    matching = matching_mappings[0]
+    binding_digest = matching.get("source_binding_digest")
+    if (
+        matching.get("source_entry_id") != entry_id
+        or matching.get("source_sample_slot_index") != sample_slot_index
+        or matching.get("source_replacement_slot") != source_replacement_slot
+        or not isinstance(binding_digest, str)
+        or not binding_digest
+        or binding_digest not in raw_bindings
+    ):
+        return False
+    first_mappings = tuple(
+        mapping
+        for mapping in raw_mappings
+        if isinstance(mapping, Mapping)
+        and mapping.get("current_planned_ai_unit_id") == planned_ai_unit_id
+        and mapping.get("current_sample_slot_index") == sample_slot_index
+        and mapping.get("current_attempt_ordinal") == 0
+    )
+    return len(first_mappings) == 1 and all(
+        first_mappings[0].get(field_name) == expected
+        for field_name, expected in (
+            ("source_binding_digest", binding_digest),
+            ("source_entry_id", entry_id),
+            ("source_sample_slot_index", sample_slot_index),
+            ("source_replacement_slot", source_replacement_slot),
+        )
+    )
+
+
 def _persisted_trace_source_consumptions(
     task: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], ...] | None:
@@ -10117,7 +14349,204 @@ def _persisted_trace_source_consumptions(
         raise ValueError("persisted trace source consumption identity is invalid")
     if len(set(ids)) != len(ids):
         raise ValueError("persisted trace source consumption identity is duplicated")
+    source_attempt_count = summary.get("source_provider_attempt_count")
+    if source_attempt_count is not None:
+        if type(source_attempt_count) is not int or source_attempt_count < 0:
+            raise ValueError("persisted trace source attempt count is invalid")
+        for consumption in consumptions:
+            for field_name in (
+                "current_attempt_ordinal",
+                "source_sample_slot_index",
+                "source_replacement_slot",
+            ):
+                value = consumption.get(field_name)
+                if type(value) is not int or value < 0:
+                    raise ValueError(
+                        f"persisted trace source {field_name} is invalid"
+                    )
+            if consumption.get("replacement_slot") != consumption.get(
+                "source_replacement_slot"
+            ):
+                raise ValueError("persisted trace source slot identity is inconsistent")
+            for field_name in (
+                "entry_id",
+                "unit_id",
+                "planned_ai_unit_id",
+                "source_planned_ai_unit_id",
+                "source_acquisition_attempt_id",
+            ):
+                value = consumption.get(field_name)
+                if not isinstance(value, str) or not value:
+                    raise ValueError(
+                        f"persisted trace source {field_name} is invalid"
+                    )
+        if source_attempt_count != len(
+            {
+                consumption["source_acquisition_attempt_id"]
+                for consumption in consumptions
+            }
+        ):
+            raise ValueError("persisted trace source attempt count is inconsistent")
+        consumptions_by_unit: dict[str, list[Mapping[str, Any]]] = {}
+        for consumption in consumptions:
+            delivery_kind = consumption.get("delivery_kind")
+            latency_ms = consumption.get("latency_ms")
+            latency_missing = consumption.get("source_api_latency_missing")
+            missing_count = consumption.get("source_api_latency_missing_count")
+            operational_delay = consumption.get("protocol_operational_delay_ms")
+            if delivery_kind not in {"ordinary_attempt", "fault_redelivery"}:
+                raise ValueError("persisted trace source delivery kind is invalid")
+            expected_missing_count = int(
+                latency_ms is None and delivery_kind == "ordinary_attempt"
+            )
+            if (
+                latency_missing is not (latency_ms is None)
+                or missing_count != expected_missing_count
+            ):
+                raise ValueError(
+                    "persisted trace source latency missing count is inconsistent"
+                )
+            if type(operational_delay) is not int or operational_delay < 0:
+                raise ValueError(
+                    "persisted trace protocol operational delay is invalid"
+                )
+            consumptions_by_unit.setdefault(str(consumption["unit_id"]), []).append(
+                consumption
+            )
+        for unit_consumptions in consumptions_by_unit.values():
+            ordinary = tuple(
+                value
+                for value in unit_consumptions
+                if value["delivery_kind"] == "ordinary_attempt"
+            )
+            for redelivery in (
+                value
+                for value in unit_consumptions
+                if value["delivery_kind"] == "fault_redelivery"
+            ):
+                prior = tuple(
+                    value
+                    for value in ordinary
+                    if value["current_attempt_ordinal"]
+                    < redelivery["current_attempt_ordinal"]
+                )
+                if not prior:
+                    if _is_persisted_exp3_worker_death_first_redelivery(
+                        task=task,
+                        redelivery=redelivery,
+                    ):
+                        continue
+                    raise ValueError(
+                        "persisted trace fault redelivery lacks ordinary source"
+                    )
+                terminal = max(
+                    prior, key=lambda value: value["current_attempt_ordinal"]
+                )
+                if any(
+                    redelivery.get(field_name) != terminal.get(field_name)
+                    for field_name in (
+                        "entry_id",
+                        "source_acquisition_attempt_id",
+                        "source_api_latency_ref",
+                        "source_terminal_kind",
+                    )
+                ):
+                    raise ValueError(
+                        "persisted trace fault redelivery source reference drifted"
+                    )
+        unique_consumptions = _unique_trace_source_accounting_consumptions(
+            consumptions
+        )
+        tokens_total, tokens_known, tokens_missing = _trace_source_resource_coverage(
+            unique_consumptions,
+            "total_tokens",
+            _already_unique=True,
+        )
+        latency_total, latency_known, latency_missing = (
+            _trace_source_resource_coverage(
+                unique_consumptions,
+                "latency_ms",
+                _already_unique=True,
+            )
+        )
+        expected_totals = {
+            "source_tokens_total": tokens_total,
+            "source_api_latency_total_ms": latency_total,
+        }
+        if any(summary.get(key) != value for key, value in expected_totals.items()):
+            raise ValueError("persisted trace source totals are inconsistent")
+        expected_known = {
+            "source_tokens_known_total": tokens_known,
+            "source_tokens_missing_attempt_count": tokens_missing,
+            "source_api_latency_known_total_ms": latency_known,
+            "source_api_latency_missing_attempt_count": latency_missing,
+        }
+        if any(summary.get(key) != value for key, value in expected_known.items()):
+            raise ValueError("persisted trace source known totals are inconsistent")
+        expected_cost, expected_cost_known, expected_cost_missing = (
+            _trace_source_resource_coverage(
+            unique_consumptions,
+            "cost_estimate_cny",
+            decimal=True,
+            _already_unique=True,
+            )
+        )
+        if summary.get("source_cost_total_cny") != (
+            str(expected_cost) if expected_cost is not None else None
+        ):
+            raise ValueError("persisted trace source cost total is inconsistent")
+        if (
+            summary.get("source_cost_known_total_cny") != str(expected_cost_known)
+            or summary.get("source_cost_missing_attempt_count")
+            != expected_cost_missing
+        ):
+            raise ValueError("persisted trace source known totals are inconsistent")
     return consumptions
+
+
+def _unique_trace_source_accounting_consumptions(
+    consumptions: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    """同一 current unit 重投同一 source attempt 时只计一次API资源。"""
+
+    unique: dict[tuple[str, str], Mapping[str, Any]] = {}
+    source_identity_fields = (
+        "entry_id",
+        "source_planned_ai_unit_id",
+        "source_sample_slot_index",
+        "source_replacement_slot",
+        "source_terminal_kind",
+        "source_acquisition_attempt_id",
+        "source_model_record",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "latency_ms",
+        "source_api_latency_missing",
+        "source_api_latency_ref",
+        "cost_estimate_cny",
+        "source_bank_roles",
+    )
+    for consumption in consumptions:
+        attempt_id = consumption.get("source_acquisition_attempt_id")
+        current_unit_id = consumption.get("unit_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            # 已冻结的legacy fixture没有双身份字段；保持其历史逐条归因语义。
+            legacy_id = consumption.get("consumption_id")
+            if not isinstance(legacy_id, str) or not legacy_id:
+                raise ValueError("persisted trace source accounting identity is missing")
+            key = ("legacy", legacy_id)
+        else:
+            if not isinstance(current_unit_id, str) or not current_unit_id:
+                raise ValueError("persisted trace current unit identity is missing")
+            key = (current_unit_id, attempt_id)
+        previous = unique.get(key)
+        if previous is None:
+            unique[key] = consumption
+            continue
+        if any(previous.get(field) != consumption.get(field) for field in source_identity_fields):
+            raise ValueError("persisted trace redelivery source identity drifted")
+    return tuple(unique.values())
 
 
 def _complete_trace_source_sum(
@@ -10125,23 +14554,57 @@ def _complete_trace_source_sum(
     field_name: str,
     *,
     decimal: bool = False,
+    _already_unique: bool = False,
 ) -> int | Decimal | None:
+    total, _known_total, _missing_count = _trace_source_resource_coverage(
+        consumptions,
+        field_name,
+        decimal=decimal,
+        _already_unique=_already_unique,
+    )
+    return total
+
+
+def _trace_source_resource_coverage(
+    consumptions: tuple[Mapping[str, Any], ...] | Sequence[Mapping[str, Any]] | None,
+    field_name: str,
+    *,
+    decimal: bool = False,
+    _already_unique: bool = False,
+) -> tuple[int | Decimal | None, int | Decimal, int]:
+    """返回完整总量、已知总量与缺失 source-attempt 数。"""
+
     if not consumptions:
-        return None
-    values = tuple(value.get(field_name) for value in consumptions)
-    if any(value is None for value in values):
-        return None
+        return None, Decimal(0) if decimal else 0, 0
+    normalized_consumptions = tuple(consumptions)
+    if not _already_unique:
+        normalized_consumptions = _unique_trace_source_accounting_consumptions(
+            normalized_consumptions
+        )
+    values = tuple(value.get(field_name) for value in normalized_consumptions)
+    missing_count = sum(value is None for value in values)
+    known_values = tuple(value for value in values if value is not None)
     if decimal:
         try:
-            normalized = tuple(Decimal(str(value)) for value in values)
+            normalized = tuple(Decimal(str(value)) for value in known_values)
         except (ArithmeticError, ValueError) as exc:
             raise ValueError(f"persisted trace source {field_name} is invalid") from exc
-        if any(value < 0 for value in normalized):
+        if any(not value.is_finite() or value < 0 for value in normalized):
             raise ValueError(f"persisted trace source {field_name} is negative")
-        return sum(normalized, Decimal(0))
-    if any(type(value) is not int or value < 0 for value in values):
+        known_total = sum(normalized, Decimal(0))
+        return (
+            known_total if missing_count == 0 else None,
+            known_total,
+            missing_count,
+        )
+    if any(type(value) is not int or value < 0 for value in known_values):
         raise ValueError(f"persisted trace source {field_name} is invalid")
-    return sum(values)
+    known_total = sum(known_values)
+    return (
+        known_total if missing_count == 0 else None,
+        known_total,
+        missing_count,
+    )
 
 
 def _hydrate_exp1_metric_row(
@@ -10153,6 +14616,48 @@ def _hydrate_exp1_metric_row(
     root_started_at_ms, root_terminal_at_ms = _persisted_ledger_root_clock_ms(
         facts, row
     )
+    if row.evidence_class == "real_model_trace_protocol_run":
+        # Exp1 results-first 的正确性/完成率来自本次协议运行，但 provider
+        # 资源属于 acquisition source。这里显式校验双域身份，绝不把当前
+        # trace attempts 包装成 actual provider attempts 或重复记 spend。
+        consumptions = _persisted_trace_source_consumptions(task)
+        expected_source_roles = _source_roles(row)
+        if facts and (
+            task.get("provider_attempt_count") != 0
+            or any(attempt.get("provider_attempt_count") != 0 for attempt in attempts)
+            or _current_roles(row) is not None
+        ):
+            raise ValueError("Exp1 trace metric current provider identity is invalid")
+        if consumptions is not None and any(
+            tuple(consumption.get("source_bank_roles") or ())
+            != expected_source_roles
+            for consumption in consumptions
+        ):
+            raise ValueError("Exp1 trace metric source bank roles mismatch")
+        return Exp1HydratedDirectRow(
+            direct_result=row,
+            root_start_at_ms=root_started_at_ms,
+            root_terminal_at_ms=root_terminal_at_ms,
+            actual_provider_attempts=(),
+            trace_consumptions=(
+                tuple(
+                    Exp1TraceConsumptionFacts(
+                        consumption_id=str(consumption["consumption_id"]),
+                        source_bank_entry_id=str(consumption.get("entry_id") or ""),
+                        source_bank_roles=(
+                            tuple(consumption["source_bank_roles"])
+                            if consumption.get("source_bank_roles") is not None
+                            else None
+                        ),
+                    )
+                    for consumption in consumptions
+                )
+                if consumptions is not None
+                else None
+            ),
+        )
+    if row.evidence_class != "online_real_provider":
+        raise ValueError("Exp1 metric hydration evidence class is unsupported")
     cny_costs = _complete_cny_costs(task, attempts)
     return Exp1HydratedDirectRow(
         direct_result=row,
@@ -10183,13 +14688,26 @@ def _hydrate_exp2_trace_metric_row(
 ) -> _RunnerExp2TraceMetricInput:
     task, _attempts, run_evidence = _producer_parts(facts)
     observation = _runtime_observation(run_evidence)
+    root_started_at_ms, root_terminal_at_ms = _persisted_ledger_root_clock_ms(
+        facts, row
+    )
+    root_wall_clock_ms = (
+        root_terminal_at_ms - root_started_at_ms
+        if root_started_at_ms is not None and root_terminal_at_ms is not None
+        else None
+    )
     planned = tuple(str(value) for value in observation.get("planned_ai_unit_ids", ()))
     dispatched = set(str(value) for value in observation.get("dispatched_ai_unit_ids", ()))
     completed = set(str(value) for value in observation.get("completed_ai_unit_ids", ()))
     consumptions = _persisted_trace_source_consumptions(task)
+    accounting_consumptions = (
+        _unique_trace_source_accounting_consumptions(consumptions)
+        if consumptions is not None
+        else None
+    )
     latency_by_unit: dict[str, int] = {}
-    latency_complete = consumptions is not None
-    for consumption in consumptions or ():
+    latency_complete = accounting_consumptions is not None
+    for consumption in accounting_consumptions or ():
         latency = consumption.get("latency_ms")
         if type(latency) is not int or latency < 0:
             latency_complete = False
@@ -10207,12 +14725,13 @@ def _hydrate_exp2_trace_metric_row(
         latency_complete = False
     return _RunnerExp2TraceMetricInput(
         direct_result=row,
-        persisted_logical_makespan_ms=observation.get("runtime_wall_clock_ms"),
+        persisted_logical_makespan_ms=root_wall_clock_ms,
         trace_consumptions=(
             tuple(
                 Exp2TraceConsumptionFacts(
                     consumption_id=str(consumption["consumption_id"]),
                     committed=True,
+                    source_bank_entry_id=str(consumption.get("entry_id") or ""),
                     source_total_tokens=consumption.get("total_tokens"),
                     source_cost_estimate_cny=(
                         Decimal(str(consumption["cost_estimate_cny"]))
@@ -10225,9 +14744,9 @@ def _hydrate_exp2_trace_metric_row(
                         else None
                     ),
                 )
-                for consumption in consumptions
+                for consumption in accounting_consumptions
             )
-            if consumptions is not None
+            if accounting_consumptions is not None
             else None
         ),
         ai_units=(
@@ -10254,6 +14773,25 @@ def _hydrate_exp2_trace_metric_row(
             else None
         ),
         observed_peak_concurrency=observation.get("observed_peak_concurrency"),
+        source_api_latency_total_ms=(
+            task.get("trace_source_usage", {}).get("source_api_latency_total_ms")
+            if isinstance(task.get("trace_source_usage"), Mapping)
+            else None
+        ),
+        source_api_latency_known_total_ms=(
+            task.get("trace_source_usage", {}).get(
+                "source_api_latency_known_total_ms"
+            )
+            if isinstance(task.get("trace_source_usage"), Mapping)
+            else None
+        ),
+        source_api_latency_missing_attempt_count=(
+            task.get("trace_source_usage", {}).get(
+                "source_api_latency_missing_attempt_count"
+            )
+            if isinstance(task.get("trace_source_usage"), Mapping)
+            else None
+        ),
     )
 
 
@@ -10307,36 +14845,37 @@ def _persisted_metric_observations(
     facts: Mapping[str, Any],
     *,
     observation_type: type,
+    source_resolvers: Mapping[str, Any] | None = None,
 ) -> tuple[Any, ...]:
-    records: list[tuple[str, Mapping[str, Any]]] = []
-    for category in ("attempts", "faults", "events"):
-        values = facts.get(category, ())
-        if not isinstance(values, Sequence) or isinstance(
-            values, (str, bytes, bytearray)
-        ):
-            raise ValueError(f"persisted metric {category} are malformed")
-        for index, value in enumerate(values):
-            if not isinstance(value, Mapping):
-                raise ValueError(f"persisted metric {category} must be mappings")
-            records.append((f"{category}:{index}", value))
-    task = facts.get("task")
-    if isinstance(task, Mapping):
-        records.append(("task", task))
-    if not records:
-        records.append(
-            (
-                "inventory",
-                {
-                    "member_kind": "preregistered_root",
-                    "root_status": row.root_status,
-                    "case_id": row.case_id,
-                },
-            )
+    if observation_type is Exp3PersistedObservation:
+        return _persisted_exp3_metric_observations(
+            row,
+            facts,
+            source_resolvers=source_resolvers,
         )
+    if observation_type is Exp4PersistedObservation:
+        return _persisted_exp4_metric_observations(row, facts)
+    records: list[tuple[str, Mapping[str, Any]]] = [
+        (
+            "root",
+            {
+                "member_kind": "preregistered_root",
+                "preregistered_root_run_id": row.preregistered_root_run_id,
+                "final_result_reference_complete": (
+                    row.final_result_reference_complete
+                ),
+                "end_to_end_verified_success": row.end_to_end_verified_success,
+            },
+        )
+    ]
+    # 原始 task/attempt/fault/event 只作为 typed projector 输入，绝不能直接
+    # 混入 metric member set；否则固定分母 root 会被无类型记录污染为 missing。
     return tuple(
         observation_type(
             observation_id=(
-                f"{row.preregistered_root_run_id}:{suffix}"
+                row.preregistered_root_run_id
+                if suffix == "root"
+                else f"{row.preregistered_root_run_id}:{suffix}"
             ),
             facts=dict(value),
         )
@@ -10344,16 +14883,1276 @@ def _persisted_metric_observations(
     )
 
 
+def _persisted_exp3_metric_observations(
+    row: Any,
+    facts: Mapping[str, Any],
+    *,
+    source_resolvers: Mapping[str, Any] | None = None,
+) -> tuple[Exp3PersistedObservation, ...]:
+    """从 persisted fault/event 反链生成 Exp3 正式 typed members。"""
+
+    raw_faults = facts.get("faults", ())
+    raw_events = facts.get("events", ())
+    if (
+        not isinstance(raw_faults, Sequence)
+        or isinstance(raw_faults, (str, bytes, bytearray))
+        or not isinstance(raw_events, Sequence)
+        or isinstance(raw_events, (str, bytes, bytearray))
+    ):
+        raise ValueError("persisted Exp3 fault/event inventory is malformed")
+    faults: list[Mapping[str, Any]] = []
+    for value in raw_faults:
+        if not isinstance(value, Mapping):
+            raise ValueError("persisted Exp3 fault record is malformed")
+        faults.append(value)
+    events: list[Mapping[str, Any]] = []
+    for value in raw_events:
+        if not isinstance(value, Mapping):
+            raise ValueError("persisted Exp3 ledger event is malformed")
+        events.append(value)
+    raw_attempts = facts.get("attempts", ())
+    if (
+        not isinstance(raw_attempts, Sequence)
+        or isinstance(raw_attempts, (str, bytes, bytearray))
+    ):
+        raise ValueError("persisted Exp3 attempt inventory is malformed")
+    attempts_by_id: dict[str, Mapping[str, Any]] = {}
+    for attempt in raw_attempts:
+        if not isinstance(attempt, Mapping):
+            raise ValueError("persisted Exp3 attempt record is malformed")
+        attempt_id = attempt.get("attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id or attempt_id in attempts_by_id:
+            raise ValueError("persisted Exp3 attempt identity is ambiguous")
+        attempts_by_id[attempt_id] = attempt
+
+    verification_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    canonical_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    created_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    recovery_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    request_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    trace_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    completed_by_unit: dict[str, list[Mapping[str, Any]]] = {}
+    terminal_attempt_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    for event in events:
+        event_type = event.get("event_type")
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        if event_type == "VERIFICATION_RECORDED":
+            attempt_id = payload.get("attempt_id")
+            if isinstance(attempt_id, str) and attempt_id:
+                verification_by_attempt.setdefault(attempt_id, []).append(event)
+        elif event_type == "CANONICAL_OUTPUTS_BOUND":
+            attempt_id = payload.get("selected_attempt_id")
+            if isinstance(attempt_id, str) and attempt_id:
+                canonical_by_attempt.setdefault(attempt_id, []).append(event)
+        elif event_type == "ATTEMPT_STATE_CHANGED" and payload.get("new_state") == "Created":
+            attempt = payload.get("attempt")
+            attempt_id = attempt.get("attempt_id") if isinstance(attempt, Mapping) else None
+            if isinstance(attempt_id, str) and attempt_id:
+                created_by_attempt.setdefault(attempt_id, []).append(event)
+        elif event_type == "ATTEMPT_STATE_CHANGED" and payload.get(
+            "new_state"
+        ) in {"Rejected", "Failed", "Superseded"}:
+            attempt = payload.get("attempt")
+            attempt_id = attempt.get("attempt_id") if isinstance(attempt, Mapping) else None
+            if isinstance(attempt_id, str) and attempt_id:
+                terminal_attempt_by_attempt.setdefault(attempt_id, []).append(event)
+        elif event_type == "RECOVERY_ACTION_RECORDED":
+            recovery = payload.get("recovery_action")
+            attempt_id = recovery.get("attempt_id") if isinstance(recovery, Mapping) else None
+            if isinstance(attempt_id, str) and attempt_id:
+                recovery_by_attempt.setdefault(attempt_id, []).append(event)
+        elif event_type == "EXECUTION_REQUEST_RECORDED":
+            attempt_id = payload.get("attempt_id")
+            if isinstance(attempt_id, str) and attempt_id:
+                request_by_attempt.setdefault(attempt_id, []).append(event)
+        elif event_type == "TRACE_DELIVERY_COMMITTED.v1":
+            attempt_id = payload.get("attempt_id")
+            if isinstance(attempt_id, str) and attempt_id:
+                trace_by_attempt.setdefault(attempt_id, []).append(event)
+        elif event_type == "TASK_UNIT_STATE_CHANGED" and payload.get("new_state") == "Completed":
+            task_unit = payload.get("task_unit")
+            unit_id = task_unit.get("unit_id") if isinstance(task_unit, Mapping) else None
+            if isinstance(unit_id, str) and unit_id:
+                completed_by_unit.setdefault(unit_id, []).append(event)
+
+    task = facts.get("task")
+    usage = task.get("trace_source_usage") if isinstance(task, Mapping) else None
+    raw_consumptions = usage.get("consumptions") if isinstance(usage, Mapping) else ()
+    if (
+        not isinstance(raw_consumptions, Sequence)
+        or isinstance(raw_consumptions, (str, bytes, bytearray))
+    ):
+        raise ValueError("persisted Exp3 trace consumption inventory is malformed")
+    consumptions_by_attempt: dict[str, list[Mapping[str, Any]]] = {}
+    consumptions: list[Mapping[str, Any]] = []
+    for consumption in raw_consumptions:
+        if not isinstance(consumption, Mapping):
+            raise ValueError("persisted Exp3 trace consumption is malformed")
+        attempt_id = consumption.get("current_attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ValueError("persisted Exp3 trace consumption has no attempt identity")
+        consumptions.append(consumption)
+        consumptions_by_attempt.setdefault(attempt_id, []).append(consumption)
+
+    records: list[tuple[str, Mapping[str, Any]]] = [
+        (
+            row.preregistered_root_run_id,
+            {
+                "member_kind": "preregistered_root",
+                "preregistered_root_run_id": row.preregistered_root_run_id,
+                "final_result_reference_complete": row.final_result_reference_complete,
+                "end_to_end_verified_success": row.end_to_end_verified_success,
+                **(
+                    {
+                        "source_bank_entry_ids": tuple(
+                            dict.fromkeys(
+                                _required_nonempty_string(
+                                    consumption.get("entry_id"),
+                                    "Exp3 source bank entry id",
+                                )
+                                for consumption in consumptions
+                            )
+                        )
+                    }
+                    if consumptions
+                    else {}
+                ),
+            },
+        )
+    ]
+    seen_fault_ids: set[str] = set()
+    death_slots: dict[str, list[tuple[str, str]]] = {}
+    for fault in faults:
+        fault_type = fault.get("fault_type")
+        if fault_type == "false_positive":
+            fault_id = _required_nonempty_string(fault.get("fault_id"), "Exp3 fault_id")
+            if fault_id in seen_fault_ids:
+                raise ValueError("persisted Exp3 fault identity is duplicated")
+            seen_fault_ids.add(fault_id)
+            attempt_id = _required_nonempty_string(
+                fault.get("attempt_id"), "Exp3 fault attempt_id"
+            )
+            mutation = fault.get("mutation_summary")
+            mutated_ref = fault.get("mutated_output_ref")
+            if (
+                fault.get("applicability_status") != "injected"
+                or not isinstance(mutation, Mapping)
+                or mutation.get("mutation_kind") != "false_positive_invalid_claim"
+                or mutation.get("expected_detection")
+                != "verifier_or_checker_reject"
+                or not isinstance(mutated_ref, Mapping)
+            ):
+                raise ValueError("persisted Exp3 false-positive injection is incomplete")
+            candidate_hash = _required_nonempty_string(
+                mutated_ref.get("content_hash"), "Exp3 mutated candidate hash"
+            )
+            verifications = verification_by_attempt.get(attempt_id, ())
+            if not verifications:
+                unverified_terminal = _exp3_failed_replacement_terminal(
+                    replacement_attempt_id=attempt_id,
+                    verification_events=(),
+                    canonical_events=canonical_by_attempt.get(attempt_id, ()),
+                    terminal_attempt_events=terminal_attempt_by_attempt.get(
+                        attempt_id, ()
+                    ),
+                )
+                if unverified_terminal is None:
+                    raise ValueError("persisted Exp3 verification identity is ambiguous")
+                records.append(
+                    (
+                        f"controlled-wrong:{fault_id}",
+                        {
+                            "member_kind": "exp3_controlled_wrong_candidate",
+                            "fault_type": "false_positive",
+                            "injection_completed": True,
+                            "reached_verification": False,
+                            "independently_known_wrong": True,
+                            "candidate_fault_id": fault_id,
+                            "injected_fault_id": fault_id,
+                            "candidate_attempt_id": attempt_id,
+                            "injection_attempt_id": attempt_id,
+                            "candidate_id": candidate_hash,
+                            "verifier_rejected_candidate_id": (
+                                f"not-rejected:{fault_id}"
+                            ),
+                            "canonical_candidate_id": f"not-canonical:{fault_id}",
+                            "root_candidate_id": f"not-root:{fault_id}",
+                            "fault_attempt_terminal_state": (
+                                unverified_terminal["replacement_terminal_state"]
+                            ),
+                        },
+                    )
+                )
+                continue
+            if len(verifications) != 1:
+                raise ValueError("persisted Exp3 verification identity is ambiguous")
+            verification_payload = verifications[0].get("payload")
+            assert isinstance(verification_payload, Mapping)
+            report = verification_payload.get("verification_report")
+            candidate_refs = (
+                report.get("candidate_output_refs")
+                if isinstance(report, Mapping)
+                else None
+            )
+            verification_hashes = _artifact_content_hashes(candidate_refs)
+            if (
+                verification_payload.get("status") != "rejected"
+                or verification_hashes != {candidate_hash}
+            ):
+                raise ValueError("persisted Exp3 rejected candidate backlink mismatch")
+            canonicals = canonical_by_attempt.get(attempt_id, ())
+            if len(canonicals) > 1:
+                raise ValueError("persisted Exp3 canonical identity is ambiguous")
+            canonical_hashes: set[str] = set()
+            if canonicals:
+                canonical_payload = canonicals[0].get("payload")
+                if not isinstance(canonical_payload, Mapping):
+                    raise ValueError("persisted Exp3 canonical payload is malformed")
+                canonical_hashes = _artifact_content_hashes(
+                    canonical_payload.get("canonical_output_refs")
+                )
+                if not canonical_hashes:
+                    raise ValueError("persisted Exp3 canonical refs are incomplete")
+            escaped = candidate_hash in canonical_hashes
+            records.append(
+                (
+                    f"controlled-wrong:{fault_id}",
+                    {
+                        "member_kind": "exp3_controlled_wrong_candidate",
+                        "fault_type": "false_positive",
+                        "injection_completed": True,
+                        "reached_verification": True,
+                        "independently_known_wrong": True,
+                        "candidate_fault_id": fault_id,
+                        "injected_fault_id": fault_id,
+                        "candidate_attempt_id": attempt_id,
+                        "injection_attempt_id": attempt_id,
+                        "candidate_id": candidate_hash,
+                        "verifier_rejected_candidate_id": candidate_hash,
+                        "canonical_candidate_id": (
+                            candidate_hash if escaped else f"not-canonical:{fault_id}"
+                        ),
+                        "root_candidate_id": f"not-root:{fault_id}",
+                    },
+                )
+            )
+        elif fault_type == "worker_death":
+            record_ref = fault.get("record_ref")
+            target = fault.get("target_ai_unit")
+            dead = fault.get("dead_attempt")
+            replacement = fault.get("replacement_attempt")
+            reassignment = fault.get("reassignment")
+            if not all(
+                isinstance(value, Mapping)
+                for value in (record_ref, target, dead, replacement, reassignment)
+            ):
+                raise ValueError("persisted Exp3 worker-death chain is incomplete")
+            assert isinstance(record_ref, Mapping)
+            assert isinstance(target, Mapping)
+            assert isinstance(dead, Mapping)
+            assert isinstance(replacement, Mapping)
+            assert isinstance(reassignment, Mapping)
+            record_id = _required_nonempty_string(
+                record_ref.get("artifact_id"), "Exp3 worker-death record id"
+            )
+            _required_nonempty_string(
+                record_ref.get("content_hash"), "Exp3 worker-death record hash"
+            )
+            if record_id in seen_fault_ids:
+                raise ValueError("persisted Exp3 fault identity is duplicated")
+            seen_fault_ids.add(record_id)
+            target_ratio = _required_ratio(
+                fault.get("kill_progress_target_ratio"),
+                "Exp3 target kill progress ratio",
+            )
+            actual_ratio = _required_ratio(
+                fault.get("kill_progress_actual_ratio"),
+                "Exp3 actual kill progress ratio",
+            )
+            completed = fault.get("kill_progress_completed_ai_unit_count")
+            total = fault.get("kill_progress_total_ai_unit_count")
+            if (
+                isinstance(completed, bool)
+                or not isinstance(completed, int)
+                or completed < 0
+                or isinstance(total, bool)
+                or not isinstance(total, int)
+                or total <= 0
+                or completed > total
+                or actual_ratio != Decimal(completed) / Decimal(total)
+                or fault.get("kill_progress_error") is not None
+                or not isinstance(fault.get("kill_progress_observed_at"), str)
+                or not fault.get("kill_progress_observed_at")
+            ):
+                raise ValueError("persisted Exp3 worker-death progress is incomplete")
+            unit_id = _required_nonempty_string(
+                target.get("unit_id"), "Exp3 worker-death unit id"
+            )
+            dead_attempt_id = _required_nonempty_string(
+                dead.get("attempt_id"), "Exp3 dead attempt id"
+            )
+            replacement_attempt_id = _required_nonempty_string(
+                replacement.get("attempt_id"), "Exp3 replacement attempt id"
+            )
+            if (
+                dead.get("unit_id") != unit_id
+                or replacement.get("unit_id") != unit_id
+                or reassignment.get("target_unit_id") != unit_id
+                or reassignment.get("original_attempt_id") != dead_attempt_id
+                or reassignment.get("replacement_attempt_id")
+                != replacement_attempt_id
+                or replacement_attempt_id == dead_attempt_id
+                or replacement.get("harness_status") != "replacement_completed"
+                or replacement.get("process_exitcode") != 0
+                or fault.get("replacement_process_exitcode") != 0
+            ):
+                raise ValueError("persisted Exp3 worker-death replacement backlink mismatch")
+            records.append(
+                (
+                    f"worker-death-progress:{record_id}",
+                    {
+                        "member_kind": "exp3_worker_death_progress",
+                        "worker_death_record_id": record_id,
+                        "progress_evidence_complete": True,
+                        "target_kill_progress_ratio": target_ratio,
+                        "actual_kill_progress_ratio": actual_ratio,
+                    },
+                )
+            )
+            death_slots.setdefault(unit_id, []).append(
+                (record_id, replacement_attempt_id)
+            )
+
+    for unit_id, links in sorted(death_slots.items()):
+        replacement_attempts = {attempt_id for _record_id, attempt_id in links}
+        if len(replacement_attempts) != 1:
+            raise ValueError("persisted Exp3 required-slot replacement is ambiguous")
+        replacement_attempt_id = next(iter(replacement_attempts))
+        verifications = verification_by_attempt.get(replacement_attempt_id, ())
+        canonicals = canonical_by_attempt.get(replacement_attempt_id, ())
+        verified_canonical = (
+            len(verifications) == 1
+            and len(canonicals) == 1
+            and isinstance(verifications[0].get("payload"), Mapping)
+            and verifications[0]["payload"].get("status") == "passed"
+            and isinstance(canonicals[0].get("payload"), Mapping)
+            and canonicals[0]["payload"].get("selected_attempt_id")
+            == replacement_attempt_id
+        )
+        failed_result = None
+        if not verified_canonical:
+            failed_result = _exp3_failed_replacement_terminal(
+                replacement_attempt_id=replacement_attempt_id,
+                verification_events=verifications,
+                canonical_events=canonicals,
+                terminal_attempt_events=terminal_attempt_by_attempt.get(
+                    replacement_attempt_id, ()
+                ),
+            )
+            if failed_result is None:
+                raise ValueError("persisted Exp3 required-slot closure is incomplete")
+        records.append(
+            (
+                f"required-slot:{unit_id}",
+                {
+                    "member_kind": "exp3_required_slot",
+                    "required_slot_unit_id": unit_id,
+                    "replacement_attempt_id": replacement_attempt_id,
+                    "worker_death_record_ids": tuple(
+                        sorted(record_id for record_id, _attempt_id in links)
+                    ),
+                    "recovered_valid_canonical": verified_canonical,
+                    **(failed_result or {}),
+                },
+            )
+        )
+
+    rate_fault_types = {
+        "false_positive",
+        "false_negative",
+        "no_return",
+        "late_submission",
+        "executor_error",
+    }
+    replacement_records: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
+    for fault in faults:
+        fault_type = fault.get("fault_type")
+        if fault_type not in rate_fault_types:
+            continue
+        fault_id = _required_nonempty_string(fault.get("fault_id"), "Exp3 fault_id")
+        if fault_type != "false_positive":
+            if fault_id in seen_fault_ids:
+                raise ValueError("persisted Exp3 fault identity is duplicated")
+            seen_fault_ids.add(fault_id)
+        if fault.get("applicability_status") != "injected":
+            raise ValueError("persisted Exp3 rate fault was not injected")
+        original_attempt_id = _required_nonempty_string(
+            fault.get("attempt_id"), "Exp3 fault attempt_id"
+        )
+        original_created = _unique_attempt_snapshot(
+            created_by_attempt, original_attempt_id, "Exp3 original attempt"
+        )
+        unit_id = _required_nonempty_string(
+            original_created.get("unit_id"), "Exp3 original unit id"
+        )
+        original_ordinal = _required_nonnegative_int(
+            original_created.get("attempt_ordinal"), "Exp3 original ordinal"
+        )
+        recoveries = recovery_by_attempt.get(original_attempt_id, ())
+        if len(recoveries) != 1:
+            raise ValueError("persisted Exp3 rate recovery identity is ambiguous")
+        recovery_payload = recoveries[0].get("payload")
+        recovery = (
+            recovery_payload.get("recovery_action")
+            if isinstance(recovery_payload, Mapping)
+            else None
+        )
+        if (
+            not isinstance(recovery, Mapping)
+            or recovery.get("unit_id") != unit_id
+            or recovery.get("retry_allowed") is not True
+            or recovery.get("retry_count") != original_ordinal + 1
+        ):
+            raise ValueError("persisted Exp3 rate recovery backlink mismatch")
+        successor = tuple(
+            (attempt_id, _unique_attempt_snapshot(created_by_attempt, attempt_id, "Exp3 successor"))
+            for attempt_id in created_by_attempt
+            if attempt_id != original_attempt_id
+        )
+        successors = tuple(
+            (attempt_id, snapshot)
+            for attempt_id, snapshot in successor
+            if snapshot.get("unit_id") == unit_id
+            and snapshot.get("attempt_ordinal") == original_ordinal + 1
+        )
+        if len(successors) != 1:
+            raise ValueError("persisted Exp3 rate replacement successor is ambiguous")
+        replacement_attempt_id, replacement_created = successors[0]
+        _append_exp3_replacement_members(
+            records=records,
+            trigger_id=fault_id,
+            original_attempt_id=original_attempt_id,
+            original_created=original_created,
+            replacement_attempt_id=replacement_attempt_id,
+            replacement_created=replacement_created,
+            consumptions_by_attempt=consumptions_by_attempt,
+            request_by_attempt=request_by_attempt,
+            trace_by_attempt=trace_by_attempt,
+            verification_by_attempt=verification_by_attempt,
+            canonical_by_attempt=canonical_by_attempt,
+            completed_by_unit=completed_by_unit,
+            terminal_attempt_by_attempt=terminal_attempt_by_attempt,
+            recovery_source_kind="validation_replacement",
+            original_worker_id=(
+                attempts_by_id.get(original_attempt_id, {}).get("worker_id")
+            ),
+            replacement_worker_id=(
+                attempts_by_id.get(replacement_attempt_id, {}).get("worker_id")
+            ),
+        )
+        replacement_records[replacement_attempt_id] = (original_created, replacement_created)
+        original_consumptions = consumptions_by_attempt.get(original_attempt_id, ())
+        if len(original_consumptions) != 1 or canonical_by_attempt.get(original_attempt_id):
+            raise ValueError("persisted Exp3 discarded consumption closure is ambiguous")
+        rejection_events = tuple(
+            event
+            for event in verification_by_attempt.get(original_attempt_id, ())
+            if isinstance(event.get("payload"), Mapping)
+            and event["payload"].get("status") == "rejected"
+        )
+        abandonment_events = recoveries
+        exclusion_events = rejection_events or abandonment_events
+        if len(exclusion_events) != 1:
+            raise ValueError("persisted Exp3 discarded exclusion identity is ambiguous")
+        exclusion_id = _required_nonempty_string(
+            exclusion_events[0].get("event_id"), "Exp3 discarded exclusion event id"
+        )
+        consumption = original_consumptions[0]
+        records.append(
+            (
+                f"discarded:{consumption.get('consumption_id')}",
+                {
+                    "member_kind": "exp3_discarded_trace_consumption",
+                    "discarded_after_fault": True,
+                    "canonical_excluded": True,
+                    "source_bank_entry_id": _required_nonempty_string(
+                        consumption.get("entry_id"), "Exp3 discarded entry id"
+                    ),
+                    "current_attempt_id": original_attempt_id,
+                    "fault_or_death_id": fault_id,
+                    "rejection_or_abandonment_id": exclusion_id,
+                    "canonical_exclusion_rejection_or_abandonment_id": exclusion_id,
+                    **_exp3_discarded_source_resource_facts(consumption),
+                    "source_bank_roles": (
+                        "request_body",
+                        "raw_output_or_provider_failure",
+                        "provenance",
+                        "usage_status",
+                        "latency",
+                        "pricing",
+                        "acquisition_attempt",
+                        "model_record",
+                    ),
+                },
+            )
+        )
+
+    for fault in faults:
+        if fault.get("fault_type") != "worker_death":
+            continue
+        record_ref = fault.get("record_ref")
+        dead = fault.get("dead_attempt")
+        replacement = fault.get("replacement_attempt")
+        if not all(isinstance(value, Mapping) for value in (record_ref, dead, replacement)):
+            raise ValueError("persisted Exp3 worker-death replacement is incomplete")
+        assert isinstance(record_ref, Mapping)
+        assert isinstance(dead, Mapping)
+        assert isinstance(replacement, Mapping)
+        trigger_id = _required_nonempty_string(
+            record_ref.get("artifact_id"), "Exp3 worker-death record id"
+        )
+        original_attempt_id = _required_nonempty_string(
+            dead.get("attempt_id"), "Exp3 dead attempt id"
+        )
+        replacement_attempt_id = _required_nonempty_string(
+            replacement.get("attempt_id"), "Exp3 replacement attempt id"
+        )
+        original_created = _unique_attempt_snapshot(
+            created_by_attempt, original_attempt_id, "Exp3 dead attempt"
+        )
+        replacement_created = _unique_attempt_snapshot(
+            created_by_attempt, replacement_attempt_id, "Exp3 death replacement"
+        )
+        original_ordinal = _required_nonnegative_int(
+            original_created.get("attempt_ordinal"), "Exp3 dead ordinal"
+        )
+        replacement_ordinal = _required_nonnegative_int(
+            replacement_created.get("attempt_ordinal"), "Exp3 death replacement ordinal"
+        )
+        if replacement_ordinal != original_ordinal + 1:
+            # 同一 unit 多次死亡时，旧 record 可能指向最终 replacement；只让
+            # 实际 ordinal successor 进入 replacement 分母，progress 记录仍保留。
+            continue
+        if replacement_attempt_id in replacement_records:
+            continue
+        _append_exp3_replacement_members(
+            records=records,
+            trigger_id=trigger_id,
+            original_attempt_id=original_attempt_id,
+            original_created=original_created,
+            replacement_attempt_id=replacement_attempt_id,
+            replacement_created=replacement_created,
+            consumptions_by_attempt=consumptions_by_attempt,
+            request_by_attempt=request_by_attempt,
+            trace_by_attempt=trace_by_attempt,
+            verification_by_attempt=verification_by_attempt,
+            canonical_by_attempt=canonical_by_attempt,
+            completed_by_unit=completed_by_unit,
+            terminal_attempt_by_attempt=terminal_attempt_by_attempt,
+            recovery_source_kind="worker_death_requeue",
+            original_worker_id=dead.get("worker_id"),
+            replacement_worker_id=replacement.get("worker_id"),
+        )
+        replacement_records[replacement_attempt_id] = (original_created, replacement_created)
+
+    if consumptions:
+        paired = task.get("paired_trace_reference") if isinstance(task, Mapping) else None
+        source_entry_ids = paired.get("source_entry_ids") if isinstance(paired, Mapping) else None
+        if (
+            not isinstance(source_entry_ids, Sequence)
+            or isinstance(source_entry_ids, (str, bytes, bytearray))
+            or any(not isinstance(value, str) or not value for value in source_entry_ids)
+            or any(consumption.get("entry_id") not in source_entry_ids for consumption in consumptions)
+        ):
+            raise ValueError("persisted Exp3 paired trace identity is incomplete")
+        current_reference = tuple(
+            consumption
+            for consumption in consumptions
+            if consumption.get("delivery_kind") == "ordinary_attempt"
+        )
+        resolver = (
+            source_resolvers.get(paired.get("bank_root_id"))
+            if isinstance(source_resolvers, Mapping)
+            else None
+        )
+        if resolver is not None:
+            _validate_persisted_exp3_source_reference(paired, resolver=resolver)
+        fault_tokens = _trace_source_resource_coverage(
+            tuple(consumptions), "total_tokens"
+        )
+        reference_tokens = _trace_source_resource_coverage(
+            current_reference, "total_tokens"
+        )
+        fault_cost = _trace_source_resource_coverage(
+            tuple(consumptions), "cost_estimate_cny", decimal=True
+        )
+        reference_cost = _trace_source_resource_coverage(
+            current_reference, "cost_estimate_cny", decimal=True
+        )
+        fault_latency = _trace_source_resource_coverage(
+            tuple(consumptions), "latency_ms"
+        )
+        reference_latency = _trace_source_resource_coverage(
+            current_reference, "latency_ms"
+        )
+        fault_protocol_delay = sum(
+            _required_nonnegative_int(
+                consumption.get("protocol_operational_delay_ms"),
+                "Exp3 fault redelivery protocol delay",
+            )
+            for consumption in consumptions
+            if consumption.get("delivery_kind") == "fault_redelivery"
+        )
+        records.append(
+            (
+                f"trace-pair:{row.preregistered_root_run_id}",
+                {
+                    "member_kind": "exp3_trace_pair",
+                    "pair_evidence_complete": True,
+                    "fault_sample_slot_id": str(row.condition_axes.get("sample_slot_index")),
+                    "reference_sample_slot_id": str(row.condition_axes.get("sample_slot_index")),
+                    "fault_trace_replay_wall_clock_ms": None,
+                    "reference_trace_replay_wall_clock_ms": None,
+                    "fault_trace_attributed_tokens": fault_tokens[0],
+                    "fault_trace_attributed_tokens_known_total": fault_tokens[1],
+                    "fault_trace_attributed_tokens_missing_attempt_count": (
+                        fault_tokens[2]
+                    ),
+                    "reference_trace_attributed_tokens": reference_tokens[0],
+                    "reference_trace_attributed_tokens_known_total": (
+                        reference_tokens[1]
+                    ),
+                    "reference_trace_attributed_tokens_missing_attempt_count": (
+                        reference_tokens[2]
+                    ),
+                    "fault_trace_attributed_cost": fault_cost[0],
+                    "fault_trace_attributed_cost_known_total": fault_cost[1],
+                    "fault_trace_attributed_cost_missing_attempt_count": fault_cost[2],
+                    "reference_trace_attributed_cost": reference_cost[0],
+                    "reference_trace_attributed_cost_known_total": reference_cost[1],
+                    "reference_trace_attributed_cost_missing_attempt_count": (
+                        reference_cost[2]
+                    ),
+                    "fault_source_api_latency_total_ms": fault_latency[0],
+                    "fault_source_api_latency_known_total_ms": fault_latency[1],
+                    "fault_source_api_latency_missing_attempt_count": fault_latency[2],
+                    "reference_source_api_latency_total_ms": reference_latency[0],
+                    "reference_source_api_latency_known_total_ms": (
+                        reference_latency[1]
+                    ),
+                    "reference_source_api_latency_missing_attempt_count": (
+                        reference_latency[2]
+                    ),
+                    "fault_protocol_fault_or_recovery_delay_ms": (
+                        fault_protocol_delay
+                    ),
+                    "reference_protocol_fault_or_recovery_delay_ms": 0,
+                    "source_bank_roles": TRACE_SOURCE_BANK_ROLES,
+                },
+            )
+        )
+
+    return tuple(
+        Exp3PersistedObservation(observation_id=identity, facts=value)
+        for identity, value in records
+    )
+
+
+def _validate_persisted_exp3_source_reference(
+    paired: Mapping[str, Any],
+    *,
+    resolver: Any,
+) -> None:
+    raw_entry_ids = paired.get("source_entry_ids")
+    if not isinstance(raw_entry_ids, Sequence) or isinstance(
+        raw_entry_ids, (str, bytes, bytearray)
+    ):
+        raise ValueError("persisted Exp3 paired source entry inventory is malformed")
+    if any(not isinstance(value, str) or not value for value in raw_entry_ids):
+        raise ValueError("persisted Exp3 paired source entry identity is malformed")
+    raw_mappings = paired.get("current_delivery_source_mappings")
+    if not isinstance(raw_mappings, Sequence) or isinstance(
+        raw_mappings, (str, bytes, bytearray)
+    ):
+        raise ValueError("persisted Exp3 delivery/source mappings are malformed")
+    binding_digests = paired.get("source_binding_digests")
+    if not isinstance(binding_digests, Sequence) or isinstance(
+        binding_digests, (str, bytes, bytearray)
+    ):
+        raise ValueError("persisted Exp3 source binding identities are malformed")
+    binding_digest_set = set(binding_digests)
+    current_delivery_keys: set[tuple[str, int, int]] = set()
+    mapped_entry_ids: set[str] = set()
+    for mapping in raw_mappings:
+        if not isinstance(mapping, Mapping):
+            raise ValueError("persisted Exp3 delivery/source mapping is malformed")
+        current_planned = mapping.get("current_planned_ai_unit_id")
+        current_sample = mapping.get("current_sample_slot_index")
+        current_ordinal = mapping.get("current_attempt_ordinal")
+        source_entry_id = mapping.get("source_entry_id")
+        source_sample = mapping.get("source_sample_slot_index")
+        source_slot = mapping.get("source_replacement_slot")
+        source_request_digest = mapping.get("source_inference_request_digest")
+        source_binding_digest = mapping.get("source_binding_digest")
+        if (
+            not isinstance(current_planned, str)
+            or not current_planned
+            or any(
+                type(value) is not int or value < 0
+                for value in (
+                    current_sample,
+                    current_ordinal,
+                    source_sample,
+                    source_slot,
+                )
+            )
+            or not isinstance(source_entry_id, str)
+            or not source_entry_id
+            or not isinstance(source_request_digest, str)
+            or not source_request_digest
+            or source_binding_digest not in binding_digest_set
+        ):
+            raise ValueError("persisted Exp3 delivery/source identity is invalid")
+        key = (current_planned, current_sample, current_ordinal)
+        if key in current_delivery_keys:
+            raise ValueError("persisted Exp3 current delivery identity is duplicated")
+        current_delivery_keys.add(key)
+        entry = resolver.entry(source_entry_id)
+        if (
+            entry.sample_slot_index != source_sample
+            or entry.replacement_slot != source_slot
+            or entry.inference_request_digest != source_request_digest
+        ):
+            raise ValueError("persisted Exp3 delivery/source identity drifted")
+        mapped_entry_ids.add(source_entry_id)
+    if not current_delivery_keys or mapped_entry_ids != set(raw_entry_ids):
+        raise ValueError("persisted Exp3 delivery/source coverage is incomplete")
+    slot_zero_count = 0
+    native_resolver = getattr(resolver, "resolver", resolver)
+    for entry_id in raw_entry_ids:
+        entry = resolver.entry(entry_id)
+        if entry.replacement_slot != 0:
+            continue
+        slot_zero_count += 1
+        usage_locators = tuple(
+            locator for locator in entry.object_locators if locator.object_role == "usage"
+        )
+        pricing_locators = tuple(
+            locator for locator in entry.object_locators if locator.object_role == "pricing"
+        )
+        if len(usage_locators) != 1 or len(pricing_locators) != 1:
+            raise ValueError("persisted Exp3 source usage/pricing locator is ambiguous")
+        try:
+            usage_document = json.loads(
+                native_resolver.read_verified(usage_locators[0]).decode("utf-8")
+            )
+            pricing_document = json.loads(
+                native_resolver.read_verified(pricing_locators[0]).decode("utf-8")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("persisted Exp3 source usage/pricing is malformed") from exc
+        usage = usage_document.get("usage") if isinstance(usage_document, Mapping) else None
+        if (
+            not isinstance(usage, Mapping)
+            or usage_document.get("usage_status") != "reported"
+        ):
+            raise ValueError("persisted Exp3 source usage is missing")
+        prompt = _required_nonnegative_int(
+            usage.get("prompt_tokens"), "Exp3 source prompt tokens"
+        )
+        completion = _required_nonnegative_int(
+            usage.get("completion_tokens"), "Exp3 source completion tokens"
+        )
+        total = _required_nonnegative_int(
+            usage.get("total_tokens"), "Exp3 source total tokens"
+        )
+        if prompt + completion != total or not isinstance(pricing_document, Mapping):
+            raise ValueError("persisted Exp3 source usage arithmetic is invalid")
+        input_rate = _required_decimal(
+            pricing_document.get("input_per_million_tokens"),
+            "Exp3 source input pricing",
+        )
+        output_rate = _required_decimal(
+            pricing_document.get("output_per_million_tokens"),
+            "Exp3 source output pricing",
+        )
+        if pricing_document.get("currency") != "CNY":
+            raise ValueError("persisted Exp3 source pricing currency is invalid")
+        _ = (
+            Decimal(prompt) * input_rate + Decimal(completion) * output_rate
+        ) / Decimal(1_000_000)
+    if slot_zero_count == 0:
+        raise ValueError("persisted Exp3 source slot-zero reference is missing")
+
+
+def _required_decimal(value: Any, name: str) -> Decimal:
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{name} is missing")
+    try:
+        result = Decimal(str(value))
+    except Exception as exc:
+        raise ValueError(f"{name} is malformed") from exc
+    if not result.is_finite() or result < 0:
+        raise ValueError(f"{name} is invalid")
+    return result
+
+
+def _unique_attempt_snapshot(
+    created_by_attempt: Mapping[str, list[Mapping[str, Any]]],
+    attempt_id: str,
+    name: str,
+) -> Mapping[str, Any]:
+    matches = created_by_attempt.get(attempt_id, ())
+    if len(matches) != 1:
+        raise ValueError(f"{name} identity is ambiguous")
+    payload = matches[0].get("payload")
+    attempt = payload.get("attempt") if isinstance(payload, Mapping) else None
+    if not isinstance(attempt, Mapping) or attempt.get("attempt_id") != attempt_id:
+        raise ValueError(f"{name} snapshot is malformed")
+    return attempt
+
+
+def _required_nonnegative_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} is missing")
+    return value
+
+
+def _append_exp3_replacement_members(
+    *,
+    records: list[tuple[str, Mapping[str, Any]]],
+    trigger_id: str,
+    original_attempt_id: str,
+    original_created: Mapping[str, Any],
+    replacement_attempt_id: str,
+    replacement_created: Mapping[str, Any],
+    consumptions_by_attempt: Mapping[str, list[Mapping[str, Any]]],
+    request_by_attempt: Mapping[str, list[Mapping[str, Any]]],
+    trace_by_attempt: Mapping[str, list[Mapping[str, Any]]],
+    verification_by_attempt: Mapping[str, list[Mapping[str, Any]]],
+    canonical_by_attempt: Mapping[str, list[Mapping[str, Any]]],
+    completed_by_unit: Mapping[str, list[Mapping[str, Any]]],
+    terminal_attempt_by_attempt: Mapping[str, list[Mapping[str, Any]]],
+    recovery_source_kind: str,
+    original_worker_id: Any = None,
+    replacement_worker_id: Any = None,
+) -> None:
+    unit_id = _required_nonempty_string(
+        original_created.get("unit_id"), "Exp3 replacement unit id"
+    )
+    original_ordinal = _required_nonnegative_int(
+        original_created.get("attempt_ordinal"), "Exp3 original ordinal"
+    )
+    replacement_ordinal = _required_nonnegative_int(
+        replacement_created.get("attempt_ordinal"), "Exp3 replacement ordinal"
+    )
+    if (
+        replacement_created.get("unit_id") != unit_id
+        or replacement_ordinal != original_ordinal + 1
+        or len(consumptions_by_attempt.get(replacement_attempt_id, ())) != 1
+        or len(request_by_attempt.get(replacement_attempt_id, ())) != 1
+        or len(trace_by_attempt.get(replacement_attempt_id, ())) != 1
+    ):
+        raise ValueError("persisted Exp3 replacement evidence chain is incomplete")
+    original_worker = original_worker_id or original_created.get("client_id")
+    replacement_worker = replacement_worker_id or replacement_created.get("client_id")
+    common = {
+        "member_kind": "replacement_attempt",
+        "fault_or_death_id": trigger_id,
+        "fault_or_death_task_unit_id": unit_id,
+        "fault_or_death_attempt_id": original_attempt_id,
+        "original_task_unit_id": unit_id,
+        "original_attempt_id": original_attempt_id,
+        "original_attempt_ordinal": original_ordinal,
+        "replacement_task_unit_id": unit_id,
+        "replacement_attempt_id": replacement_attempt_id,
+        "replacement_attempt_ordinal": replacement_ordinal,
+        "new_attempt_fault_or_death_id": trigger_id,
+        "new_attempt_task_unit_id": unit_id,
+        "new_attempt_id": replacement_attempt_id,
+        "new_attempt_ordinal": replacement_ordinal,
+        "original_worker_id": _required_nonempty_string(
+            original_worker, "Exp3 original worker id"
+        ),
+        "replacement_worker_id": _required_nonempty_string(
+            replacement_worker, "Exp3 replacement worker id"
+        ),
+        "recovery_source_kind": recovery_source_kind,
+    }
+    records.append(
+        (
+            f"replacement-started:{replacement_attempt_id}",
+            {**common, "ordered_evidence_roles": STARTED_REPLACEMENT_ROLES},
+        )
+    )
+    verifications = verification_by_attempt.get(replacement_attempt_id, ())
+    canonicals = canonical_by_attempt.get(replacement_attempt_id, ())
+    completions = completed_by_unit.get(unit_id, ())
+    if (
+        len(verifications) == 1
+        and len(canonicals) == 1
+        and len(completions) == 1
+    ):
+        verification_payload = verifications[0].get("payload")
+        canonical_payload = canonicals[0].get("payload")
+        if (
+            not isinstance(verification_payload, Mapping)
+            or verification_payload.get("status") != "passed"
+            or not isinstance(canonical_payload, Mapping)
+            or canonical_payload.get("selected_attempt_id") != replacement_attempt_id
+        ):
+            raise ValueError("persisted Exp3 replacement result closure is invalid")
+        records.append(
+            (
+                f"replacement-successful:{replacement_attempt_id}",
+                {
+                    **common,
+                    "ordered_evidence_roles": SUCCESSFUL_REPLACEMENT_ROLES,
+                    "replacement_result_qualified": True,
+                    "original_task_unit_completed": True,
+                    "replacement_result_task_unit_id": unit_id,
+                    "completed_task_unit_id": unit_id,
+                },
+            )
+        )
+        return
+
+    failed_result = _exp3_failed_replacement_terminal(
+        replacement_attempt_id=replacement_attempt_id,
+        verification_events=verifications,
+        canonical_events=canonicals,
+        terminal_attempt_events=terminal_attempt_by_attempt.get(
+            replacement_attempt_id, ()
+        ),
+    )
+    if failed_result is None:
+        raise ValueError("persisted Exp3 replacement result closure is ambiguous")
+    records.append(
+        (
+            f"replacement-failed:{replacement_attempt_id}",
+            {
+                **common,
+                "member_kind": "exp3_replacement_failure",
+                "replacement_result_qualified": False,
+                **failed_result,
+            },
+        )
+    )
+
+
+def _exp3_failed_replacement_terminal(
+    *,
+    replacement_attempt_id: str,
+    verification_events: Sequence[Mapping[str, Any]],
+    canonical_events: Sequence[Mapping[str, Any]],
+    terminal_attempt_events: Sequence[Mapping[str, Any]],
+) -> dict[str, str | None] | None:
+    """只把 ledger 明确终止但未 canonical 的 replacement 保留为实验失败。"""
+
+    if canonical_events or len(verification_events) > 1 or len(terminal_attempt_events) != 1:
+        return None
+    verification_status: str | None = None
+    if verification_events:
+        payload = verification_events[0].get("payload")
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("attempt_id") != replacement_attempt_id
+            or payload.get("status") != "rejected"
+        ):
+            return None
+        verification_status = "rejected"
+    terminal_payload = terminal_attempt_events[0].get("payload")
+    terminal_attempt = (
+        terminal_payload.get("attempt")
+        if isinstance(terminal_payload, Mapping)
+        else None
+    )
+    state = terminal_payload.get("new_state") if isinstance(terminal_payload, Mapping) else None
+    if (
+        not isinstance(terminal_attempt, Mapping)
+        or terminal_attempt.get("attempt_id") != replacement_attempt_id
+        or terminal_attempt.get("state") != state
+        or state not in {"Rejected", "Failed", "Superseded"}
+    ):
+        return None
+    failure_kind = terminal_attempt.get("failure_kind")
+    failure_reason = terminal_attempt.get("failure_reason")
+    if state in {"Rejected", "Failed"} and (
+        not isinstance(failure_kind, str) or not failure_kind
+    ):
+        return None
+    if state == "Rejected" and verification_status != "rejected":
+        return None
+    if state == "Superseded" and verification_status is not None:
+        return None
+    return {
+        "replacement_terminal_state": state,
+        "replacement_verification_status": verification_status,
+        "replacement_failure_kind": failure_kind if isinstance(failure_kind, str) else None,
+        "replacement_failure_reason": failure_reason if isinstance(failure_reason, str) else None,
+    }
+
+
+def _sum_required_numbers(
+    values: Sequence[Mapping[str, Any]],
+    field: str,
+    *,
+    decimal: bool,
+) -> int | Decimal | None:
+    result = Decimal(0)
+    missing = False
+    for value in _unique_trace_source_accounting_consumptions(values):
+        raw = value.get(field)
+        if raw is None:
+            missing = True
+            continue
+        if isinstance(raw, bool):
+            raise ValueError(f"persisted Exp3 usage field is malformed: {field}")
+        try:
+            number = Decimal(str(raw))
+        except Exception as exc:
+            raise ValueError(f"persisted Exp3 usage field is malformed: {field}") from exc
+        if not number.is_finite() or number < 0:
+            raise ValueError(f"persisted Exp3 usage field is invalid: {field}")
+        result += number
+    if missing:
+        return None
+    if decimal:
+        return result
+    if result != result.to_integral_value():
+        raise ValueError(f"persisted Exp3 usage field is not integral: {field}")
+    return int(result)
+
+
+def _exp3_discarded_source_resource_facts(
+    consumption: Mapping[str, Any],
+) -> dict[str, int | Decimal | bool | None]:
+    """保留 discarded source attempt 的 nullable 资源覆盖，不补零。"""
+
+    discarded_tokens = _trace_source_resource_coverage(
+        (consumption,), "total_tokens"
+    )
+    discarded_latency = _trace_source_resource_coverage(
+        (consumption,), "latency_ms"
+    )
+    discarded_cost = _trace_source_resource_coverage(
+        (consumption,), "cost_estimate_cny", decimal=True
+    )
+    return {
+        "source_usage_total_tokens": discarded_tokens[0],
+        "source_usage_total_tokens_known_total": discarded_tokens[1],
+        "source_usage_total_tokens_missing_attempt_count": discarded_tokens[2],
+        "source_usage_total_unknown": discarded_tokens[0] is None,
+        "source_api_latency_total_ms": discarded_latency[0],
+        "source_api_latency_known_total_ms": discarded_latency[1],
+        "source_api_latency_missing_attempt_count": discarded_latency[2],
+        "source_cost_total_cny": discarded_cost[0],
+        "source_cost_known_total_cny": discarded_cost[1],
+        "source_cost_missing_attempt_count": discarded_cost[2],
+    }
+
+
+def _artifact_content_hashes(value: Any) -> set[str]:
+    if not isinstance(value, Mapping):
+        return set()
+    hashes: set[str] = set()
+    for candidate in value.values():
+        if not isinstance(candidate, Mapping):
+            return set()
+        content_hash = candidate.get("content_hash")
+        if not isinstance(content_hash, str) or not content_hash:
+            return set()
+        hashes.add(content_hash)
+    return hashes
+
+
+def _required_nonempty_string(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} is missing")
+    return value
+
+
+def _required_ratio(value: Any, name: str) -> Decimal:
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{name} is missing")
+    try:
+        result = Decimal(str(value))
+    except Exception as exc:
+        raise ValueError(f"{name} is malformed") from exc
+    if not result.is_finite() or result < 0 or result > 1:
+        raise ValueError(f"{name} is outside [0, 1]")
+    return result
+
+
+def _persisted_exp4_metric_observations(
+    row: Any,
+    facts: Mapping[str, Any],
+) -> tuple[Exp4PersistedObservation, ...]:
+    """只把已由 typed hook 与 AI-attempt identity 证明的 Exp4 facts 投入指标。"""
+
+    task = facts.get("task")
+    if not isinstance(task, Mapping):
+        raise ValueError("persisted Exp4 task facts are missing")
+    usage = task.get("trace_source_usage")
+    consumptions = usage.get("consumptions") if isinstance(usage, Mapping) else None
+    runtime = task.get("ablation_runtime")
+    if (
+        not isinstance(consumptions, Sequence)
+        or isinstance(consumptions, (str, bytes, bytearray))
+        or not isinstance(runtime, Mapping)
+    ):
+        raise ValueError("persisted Exp4 AI attempt universe is incomplete")
+    universe: dict[str, Mapping[str, Any]] = {}
+    for value in consumptions:
+        if not isinstance(value, Mapping):
+            raise ValueError("persisted Exp4 source consumption is malformed")
+        attempt_id = value.get("current_attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id or attempt_id in universe:
+            raise ValueError("persisted Exp4 AI attempt identity is ambiguous")
+        universe[attempt_id] = value
+
+    raw_attempts = runtime.get("attempt_observations", ())
+    raw_hooks = runtime.get("hook_observations", ())
+    if (
+        not isinstance(raw_attempts, Sequence)
+        or isinstance(raw_attempts, (str, bytes, bytearray))
+        or not isinstance(raw_hooks, Sequence)
+        or isinstance(raw_hooks, (str, bytes, bytearray))
+    ):
+        raise ValueError("persisted Exp4 runtime observation inventory is malformed")
+    attempts: dict[str, Mapping[str, Any]] = {}
+    for value in raw_attempts:
+        if not isinstance(value, Mapping):
+            raise ValueError("persisted Exp4 attempt observation is malformed")
+        attempt_id = value.get("attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ValueError("persisted Exp4 attempt observation has no identity")
+        if attempt_id in universe:
+            if attempt_id in attempts:
+                raise ValueError("persisted Exp4 attempt observation is duplicated")
+            attempts[attempt_id] = value
+    if set(attempts) != set(universe):
+        raise ValueError("persisted Exp4 AI attempt observation join is incomplete")
+
+    hooks_by_attempt: dict[str, list[RuntimeHookObservationV1]] = {}
+    premature: list[RuntimeHookObservationV1] = []
+    for value in raw_hooks:
+        if not isinstance(value, Mapping):
+            raise ValueError("persisted Exp4 hook observation is malformed")
+        typed = RuntimeHookObservationV1.from_dict(value)
+        if typed.kind is RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED:
+            premature.append(typed)
+            continue
+        if typed.kind is not RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED:
+            continue
+        payload = typed.payload
+        if not isinstance(payload, ExperimentAblationGateAppliedPayloadV1):
+            raise ValueError("persisted Exp4 gate hook payload type mismatch")
+        attempt_id = payload.hook_input.get("attempt_id")
+        if isinstance(attempt_id, str) and attempt_id in universe:
+            hooks_by_attempt.setdefault(attempt_id, []).append(typed)
+
+    records: list[tuple[str, Mapping[str, Any]]] = [
+        (
+            row.preregistered_root_run_id,
+            {
+                "member_kind": "preregistered_root",
+                "preregistered_root_run_id": row.preregistered_root_run_id,
+                "final_result_reference_complete": row.final_result_reference_complete,
+                "end_to_end_verified_success": row.end_to_end_verified_success,
+            },
+        )
+    ]
+    for attempt_id in sorted(universe):
+        attempt = attempts[attempt_id]
+        parser_hooks = tuple(
+            hook
+            for hook in hooks_by_attempt.get(attempt_id, ())
+            if isinstance(hook.payload, ExperimentAblationGateAppliedPayloadV1)
+            and hook.payload.disabled_mechanism == "parser_policy"
+            and hook.payload.hook_result.get("bypass") is True
+        )
+        if len(parser_hooks) > 1:
+            raise ValueError("persisted Exp4 parser hook join is ambiguous")
+        if parser_hooks:
+            raw_ref = attempt.get("raw_output_ref")
+            candidate_ref = attempt.get("candidate_output_ref")
+            if not isinstance(raw_ref, Mapping) or not isinstance(candidate_ref, Mapping):
+                raise ValueError("persisted Exp4 raw/candidate evidence is incomplete")
+            raw_hash = raw_ref.get("content_hash")
+            if (
+                not isinstance(raw_hash, str)
+                or not raw_hash
+                or raw_hash != candidate_ref.get("content_hash")
+            ):
+                raise ValueError("persisted Exp4 raw/candidate identity mismatch")
+            canonical_refs = attempt.get("canonical_output_refs")
+            if not isinstance(canonical_refs, Mapping):
+                raise ValueError("persisted Exp4 canonical refs are malformed")
+            records.append(
+                (
+                    f"raw-only:{attempt_id}",
+                    {
+                        "member_kind": "raw_only_exposure_event",
+                        "attempt_id": attempt_id,
+                        "consumption_id": universe[attempt_id].get("consumption_id"),
+                        "hook_observation_digest": parser_hooks[0].observation_digest,
+                        "parser_policy_disabled": True,
+                        "raw_candidate_exposed": True,
+                        "raw_candidate_accepted": bool(canonical_refs),
+                    },
+                )
+            )
+    for hook in premature:
+        payload = hook.payload
+        records.append(
+            (
+                f"premature-merge:{hook.observation_digest}",
+                {
+                    "member_kind": "premature_merge_event",
+                    "hook_observation_digest": hook.observation_digest,
+                    "merge_gate_disabled": True,
+                    "merge_attempted_before_ready": True,
+                    "premature_merge_failed": payload.root_check_passed is False,
+                },
+            )
+        )
+    return tuple(
+        Exp4PersistedObservation(observation_id=identity, facts=value)
+        for identity, value in records
+    )
+
+
 def _hydrate_exp4_root(row: Any, facts: Mapping[str, Any]) -> Exp4DirectRootFacts:
     task, _attempts, run_evidence = _producer_parts(facts)
-    observation = _runtime_observation(run_evidence)
+    _runtime_observation(run_evidence)
+    root_started_at_ms, root_terminal_at_ms = _persisted_ledger_root_clock_ms(
+        facts, row
+    )
+    root_wall_clock_ms = (
+        root_terminal_at_ms - root_started_at_ms
+        if root_started_at_ms is not None and root_terminal_at_ms is not None
+        else None
+    )
     consumptions = _persisted_trace_source_consumptions(task)
     replacements = tuple(
         dict.fromkeys(
             str(consumption["entry_id"])
             for consumption in consumptions or ()
-            if type(consumption.get("replacement_slot")) is int
-            and consumption["replacement_slot"] > 0
+            if type(
+                consumption.get(
+                    "source_replacement_slot",
+                    consumption.get("replacement_slot"),
+                )
+            )
+            is int
+            and consumption.get(
+                "source_replacement_slot",
+                consumption.get("replacement_slot"),
+            )
+            > 0
         )
     )
     return Exp4DirectRootFacts(
@@ -10364,7 +16163,7 @@ def _hydrate_exp4_root(row: Any, facts: Mapping[str, Any]) -> Exp4DirectRootFact
         replacement_slot_ids=replacements,
         final_result_reference_complete=row.final_result_reference_complete,
         end_to_end_verified_success=row.end_to_end_verified_success,
-        trace_replay_wall_clock_ms=observation.get("runtime_wall_clock_ms"),
+        trace_replay_wall_clock_ms=root_wall_clock_ms,
         trace_attributed_tokens=_complete_trace_source_sum(
             consumptions, "total_tokens"
         ),
@@ -10375,6 +16174,43 @@ def _hydrate_exp4_root(row: Any, facts: Mapping[str, Any]) -> Exp4DirectRootFact
         paper_evidence_complete=row.paper_evidence_complete,
         infrastructure_valid=row.infrastructure_valid,
         source_bank_roles=_source_roles(row),
+        source_bank_entry_ids=tuple(
+            dict.fromkeys(
+                _required_nonempty_string(
+                    consumption.get("entry_id"),
+                    "Exp4 source bank entry id",
+                )
+                for consumption in consumptions or ()
+            )
+        ),
+    )
+
+
+def _exp5_metric_planned_unit_key(
+    *,
+    preregistered_root_run_id: str,
+    planned_ai_unit_id: str,
+) -> str:
+    """把可跨 root 重名的 runtime planned ID 限定在固定分母 root 内。"""
+
+    return json.dumps(
+        ("exp5_planned_ai_unit", preregistered_root_run_id, planned_ai_unit_id),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+
+def _exp5_unmapped_provider_attempt_key(
+    *,
+    preregistered_root_run_id: str,
+    attempt_id: str,
+) -> str:
+    """保留没有显式 planned ID 的实际调用，但不把 runtime child 伪装为计划。"""
+
+    return json.dumps(
+        ("exp5_unmapped_provider_attempt", preregistered_root_run_id, attempt_id),
+        ensure_ascii=True,
+        separators=(",", ":"),
     )
 
 
@@ -10392,11 +16228,23 @@ def _hydrate_exp5_metric_rows(
     for (model_arm, repeat_id), grouped_rows in sorted(groups.items()):
         roots: list[Exp5PreregisteredRootFacts] = []
         units: dict[str, Exp5PlannedAIUnitFacts] = {}
-        first_attempts: dict[str, Exp5FirstProviderAttemptFacts] = {}
+        first_attempts: list[Exp5FirstProviderAttemptFacts] = []
+        actual_provider_attempt_count_by_unit: dict[str, int] = {}
+        observed_max_retries = 0
         first_dispatch: int | float | None = None
+        identities: list[PaperModelEndpointIdentity] = []
         for row in grouped_rows:
             facts = facts_by_root[row.preregistered_root_run_id]
             task, attempts, run_evidence = _producer_parts(facts)
+            identity = facts.get("model_endpoint_identity")
+            if not isinstance(identity, PaperModelEndpointIdentity):
+                raise ValueError("Exp5 persisted model endpoint identity is missing")
+            if (
+                identity.selected_entry_id != model_arm
+                or row.condition_axes.get("model_endpoint_id") != model_arm
+            ):
+                raise ValueError("Exp5 persisted model endpoint identity mismatch")
+            identities.append(identity)
             observation = _runtime_observation(run_evidence)
             root_started_at_ms, root_terminal_at_ms = _persisted_ledger_root_clock_ms(
                 facts, row
@@ -10421,71 +16269,136 @@ def _hydrate_exp5_metric_rows(
                 str(value) for value in observation.get("planned_ai_unit_ids", ())
             )
             for unit_id in planned:
+                metric_unit_id = _exp5_metric_planned_unit_key(
+                    preregistered_root_run_id=row.preregistered_root_run_id,
+                    planned_ai_unit_id=unit_id,
+                )
                 units.setdefault(
-                    unit_id,
-                    Exp5PlannedAIUnitFacts(unit_id=unit_id, planned_call=True),
+                    metric_unit_id,
+                    Exp5PlannedAIUnitFacts(unit_id=metric_unit_id, planned_call=True),
                 )
             for attempt in attempts:
-                unit_id = str(
-                    attempt.get("unit_id")
-                    or attempt.get("planned_ai_unit_id")
-                    or ""
+                attempt_id = str(attempt.get("attempt_id") or "")
+                if not attempt_id:
+                    raise ValueError("Exp5 attempt has no attempt identity")
+                explicit_planned_ai_unit_id = attempt.get("planned_ai_unit_id")
+                unit_id = (
+                    _exp5_metric_planned_unit_key(
+                        preregistered_root_run_id=row.preregistered_root_run_id,
+                        planned_ai_unit_id=explicit_planned_ai_unit_id,
+                    )
+                    if isinstance(explicit_planned_ai_unit_id, str)
+                    and explicit_planned_ai_unit_id
+                    else _exp5_unmapped_provider_attempt_key(
+                        preregistered_root_run_id=row.preregistered_root_run_id,
+                        attempt_id=attempt_id,
+                    )
                 )
-                if not unit_id:
-                    raise ValueError("Exp5 attempt has no planned AI-unit identity")
-                units.setdefault(
-                    unit_id,
-                    Exp5PlannedAIUnitFacts(unit_id=unit_id, planned_call=True),
-                )
-                if unit_id in first_attempts:
-                    continue
                 error = str(attempt.get("error_kind") or "")
+                provider_attempt_count = attempt.get("provider_attempt_count")
+                if (
+                    type(provider_attempt_count) is not int
+                    or provider_attempt_count < 0
+                ):
+                    raise ValueError(
+                        "Exp5 persisted provider attempt count is invalid"
+                    )
+                actual_call = provider_attempt_count > 0
+                if actual_call and not isinstance(attempt.get("provider"), str):
+                    raise ValueError(
+                        "Exp5 persisted provider attempt requires provider identity"
+                    )
+                if actual_call and not str(attempt["provider"]):
+                    raise ValueError(
+                        "Exp5 persisted provider attempt requires provider identity"
+                    )
+                if actual_call:
+                    actual_provider_attempt_count_by_unit[unit_id] = (
+                        actual_provider_attempt_count_by_unit.get(unit_id, 0) + 1
+                    )
+                    if actual_provider_attempt_count_by_unit[unit_id] > 1:
+                        observed_max_retries = max(
+                            observed_max_retries,
+                            actual_provider_attempt_count_by_unit[unit_id] - 1,
+                        )
+                    provider_attempt_index = attempt.get("provider_attempt_index")
+                    if (
+                        type(provider_attempt_index) is not int
+                        or type(provider_attempt_count) is not int
+                        or provider_attempt_index != 0
+                        or provider_attempt_count != 1
+                    ):
+                        observed_max_retries = max(
+                            observed_max_retries,
+                            1,
+                            (
+                                provider_attempt_index
+                                if type(provider_attempt_index) is int
+                                else 0
+                            ),
+                            (
+                                provider_attempt_count - 1
+                                if type(provider_attempt_count) is int
+                                else 0
+                            ),
+                        )
                 accepted = (
                     str(attempt.get("attempt_status") or "").lower()
                     in {"succeeded", "completed"}
                     and not error
                 )
-                first_attempts[unit_id] = Exp5FirstProviderAttemptFacts(
-                    attempt_id=str(attempt.get("attempt_id") or ""),
-                    planned_ai_unit_id=unit_id,
-                    actual_call=bool(attempt.get("provider")),
-                    provider_transport_failure=error.startswith("provider_")
-                    or error in {"timeout", "executor_error"},
-                    parse_schema_unusable=error in {"parse_error", "schema_error"},
-                    verification_checker_rejected=(
-                        not accepted
-                        and error
-                        not in {
+                first_attempts.append(
+                    Exp5FirstProviderAttemptFacts(
+                        attempt_id=attempt_id,
+                        planned_ai_unit_id=unit_id,
+                        actual_call=actual_call,
+                        provider_transport_failure=error.startswith("provider_")
+                        or error in {"timeout", "executor_error"},
+                        parse_schema_unusable=error in {
                             "parse_error",
                             "schema_error",
-                            "timeout",
-                            "executor_error",
-                        }
-                        and not error.startswith("provider_")
-                    ),
-                    verifier_accepted_candidate=accepted,
-                    actual_total_tokens=attempt.get("total_tokens"),
-                    actual_cost_estimate_cny=cny_costs.get(
-                        str(attempt.get("attempt_id") or "")
-                    ),
-                    current_provider_roles=_current_roles(row),
+                        },
+                        verification_checker_rejected=(
+                            not accepted
+                            and error
+                            not in {
+                                "parse_error",
+                                "schema_error",
+                                "timeout",
+                                "executor_error",
+                            }
+                            and not error.startswith("provider_")
+                        ),
+                        verifier_accepted_candidate=accepted,
+                        actual_total_tokens=attempt.get("total_tokens"),
+                        actual_cost_estimate_cny=cny_costs.get(
+                            str(attempt.get("attempt_id") or "")
+                        ),
+                        current_provider_roles=_current_roles(row),
+                    )
                 )
+        if len({value.model_endpoint_identity_digest for value in identities}) != 1:
+            raise ValueError("Exp5 persisted model endpoint identity is ambiguous")
+        identity = identities[0]
         hydrated.append(
-            Exp5ModelRepeatFacts(
+            _RunnerExp5ModelRepeatFacts(
                 model_arm_id=model_arm,
                 repeat_id=repeat_id,
-                frozen_identity=None,
-                observed_identity=None,
-                persisted_model_endpoint_identity_digest=None,
+                frozen_identity=identity,
+                observed_identity=identity,
+                persisted_model_endpoint_identity_digest=(
+                    identity.model_endpoint_identity_digest
+                ),
                 protocol_first_dispatch_at_ms=first_dispatch,
                 preregistered_roots=tuple(roots),
                 planned_ai_units=tuple(units.values()),
-                first_provider_attempts=tuple(first_attempts.values()),
-                max_retries=0,
+                first_provider_attempts=tuple(first_attempts),
+                max_retries=observed_max_retries,
                 replacement_attempts_allowed=False,
                 infrastructure_valid=all(
                     row.infrastructure_valid for row in grouped_rows
                 ),
+                direct_results=tuple(grouped_rows),
             )
         )
     return tuple(hydrated)
@@ -10525,6 +16438,18 @@ def _finalize_canonical_direct_closure(
             derived_path = staged_evidence_root / derived_name
             if derived_path.is_file():
                 derived_path.unlink()
+        # resume可能已持久化上一轮metric materialization；它只属于派生输出，
+        # 不能进入本次protected formal input closure。
+        derived_metrics_root = staged_evidence_root / "metrics"
+        _reject_formal_reparse_path(
+            derived_metrics_root,
+            recursive=True,
+            check_existing_parents=False,
+        )
+        if derived_metrics_root.exists() and not derived_metrics_root.is_dir():
+            raise ValueError("derived metric staging root must be a directory")
+        if derived_metrics_root.is_dir():
+            shutil.rmtree(derived_metrics_root)
         _prepare_protected_formal_evidence_closure(
             staged_evidence_root,
             suite_root=suite_root,
@@ -11016,7 +16941,7 @@ def _finalize_formal_manifests(
     result_target = _formal_finalization_target(
         suite_root=suite_root,
         path=result_path,
-        content=_serialized_json_text(suite_result.to_dict()),
+        content=_serialized_json_text(_paper_suite_result_body(suite_result)),
     )
     suite_target = _formal_finalization_target(
         suite_root=suite_root,
@@ -11316,6 +17241,46 @@ def _catalog_cases_by_id(catalog_manifest: Any) -> dict[str, dict[str, Any]]:
     return cases
 
 
+def _catalog_case_identity_axes_by_id(
+    catalog_manifest: Any,
+) -> dict[str, tuple[str, str | None]]:
+    """从 catalog 分区与逐题元数据冻结 case 自身轴，禁止借用 condition 轴。"""
+
+    axes_by_id: dict[str, tuple[str, str | None]] = {}
+    for field_name, catalog_domain in (
+        ("factorization_cases", "factorization"),
+        ("lean_cases", "lean_proof"),
+        ("lean_lemma_graph_cases", "lean_proof"),
+    ):
+        values = (
+            catalog_manifest.get(field_name, ())
+            if isinstance(catalog_manifest, Mapping)
+            else getattr(catalog_manifest, field_name, ())
+        )
+        for case in values:
+            if not isinstance(case, Mapping) or not isinstance(
+                case.get("case_id"), str
+            ):
+                raise ValueError("formal catalog case is invalid")
+            case_id = str(case["case_id"])
+            declared_domain = case.get("domain")
+            if declared_domain is not None and declared_domain != catalog_domain:
+                raise ValueError(
+                    "formal catalog case domain disagrees with catalog partition"
+                )
+            difficulty = case.get("paper_difficulty")
+            if difficulty is None:
+                difficulty = case.get("difficulty")
+            if difficulty is not None and (
+                not isinstance(difficulty, str) or not difficulty
+            ):
+                raise ValueError("formal catalog case difficulty is invalid")
+            if case_id in axes_by_id:
+                raise ValueError("duplicate case_id in formal catalog")
+            axes_by_id[case_id] = (catalog_domain, difficulty)
+    return axes_by_id
+
+
 def _case_with_selection_split_profile(
     case: Mapping[str, Any],
     selection: Any,
@@ -11342,43 +17307,10 @@ def _condition_with_frozen_case_metadata(
     case: Mapping[str, Any],
 ) -> PaperExperimentCondition:
     """把冻结 case 的逐题元数据绑定到临时 adapter 执行 condition。"""
-
-    if condition.domain == "factorization":
-        difficulty = case.get("difficulty")
-        paper_difficulty = case.get("paper_difficulty")
-        if difficulty is None and paper_difficulty is None:
-            return condition
-        if not isinstance(difficulty, str) or not difficulty:
-            raise ValueError("frozen factorization case difficulty is required")
-        if not isinstance(paper_difficulty, str) or not paper_difficulty:
-            raise ValueError(
-                "frozen factorization case paper_difficulty is required"
-            )
-        return replace(
-            condition,
-            difficulty=difficulty,
-            paper_difficulty=paper_difficulty,
-        )
-    if condition.domain != "lean_proof":
-        return condition
-    updates: dict[str, Any] = {}
-    for field_name in (
-        "paper_difficulty",
-        "topic_family",
-        "topic_family_version",
-        "construction_rule_id",
-        "oracle_package_group",
-        "proof_assembly_shape",
-    ):
-        condition_value = getattr(condition, field_name)
-        case_value = case.get(field_name)
-        if condition_value is not None and condition_value != case_value:
-            raise ValueError(
-                f"condition {field_name} must match frozen Lean case metadata"
-            )
-        if condition_value is None:
-            updates[field_name] = case_value
-    return replace(condition, **updates) if updates else condition
+    return bind_condition_to_frozen_case_metadata(
+        prepared_condition=condition,
+        frozen_case=case,
+    )
 
 
 def _required_field(value: Any, field_name: str) -> Any:

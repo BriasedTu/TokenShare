@@ -16,7 +16,11 @@ from threading import Lock
 from typing import Any, Mapping, Sequence
 
 from tokenshare.core.models import ArtifactRef, JsonObject, ProtocolConfig, TaskState, TaskUnit
-from tokenshare.executors.ai_api import AIAPIExecutor
+from tokenshare.executors.ai_api import (
+    AIAPIExecutor,
+    persist_zero_provider_attempt_provenance,
+    validated_current_provider_attempt_count as validate_provider_attempt_count,
+)
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
     UrlLibDeepSeekTransport,
@@ -37,6 +41,9 @@ from tokenshare.executors.trace_backed import (
     bind_trace_execution_request,
 )
 from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
+from tokenshare.experiments.paper_formal_evidence import (
+    _typed_execution_request_from_dict,
+)
 from tokenshare.experiments.paper_model_identity import (
     ValidatedModelEndpointBinding,
     build_fixed_entry_executor_requirements,
@@ -63,7 +70,11 @@ from tokenshare.experiments.paper_runtime_clock import (
     FixedLifecycleClock,
     runtime_lifecycle_clock,
 )
-from tokenshare.experiments.paper_projection import project_paper_protocol_run
+from tokenshare.experiments.paper_projection import (
+    CapturedModelExecutionRecordBinding,
+    project_paper_protocol_run,
+    reconcile_captured_model_execution_records,
+)
 from tokenshare.experiments.paper_ablation import runtime_controls_for_mode
 from tokenshare.experiments.paper_unit_commitments import (
     factorization_range_plugin_payload,
@@ -89,7 +100,10 @@ from tokenshare.local_runtime.logical_scheduler import (
     LogicalSourceLatencyScheduler,
 )
 from tokenshare.local_runtime.contracts import (
+    ParsedCandidateContext,
     PreparedTraceDelivery,
+    TRACE_TERMINAL_EXECUTION_RESULT_KINDS,
+    TraceConsumptionCore,
     WorkerCompletionSchedule,
 )
 from tokenshare.plugins.contracts import OutputContract
@@ -714,6 +728,7 @@ class _CapturedRangeCall:
     usage_ref: ArtifactRef
     model_execution_record: Any | None
     model_execution_record_ref: ArtifactRef | None
+    model_execution_record_required: bool
     resolved_secret_values: tuple[str, ...] = ()
 
 
@@ -812,8 +827,20 @@ class _TraceRangeExecutorRecorder:
 class FactorizationTraceDomainStage:
     """在 parent 内复用正式 Factorization parser 与 canonical normalizer。"""
 
-    def __init__(self, plugin_runtime: FactorizationRuntimeAdapter) -> None:
+    def __init__(
+        self,
+        plugin_runtime: FactorizationRuntimeAdapter,
+        *,
+        post_raw_output_hook: Any | None = None,
+        bindings: Sequence[TraceSourceBinding] = (),
+    ) -> None:
         self._plugin_runtime = plugin_runtime
+        self._post_raw_output_hook = post_raw_output_hook
+        self._bindings_by_digest = {
+            binding.binding_digest: binding for binding in bindings
+        }
+        if len(self._bindings_by_digest) != len(bindings):
+            raise ValueError("factorization trace bindings must be unique")
         self.requests_by_attempt: dict[str, ExecutionRequest] = {}
         self.deliveries_by_attempt: dict[str, PreparedTraceDelivery] = {}
         self.submissions_by_attempt: dict[str, ExecutionSubmission] = {}
@@ -821,12 +848,75 @@ class FactorizationTraceDomainStage:
     def stage(self, context: TraceDomainStageContext) -> TraceDomainStageResult:
         self.requests_by_attempt[context.request.attempt_id] = context.request
         self.deliveries_by_attempt[context.request.attempt_id] = context.delivery
+        active_fault_hook = self._fault_hook_for_delivery(context)
+        parser_input_text, execution_result_kind = (
+            _observe_factorization_trace_raw_output_hook(
+                context=context,
+                post_raw_output_hook=active_fault_hook,
+            )
+        )
+        digest_key = context.delivery.delivery_digest.removeprefix("sha256:")
+        if execution_result_kind is not None:
+            terminal_ref = context.artifact_store.save_json(
+                {
+                    "schema_version": "tokenshare.trace_terminal_execution_result.v1",
+                    "result_kind": execution_result_kind,
+                    "raw_output_ref": context.current_wrapper_ref.to_dict(),
+                    "provenance_ref": context.current_provenance_ref.to_dict(),
+                    "usage_ref": context.trace_attribution_ref.to_dict(),
+                    "current_provider_call_count": 0,
+                },
+                artifact_id=f"factorization_trace_terminal_result_{digest_key}",
+                artifact_type="TraceTerminalExecutionResult",
+                artifact_schema_id="tokenshare.trace_terminal_execution_result",
+                artifact_schema_version="v1",
+                source={
+                    "kind": "factorization_trace_parent_raw_hook",
+                    "delivery_digest": context.delivery.delivery_digest,
+                },
+                metadata={"attempt_id": context.delivery.attempt_id},
+                created_at=context.created_at,
+            )
+            request = context.request
+            self.submissions_by_attempt[request.attempt_id] = ExecutionSubmission(
+                submission_id=f"trace_terminal_submission_{digest_key}",
+                request_id=request.request_id,
+                task_id=request.task_id,
+                unit_id=request.unit_id,
+                attempt_id=request.attempt_id,
+                lease_id=request.lease_id,
+                fencing_token=request.fencing_token,
+                executor_id=str(request.executor["executor_id"]),
+                executor_version=str(request.executor["executor_version"]),
+                result_kind=execution_result_kind,
+                raw_output_ref=context.current_wrapper_ref,
+                parsed_output_ref=None,
+                candidate_output_refs={},
+                parse_failure_ref=None,
+                log_ref=None,
+                environment_ref=request.environment_ref,
+                environment_summary={"runtime": "trace_backed_parent_raw_hook"},
+                provenance_ref=context.current_provenance_ref,
+                usage_summary={
+                    "provider_attempt_count": 0,
+                    "current_provider_call_count": 0,
+                    "source_usage_class": "trace_attribution",
+                },
+                error={
+                    "kind": execution_result_kind,
+                    "source": "post_raw_output_hook",
+                },
+                submitted_at=context.created_at,
+            )
+            return TraceDomainStageResult(
+                parser_result_ref=terminal_ref,
+                execution_result_kind=execution_result_kind,
+            )
         parsed = parse_factorization_ai_output(
-            context.parser_input_text,
+            parser_input_text,
             raw_output_ref_summary=context.current_wrapper_ref.to_dict(),
             created_at=context.created_at,
         )
-        digest_key = context.delivery.delivery_digest.removeprefix("sha256:")
         source = {
             "kind": "factorization_trace_parent_parser",
             "delivery_digest": context.delivery.delivery_digest,
@@ -886,6 +976,12 @@ class FactorizationTraceDomainStage:
             error=None,
             submitted_at=context.created_at,
         )
+        staged_submission = _apply_pre_verifier_parsed_candidate_hook(
+            post_raw_output_hook=active_fault_hook,
+            run_id=context.delivery.current_run_id,
+            request=request,
+            submission=staged_submission,
+        )
         normalized = self._plugin_runtime.normalize_range_submission(
             staged_submission
         )
@@ -897,6 +993,160 @@ class FactorizationTraceDomainStage:
             parser_result_ref=candidate_ref,
             canonical_ref=canonical_ref,
         )
+
+    def _fault_hook_for_delivery(
+        self, context: TraceDomainStageContext
+    ) -> Any | None:
+        if not callable(self._post_raw_output_hook):
+            return None
+        if not self._bindings_by_digest:
+            # 历史 focused fixture 没有 typed delivery plan；正式 trace 路径必传。
+            return self._post_raw_output_hook
+        try:
+            binding = self._bindings_by_digest[context.delivery.binding_digest]
+        except KeyError as exc:
+            raise ValueError("factorization trace delivery has no validated binding") from exc
+        delivery = binding.delivery(context.request.attempt_ordinal)
+        has_fault_redelivery = any(
+            item.delivery_kind == "fault_redelivery"
+            for item in binding.attempt_deliveries
+        )
+        if not has_fault_redelivery:
+            return self._post_raw_output_hook
+        if (
+            delivery.delivery_kind == "ordinary_attempt"
+            and delivery.current_attempt_ordinal
+            == binding.terminal_ordinary_ordinal
+        ):
+            return self._post_raw_output_hook
+        return None
+
+
+def _observe_factorization_trace_raw_output_hook(
+    *,
+    context: TraceDomainStageContext,
+    post_raw_output_hook: Any | None,
+) -> tuple[str, str | None]:
+    """用已持久化 trace source 在 Factor parser 前执行正式 raw hook。"""
+
+    if not callable(post_raw_output_hook):
+        return context.parser_input_text, None
+    source_usage = context.source_objects.get("usage", {})
+    nested_usage = (
+        source_usage.get("usage") if isinstance(source_usage, Mapping) else None
+    )
+    usage_summary = dict(nested_usage) if isinstance(nested_usage, Mapping) else {}
+    usage_summary.update(
+        {
+            "provider_attempt_count": 0,
+            "current_provider_call_count": 0,
+            "source_usage_class": "trace_attribution",
+        }
+    )
+    provenance = context.source_objects.get("provenance", {})
+    model_record = context.source_objects.get("model_record", {})
+    provider_family = (
+        provenance.get("provider_family")
+        if isinstance(provenance, Mapping)
+        else None
+    ) or context.request.hard_requirements.get("provider_family") or "trace_source"
+    model = None
+    if isinstance(model_record, Mapping):
+        model = (
+            model_record.get("resolved_model")
+            or model_record.get("configured_model")
+            or model_record.get("model")
+        )
+    model = model or context.request.hard_requirements.get("model") or "trace_source"
+    entry_id = (
+        provenance.get("entry_id") if isinstance(provenance, Mapping) else None
+    ) or context.delivery.entry_id
+    hook_result = post_raw_output_hook(
+        artifact_store=context.artifact_store,
+        request=context.request,
+        submission_id=(
+            "trace_parser_submission_"
+            f"{context.delivery.delivery_digest.removeprefix('sha256:')}"
+        ),
+        raw_output_ref=context.current_wrapper_ref,
+        provenance_ref=context.current_provenance_ref,
+        usage_ref=context.trace_attribution_ref,
+        provider_family=str(provider_family),
+        model=str(model),
+        entry_id=str(entry_id),
+        content_text=context.parser_input_text,
+        usage_summary=usage_summary,
+        submitted_at=context.created_at,
+    )
+    if hook_result is None:
+        return context.parser_input_text, None
+    if not isinstance(hook_result, Mapping):
+        raise ValueError("trace post_raw_output_hook must return a mapping or None")
+    result_kind = hook_result.get("result_kind")
+    if result_kind is not None:
+        normalized_result_kind = str(result_kind)
+        if normalized_result_kind not in TRACE_TERMINAL_EXECUTION_RESULT_KINDS:
+            raise ValueError("unsupported trace execution result kind")
+        return context.parser_input_text, normalized_result_kind
+    replacement_text = hook_result.get("content_text")
+    if replacement_text is None:
+        return context.parser_input_text, None
+    if not isinstance(replacement_text, str):
+        raise ValueError("trace post_raw_output_hook content_text must be a string")
+    return replacement_text, None
+
+
+def _apply_pre_verifier_parsed_candidate_hook(
+    *,
+    post_raw_output_hook: Any | None,
+    run_id: str,
+    request: ExecutionRequest,
+    submission: ExecutionSubmission,
+) -> ExecutionSubmission:
+    """让 Exp3 parsed candidate fault 在 Factor verifier 前生效。"""
+
+    parsed_hook = getattr(
+        post_raw_output_hook,
+        "after_parsed_candidate_persisted",
+        None,
+    )
+    if (
+        not callable(parsed_hook)
+        or submission.parsed_output_ref is None
+        or not submission.candidate_output_refs
+    ):
+        return submission
+    planned_ai_unit_id = (request.soft_hints or {}).get("planned_ai_unit_id")
+    directive = parsed_hook(
+        ParsedCandidateContext(
+            run_id=run_id,
+            task_id=submission.task_id,
+            unit_id=submission.unit_id,
+            attempt_id=submission.attempt_id,
+            lease_id=submission.lease_id,
+            worker_id=str(
+                request.allocation_decision.get(
+                    "worker_id",
+                    request.allocation_decision.get("client_id", "formal-worker"),
+                )
+            ),
+            raw_output_ref=submission.raw_output_ref,
+            original_parsed_output_ref=submission.parsed_output_ref,
+            candidate_output_refs=dict(submission.candidate_output_refs),
+            submitted_at=submission.submitted_at,
+            experiment_unit_id=(
+                planned_ai_unit_id
+                if isinstance(planned_ai_unit_id, str) and planned_ai_unit_id
+                else None
+            ),
+        )
+    )
+    if directive is None:
+        return submission
+    return replace(
+        submission,
+        candidate_output_refs=dict(directive.replacement_candidate_output_refs),
+    )
 
 
 def bind_factorization_trace_request(
@@ -1035,6 +1285,7 @@ class _FixedIdentityRangeExecutor:
         config: AIAPIExecutorConfig,
         executor_requirements: JsonObject,
         case_id: str,
+        model_execution_record_required: bool,
         paper_eligible_transport: bool,
         secret_collector: _TransientSecretCollector,
     ) -> None:
@@ -1045,6 +1296,7 @@ class _FixedIdentityRangeExecutor:
         self.config = config
         self.executor_requirements = dict(executor_requirements)
         self.case_id = case_id
+        self.model_execution_record_required = model_execution_record_required
         self.paper_eligible_transport = paper_eligible_transport
         self.secret_collector = secret_collector
         self.calls: list[_CapturedRangeCall] = []
@@ -1074,11 +1326,17 @@ class _FixedIdentityRangeExecutor:
         submission: ExecutionSubmission,
     ) -> _CapturedRangeCall:
         del submission
-        return next(
+        matches = tuple(
             call
-            for call in reversed(self.calls)
+            for call in self.calls
             if call.request.attempt_id == request.attempt_id
         )
+        if len(matches) != 1:
+            raise ValueError(
+                "Factorization process result requires exactly one captured "
+                f"request attempt_id {request.attempt_id!r}; observed {len(matches)}"
+            )
+        return matches[0]
 
     def ingest_process_result(self, captured: _CapturedRangeCall) -> None:
         for secret in captured.resolved_secret_values:
@@ -1088,7 +1346,10 @@ class _FixedIdentityRangeExecutor:
                 call.request.attempt_id == captured.request.attempt_id
                 for call in self.calls
             ):
-                return
+                raise ValueError(
+                    "Factorization process result duplicated captured request "
+                    f"attempt_id: {captured.request.attempt_id}"
+                )
             self.calls.append(captured)
 
     def execute(self, request, *, submission_id: str, submitted_at: str):
@@ -1115,6 +1376,15 @@ class _FixedIdentityRangeExecutor:
             executor_version=self.executor.executor_version,
         )
         if requirement_mismatches:
+            provenance_ref = persist_zero_provider_attempt_provenance(
+                artifact_store=self.store,
+                config=self.config,
+                executor_id=self.executor.executor_id,
+                submission_id=submission_id,
+                request=request,
+                final_result_kind="fatal_executor_error",
+                submitted_at=submitted_at,
+            )
             submission = ExecutionSubmission(
                 submission_id=submission_id,
                 request_id=request.request_id,
@@ -1133,7 +1403,7 @@ class _FixedIdentityRangeExecutor:
                 log_ref=None,
                 environment_ref=request.environment_ref,
                 environment_summary={"runtime": "fixed_identity_policy"},
-                provenance_ref=None,
+                provenance_ref=provenance_ref,
                 usage_summary={"provider_attempt_count": 0},
                 error={
                     "kind": "executor_requirement_mismatch",
@@ -1192,6 +1462,10 @@ class _FixedIdentityRangeExecutor:
                     usage_ref=usage_ref,
                     model_execution_record=model_record,
                     model_execution_record_ref=record_ref,
+                    model_execution_record_required=(
+                        self.model_execution_record_required
+                        and not requirement_mismatches
+                    ),
                     resolved_secret_values=self.secret_collector.snapshot(),
                 )
             )
@@ -1264,9 +1538,33 @@ def _trace_range_calls_from_events(
     ]
     result: list[_CapturedRangeCall] = []
     for attempt_id in committed_attempt_ids:
-        request = requests[attempt_id]
-        delivery = deliveries[attempt_id]
-        submission = staged_submissions[attempt_id]
+        if (
+            attempt_id in requests
+            and attempt_id in deliveries
+            and attempt_id in staged_submissions
+        ):
+            request = requests[attempt_id]
+            delivery = deliveries[attempt_id]
+            submission = staged_submissions[attempt_id]
+            request_ref = request_refs_by_id[request.request_id]
+        else:
+            request, delivery, submission, request_ref = (
+                _restore_trace_range_call_from_events(
+                    attempt_id=attempt_id,
+                    runtime_events=runtime_events,
+                    store=store,
+                )
+            )
+            for staged, restored, label in (
+                (requests.get(attempt_id), request, "request"),
+                (deliveries.get(attempt_id), delivery, "delivery"),
+                (staged_submissions.get(attempt_id), submission, "submission"),
+            ):
+                if staged is not None and staged.to_dict() != restored.to_dict():
+                    raise ValueError(f"trace {label} staged/runtime identity mismatch")
+            indexed_ref = request_refs_by_id.get(request.request_id)
+            if indexed_ref is not None and indexed_ref != request_ref:
+                raise ValueError("trace request ref index identity mismatch")
         submission = replace(
             submission,
             usage_summary={
@@ -1289,13 +1587,299 @@ def _trace_range_calls_from_events(
             _CapturedRangeCall(
                 request=request,
                 submission=submission,
-                request_ref=request_refs_by_id[request.request_id],
+                request_ref=request_ref,
                 usage_ref=usage_ref,
                 model_execution_record=None,
                 model_execution_record_ref=None,
+                model_execution_record_required=False,
             )
         )
     return result
+
+
+def _restore_trace_range_call_from_events(
+    *,
+    attempt_id: str,
+    runtime_events: Sequence[Any],
+    store: ArtifactStore,
+) -> tuple[ExecutionRequest, PreparedTraceDelivery, ExecutionSubmission, ArtifactRef]:
+    request_events = tuple(
+        event
+        for event in runtime_events
+        if event.event_type == "EXECUTION_REQUEST_RECORDED"
+        and event.payload.get("attempt_id") == attempt_id
+    )
+    commit_events = tuple(
+        event
+        for event in runtime_events
+        if event.event_type == "TRACE_DELIVERY_COMMITTED.v1"
+        and event.payload.get("attempt_id") == attempt_id
+    )
+    submission_events = tuple(
+        event
+        for event in runtime_events
+        if event.event_type == "EXECUTION_SUBMISSION_RECORDED"
+        and event.payload.get("attempt_id") == attempt_id
+        and event.payload.get("acceptance_status") == "accepted"
+    )
+    for label, matches in (
+        ("request", request_events),
+        ("commit", commit_events),
+        ("accepted submission", submission_events),
+    ):
+        if len(matches) != 1:
+            raise ValueError(
+                f"trace {label} runtime event is missing or ambiguous for {attempt_id}"
+            )
+
+    request_event = request_events[0]
+    commit_event = commit_events[0]
+    submission_event = submission_events[0]
+    request_ref, request_body = _verified_trace_json_ref(
+        store, request_event.payload.get("request_ref"), "request"
+    )
+    request = _typed_execution_request_from_dict(request_body)
+    commit = TraceConsumptionCore.from_dict(commit_event.payload)
+    _, delivery_body = _verified_trace_json_ref(
+        store, commit.current_wrapper_ref.to_dict(), "current wrapper"
+    )
+    delivery = PreparedTraceDelivery.from_dict(delivery_body)
+    _, submission_body = _verified_trace_json_ref(
+        store, submission_event.payload.get("submission_ref"), "submission"
+    )
+    submission = _typed_trace_execution_submission(submission_body)
+
+    if any(
+        actual != expected
+        for actual, expected in (
+            (request_event.object_type, "ExecutionRequest"),
+            (request_event.object_id, request.request_id),
+            (request_event.task_id, request.task_id),
+            (request_event.payload.get("request_id"), request.request_id),
+            (request_event.payload.get("attempt_id"), request.attempt_id),
+            (request_event.payload.get("task_id"), request.task_id),
+            (request_event.payload.get("unit_id"), request.unit_id),
+            (request_event.payload.get("lease_id"), request.lease_id),
+            (request_event.payload.get("request_digest"), request_ref.content_hash),
+            (commit_event.object_type, "TraceConsumption"),
+            (commit_event.object_id, request.attempt_id),
+            (commit_event.task_id, request.task_id),
+            (commit.status, "delivered"),
+            (commit.binding_digest, delivery.binding_digest),
+            (commit.current_fencing_token, request.fencing_token),
+            (request.attempt_id, attempt_id),
+            (delivery.attempt_id, request.attempt_id),
+            (delivery.task_id, request.task_id),
+            (delivery.unit_id, request.unit_id),
+            (delivery.attempt_ordinal, request.attempt_ordinal),
+            (delivery.binding_digest, request.source_binding_digest),
+            (
+                delivery.inference_request_digest,
+                (request.soft_hints or {}).get("trace_inference_request_digest"),
+            ),
+            (
+                delivery.entry_id,
+                (request.soft_hints or {}).get("trace_source_entry_id"),
+            ),
+        )
+    ):
+        raise ValueError("trace request/delivery runtime identity mismatch")
+    if any(
+        getattr(submission, field_name) != getattr(request, field_name)
+        for field_name in (
+            "request_id",
+            "task_id",
+            "unit_id",
+            "attempt_id",
+            "lease_id",
+            "fencing_token",
+        )
+    ) or any(
+        actual != expected
+        for actual, expected in (
+            (submission_event.object_type, "ExecutionSubmission"),
+            (submission_event.object_id, submission.submission_id),
+            (submission_event.task_id, submission.task_id),
+            (submission_event.payload.get("request_id"), request.request_id),
+            (submission_event.payload.get("task_id"), request.task_id),
+            (submission_event.payload.get("unit_id"), request.unit_id),
+            (submission_event.payload.get("lease_id"), request.lease_id),
+            (
+                submission_event.payload.get("submission_id"),
+                submission.submission_id,
+            ),
+            (submission_event.payload.get("result_kind"), submission.result_kind),
+            (
+                submission_event.payload.get("submission_digest"),
+                ArtifactRef.from_dict(
+                    submission_event.payload["submission_ref"]
+                ).content_hash,
+            ),
+            (submission.executor_id, request.executor.get("executor_id")),
+            (submission.executor_version, request.executor.get("executor_version")),
+            (submission.environment_ref, request.environment_ref),
+        )
+    ):
+        raise ValueError("trace submission/request runtime identity mismatch")
+    _, parser_result = _verified_trace_json_ref(
+        store,
+        commit.parser_result_ref.to_dict(),
+        "parser result",
+    )
+    error_kind = (
+        submission.error.get("kind")
+        if isinstance(submission.error, Mapping)
+        else None
+    )
+    if delivery.source_terminal_kind == "provider_failure" and (
+        submission.result_kind != "failed"
+        or submission.candidate_output_refs
+        or submission.raw_output_ref != commit.current_wrapper_ref
+        or submission.parsed_output_ref != commit.parser_result_ref
+        or submission.provenance_ref != commit.current_provenance_ref
+        or int((submission.usage_summary or {}).get("provider_attempt_count", -1)) != 0
+        or int((submission.usage_summary or {}).get("current_provider_call_count", -1))
+        != 0
+        or not isinstance(error_kind, str)
+        or not error_kind
+        or parser_result.get("failure_kind") != error_kind
+    ):
+        raise ValueError("trace provider-failure submission identity mismatch")
+    refs_to_verify = [
+        ("parser input", commit.parser_input_ref),
+        *(('verifier/checker', ref) for ref in commit.verifier_checker_refs),
+        *(('trace attribution', ref) for ref in commit.trace_attribution_refs),
+        *((('canonical', commit.canonical_ref),) if commit.canonical_ref is not None else ()),
+        *((('raw output', submission.raw_output_ref),) if submission.raw_output_ref is not None else ()),
+        *((('parsed output', submission.parsed_output_ref),) if submission.parsed_output_ref is not None else ()),
+        *(('candidate output', ref) for ref in submission.candidate_output_refs.values()),
+        *((('parse failure', submission.parse_failure_ref),) if submission.parse_failure_ref is not None else ()),
+        *((('log', submission.log_ref),) if submission.log_ref is not None else ()),
+        *((('submission provenance', submission.provenance_ref),) if submission.provenance_ref is not None else ()),
+    ]
+    for label, ref in refs_to_verify:
+        if not store.verify(ref):
+            raise ValueError(f"trace {label} artifact ref is not current")
+    for ref in commit.trace_attribution_refs:
+        _, attribution = _verified_trace_json_ref(
+            store,
+            ref.to_dict(),
+            "trace attribution",
+        )
+        if int(attribution.get("current_provider_call_count", -1)) != 0:
+            raise ValueError("trace attribution current provider count is nonzero")
+    _, provenance = _verified_trace_json_ref(
+        store,
+        commit.current_provenance_ref.to_dict(),
+        "provenance",
+    )
+    if int(provenance.get("current_provider_call_count", -1)) != 0:
+        raise ValueError("trace provenance current provider count is nonzero")
+    _, parser_input = _verified_trace_json_ref(
+        store,
+        commit.parser_input_ref.to_dict(),
+        "parser input",
+    )
+    if any(
+        actual != expected
+        for actual, expected in (
+            (parser_input.get("schema_version"), "tokenshare.trace_parser_input.v1"),
+            (parser_input.get("media_type"), delivery.parser_input_media_type),
+            (parser_input.get("content_digest"), delivery.parser_input_digest),
+            (
+                parser_input.get("source_bank_object_locators"),
+                [dict(item) for item in delivery.source_bank_object_locators],
+            ),
+        )
+    ):
+        raise ValueError("trace parser input/delivery digest mismatch")
+    return request, delivery, submission, request_ref
+
+
+def _verified_trace_json_ref(
+    store: ArtifactStore,
+    value: Any,
+    label: str,
+) -> tuple[ArtifactRef, JsonObject]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"trace {label} artifact ref is invalid")
+    ref = ArtifactRef.from_dict(dict(value))
+    if not store.verify(ref):
+        raise ValueError(f"trace {label} artifact ref is not current")
+    body = json.loads(store.read_bytes(ref).decode("utf-8"))
+    if not isinstance(body, dict):
+        raise ValueError(f"trace {label} artifact must be a JSON object")
+    return ref, body
+
+
+def _typed_trace_execution_submission(body: Mapping[str, Any]) -> ExecutionSubmission:
+    def optional_ref(name: str) -> ArtifactRef | None:
+        value = body.get(name)
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise ValueError(f"persisted trace submission {name} is invalid")
+        return ArtifactRef.from_dict(dict(value))
+
+    environment = body.get("environment_ref")
+    candidates = body.get("candidate_output_refs")
+    if not isinstance(environment, Mapping) or not isinstance(candidates, Mapping):
+        raise ValueError("persisted trace submission typed fields are invalid")
+    parsed = ExecutionSubmission(
+        submission_id=str(body.get("submission_id", "")),
+        request_id=str(body.get("request_id", "")),
+        task_id=str(body.get("task_id", "")),
+        unit_id=str(body.get("unit_id", "")),
+        attempt_id=str(body.get("attempt_id", "")),
+        lease_id=str(body.get("lease_id", "")),
+        fencing_token=str(body.get("fencing_token", "")),
+        executor_id=str(body.get("executor_id", "")),
+        executor_version=str(body.get("executor_version", "")),
+        result_kind=str(body.get("result_kind", "")),
+        raw_output_ref=optional_ref("raw_output_ref"),
+        parsed_output_ref=optional_ref("parsed_output_ref"),
+        candidate_output_refs={
+            str(name): ArtifactRef.from_dict(dict(value))
+            for name, value in candidates.items()
+            if isinstance(value, Mapping)
+        },
+        parse_failure_ref=optional_ref("parse_failure_ref"),
+        log_ref=optional_ref("log_ref"),
+        environment_ref=EnvironmentRef(
+            environment_id=str(environment.get("environment_id", "")),
+            environment_digest=str(environment.get("environment_digest", "")),
+            runtime=str(environment.get("runtime", "")),
+            tool_versions=dict(environment.get("tool_versions", {})),
+            resource_limits=dict(environment.get("resource_limits", {})),
+            fixture_profile_digest=str(environment.get("fixture_profile_digest", "")),
+            seed=environment.get("seed"),
+            clock_policy=str(environment.get("clock_policy", "")),
+            created_at=str(environment.get("created_at", "")),
+            schema_version=str(environment.get("schema_version", "")),
+        ),
+        environment_summary=dict(body.get("environment_summary", {})),
+        provenance_ref=optional_ref("provenance_ref"),
+        usage_summary=dict(body.get("usage_summary", {})),
+        error=(dict(body["error"]) if isinstance(body.get("error"), Mapping) else None),
+        submitted_at=str(body.get("submitted_at", "")),
+        schema_version=str(body.get("schema_version", "")),
+    )
+    if len(parsed.candidate_output_refs) != len(candidates) or parsed.to_dict() != dict(body):
+        raise ValueError("persisted trace submission schema is invalid")
+    return parsed
+
+
+def _protocol_retries_from_provider_attempt_limit(
+    config: AIAPIExecutorConfig,
+) -> int:
+    max_provider_attempts = config.defaults.get("max_provider_attempts")
+    if (
+        isinstance(max_provider_attempts, bool)
+        or not isinstance(max_provider_attempts, int)
+        or max_provider_attempts < 1
+    ):
+        raise ValueError("max_provider_attempts must be a positive integer")
+    return max_provider_attempts - 1
 
 
 def _run_factorization_full_via_coordinator(
@@ -1331,13 +1915,21 @@ def _run_factorization_full_via_coordinator(
             metadata={"paper_factorization": True, "case_id": case_id},
         ),
         max_retries=(
-            worker_termination_policy.termination_limit + 1
+            max(
+                len(binding.attempt_deliveries) - 1
+                for binding in trace_context.bindings
+            )
+            if trace_context is not None
+            else worker_termination_policy.termination_limit + 1
             if worker_termination_policy is not None
             else 1
             if condition.experiment_id == "exp4_real_ai_protocol_ablation"
             else 2
-            if post_raw_output_hook is not None
-            else 0
+            if (
+                post_raw_output_hook is not None
+                and condition.experiment_id == "exp3_real_ai_fault_recovery"
+            )
+            else _protocol_retries_from_provider_attempt_limit(config)
         ),
     )
     executor_requirements = _fixed_entry_executor_requirements(
@@ -1388,6 +1980,9 @@ def _run_factorization_full_via_coordinator(
             config=config,
             executor_requirements=executor_requirements,
             case_id=case_id,
+            model_execution_record_required=(
+                validated_binding is not None or real_transport
+            ),
         paper_eligible_transport=not _is_offline_capturing_transport(
             active_transport
         ),
@@ -1418,7 +2013,11 @@ def _run_factorization_full_via_coordinator(
             plugin_runtime=plugin_runtime,
             trace_executor=trace_executor,
         )
-        trace_domain_stage = FactorizationTraceDomainStage(plugin_runtime)
+        trace_domain_stage = FactorizationTraceDomainStage(
+            plugin_runtime,
+            post_raw_output_hook=post_raw_output_hook,
+            bindings=trace_context.bindings,
+        )
         trace_delivery_stager = TraceBackedParentStager(
             resolver=trace_context.resolver,
             bindings=trace_context.bindings,
@@ -1464,6 +2063,9 @@ def _run_factorization_full_via_coordinator(
         worker_backend=worker_backend,
         mechanism_policy=controls.mechanism_policy,
         hooks=(
+            controls.hooks
+            if trace_context is not None
+            else
             post_raw_output_hook
             if callable(
                 getattr(
@@ -1810,6 +2412,23 @@ def _run_factorization_full_via_coordinator(
             runtime_events=runtime_events,
             store=store,
         )
+    projection = reconcile_captured_model_execution_records(
+        replace(projection, attempt_results=tuple(attempts)),
+        tuple(
+            CapturedModelExecutionRecordBinding(
+                request_attempt_id=captured.request.attempt_id,
+                record_attempt_id=(
+                    captured.model_execution_record.attempt_id
+                    if captured.model_execution_record is not None
+                    else None
+                ),
+                record_ref=captured.model_execution_record_ref,
+                record_required=captured.model_execution_record_required,
+            )
+            for captured in captured_calls
+        ),
+    )
+    attempts = list(projection.attempt_results)
     run_evidence = _run_evidence(
         store=store,
         real_transport=real_transport,
@@ -1821,6 +2440,7 @@ def _run_factorization_full_via_coordinator(
         "run_id": runtime_result.run_id,
         "task_id": runtime_result.task_id,
         "root_unit_id": runtime_result.root_unit_id,
+        "event_ledger_path": f"events/{task_id}.jsonl",
         "status": runtime_result.status,
         "event_count": len(runtime_result.event_refs),
         "lifecycle_coverage": projection.lifecycle_coverage,
@@ -1848,13 +2468,27 @@ def _run_factorization_full_via_coordinator(
     )
     if attempts:
         completed_direct = prime_ref is not None and accepted_validity is not None
+        domain_verdict_ref = (
+            _persist_factorization_domain_verifier_report(
+                store=store,
+                case=case,
+                execution_id=runtime_result.run_id,
+                task_id=runtime_result.task_id,
+                root_unit_id=runtime_result.root_unit_id,
+                final_result_ref=prime_ref,
+                environment_ref=plugin_runtime.environment_ref(),
+                correct=accepted_validity,
+            )
+            if completed_direct
+            else None
+        )
         direct_bundle = persist_native_online_direct_artifacts(
             artifact_store=store,
             execution_id=runtime_result.run_id,
             task_id=runtime_result.task_id,
             root_unit_id=runtime_result.root_unit_id,
             final_result_ref=prime_ref if completed_direct else None,
-            oracle_verdict_ref=prime_ref if completed_direct else None,
+            oracle_verdict_ref=domain_verdict_ref,
             oracle_kind="independent_verifier" if completed_direct else None,
             oracle_correct=accepted_validity if completed_direct else None,
             oracle_fact=(
@@ -2793,6 +3427,12 @@ def _transport_for_provider_family(
         return transport
     resolver = getattr(
         transport,
+        "tokenshare_real_transport_for_provider",
+        None,
+    )
+    if not callable(resolver):
+        resolver = getattr(
+        transport,
         "tokenshare_transport_for_provider",
         None,
     )
@@ -2994,6 +3634,11 @@ def _paper_attempt_result(
     error_kind_override: str | None = None,
 ) -> PaperAttemptResult:
     usage = dict(submission.usage_summary or {})
+    provider_attempt_count = _validated_current_provider_attempt_count(
+        store=store,
+        submission=submission,
+        usage_ref=usage_ref,
+    )
     provenance_attempt = _last_provenance_attempt(store=store, submission=submission)
     prompt_tokens = _int_metric(usage.get("prompt_tokens"))
     completion_tokens = _int_metric(usage.get("completion_tokens"))
@@ -3008,6 +3653,7 @@ def _paper_attempt_result(
         attempt_id=request.attempt_id,
         worker_id=f"worker_factorization_paper_{index}",
         provider_attempt_index=0,
+        provider_attempt_count=provider_attempt_count,
         attempt_status=attempt_status,
         provider=str(usage.get("provider_family") or "siliconflow"),
         model=str(usage.get("model") or ""),
@@ -3057,6 +3703,20 @@ def _paper_attempt_result(
             if model_execution_record_ref is not None
             else None
         ),
+    )
+
+
+def _validated_current_provider_attempt_count(
+    *,
+    store: ArtifactStore,
+    submission: Any,
+    usage_ref: ArtifactRef | Mapping[str, Any],
+) -> int:
+    """从 current usage/provenance 交叉验证 transport call 计数。"""
+    return validate_provider_attempt_count(
+        store=store,
+        submission=submission,
+        usage_ref=usage_ref,
     )
 
 
@@ -3273,6 +3933,131 @@ def _prime_factors_match_oracle(prime_factors: list[JsonObject], case: JsonObjec
     return _normalized_factor_list(prime_factors) == _normalized_factor_list(
         case["oracle_prime_factors"]
     )
+
+
+def _persist_factorization_domain_verifier_report(
+    *,
+    store: ArtifactStore,
+    case: JsonObject,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_result_ref: ArtifactRef,
+    environment_ref: EnvironmentRef,
+    correct: bool,
+) -> ArtifactRef:
+    """持久化与最终 artifact 独立的确定性 Factor root verifier 报告。"""
+
+    final_body = _read_json_ref(store, final_result_ref)
+    factors = final_body.get("prime_factors")
+    normalized_factors = (
+        [dict(value) for value in factors]
+        if isinstance(factors, list)
+        and all(isinstance(value, Mapping) for value in factors)
+        else []
+    )
+    target_n = str(case["target_n"])
+    target_matches = str(final_body.get("target_n", "")) == target_n
+    encoding_valid = _factor_encoding_is_canonical(normalized_factors)
+    product_matches = (
+        _factor_product(normalized_factors) == int(target_n)
+        if encoding_valid
+        else False
+    )
+    all_factors_prime = encoding_valid and all(
+        _deterministic_is_prime(int(str(value["prime"])))
+        for value in normalized_factors
+    )
+    checks: JsonObject = {
+        "target_matches": target_matches,
+        "canonical_factor_encoding": encoding_valid,
+        "factor_product_matches": product_matches,
+        "all_factors_prime": all_factors_prime,
+    }
+    independently_correct = all(checks.values())
+    if independently_correct is not correct:
+        raise ValueError("Factor root verifier result diverged from catalog oracle")
+    report_body: JsonObject = {
+        "schema_version": (
+            "tokenshare.paper_factorization_domain_verifier_report.v1"
+        ),
+        "case_id": str(case["case_id"]),
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "root_unit_id": root_unit_id,
+        "final_result_ref": final_result_ref.to_dict(),
+        "environment_ref": environment_ref.to_dict(),
+        "verifier": {
+            "verifier_id": "factorization.prime_factorization_result.verifier",
+            "verifier_version": "v1",
+        },
+        "target_n": target_n,
+        "checks": checks,
+        "status": "accepted" if correct else "rejected",
+        "correct": correct,
+    }
+    report_body["report_digest"] = canonical_json_digest(report_body)
+    return store.save_json(
+        report_body,
+        artifact_id=f"paper_factor_domain_verdict_{case['case_id']}",
+        artifact_type="FactorizationDomainVerifierReport",
+        artifact_schema_id=(
+            "tokenshare.paper_factorization_domain_verifier_report"
+        ),
+        artifact_schema_version="v1",
+        source={
+            "kind": "factorization_domain_verifier",
+            "role": "independent_verdict",
+            "case_id": str(case["case_id"]),
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "final_result_ref": final_result_ref.to_dict(),
+            "environment_digest": environment_ref.environment_digest,
+        },
+        metadata={
+            "status": report_body["status"],
+            "correct": correct,
+            "report_digest": report_body["report_digest"],
+        },
+        created_at=final_result_ref.created_at,
+    )
+
+
+def _factor_encoding_is_canonical(values: list[JsonObject]) -> bool:
+    try:
+        pairs = [
+            (int(str(value["prime"])), int(value["exponent"]))
+            for value in values
+        ]
+    except (KeyError, TypeError, ValueError):
+        return False
+    primes = [prime for prime, _ in pairs]
+    return (
+        bool(pairs)
+        and all(prime >= 2 and exponent >= 1 for prime, exponent in pairs)
+        and primes == sorted(set(primes))
+    )
+
+
+def _factor_product(values: list[JsonObject]) -> int:
+    product = 1
+    for value in values:
+        product *= int(str(value["prime"])) ** int(value["exponent"])
+    return product
+
+
+def _deterministic_is_prime(value: int) -> bool:
+    if value < 2:
+        return False
+    if value % 2 == 0:
+        return value == 2
+    divisor = 3
+    while divisor <= isqrt(value):
+        if value % divisor == 0:
+            return False
+        divisor += 2
+    return True
 
 
 def _normalized_factor_list(values: list[JsonObject]) -> list[JsonObject]:

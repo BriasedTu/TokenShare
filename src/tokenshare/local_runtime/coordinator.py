@@ -885,6 +885,11 @@ class ProtocolRunCoordinator:
                     for unit_id in ready
                     if unit_id == merge_creation.merge_task_unit.unit_id
                 )
+            recovery_ready_unit_ids = _recovery_ready_unit_ids(
+                graph=graph,
+                retry_counts=retry_counts,
+                unit_ids=ready,
+            )
             readiness_before_dispatch = None
             if (
                 expand_result is not None
@@ -919,6 +924,7 @@ class ProtocolRunCoordinator:
             merge_ready_before_dispatch = (
                 readiness_before_dispatch is not None
                 and readiness_before_dispatch.status == "ready"
+                and not recovery_ready_unit_ids
             )
             dispatch_slots = (
                 request.worker_backend.capacity
@@ -953,6 +959,13 @@ class ProtocolRunCoordinator:
                                 for unit_id in scoped_ready
                                 if unit_id
                                 == merge_creation.merge_task_unit.unit_id
+                            )
+                        if recovery_ready_unit_ids:
+                            recovery_ready_set = set(recovery_ready_unit_ids)
+                            scoped_ready = tuple(
+                                unit_id
+                                for unit_id in scoped_ready
+                                if unit_id in recovery_ready_set
                             )
                         if not scoped_ready:
                             break
@@ -1563,7 +1576,20 @@ class ProtocolRunCoordinator:
                             observed_at=witness_observed_at,
                         )
                     )
-                gate_satisfied = readiness.status == "ready"
+                recovery_ready_before_merge = _recovery_ready_unit_ids(
+                    graph=graph,
+                    retry_counts=retry_counts,
+                    unit_ids=_scoped_unit_ids(
+                        request=request,
+                        graph=graph,
+                        unit_ids=graph.ready_unit_ids(),
+                        expansion_started=True,
+                    ),
+                )
+                gate_satisfied = (
+                    readiness.status == "ready"
+                    and not recovery_ready_before_merge
+                )
                 merge_directive = _observe(
                     request.hooks.before_merge,
                     MergeContext(
@@ -1694,7 +1720,16 @@ class ProtocolRunCoordinator:
                         for child in children
                         if child.unit_id in selected_child_unit_ids
                     )
-                    merge_action = request.plugin_runtime.build_merge(
+                    merge_builder = request.plugin_runtime.build_merge
+                    if not request.mechanism_policy.verification_enabled:
+                        unverified_builder = getattr(
+                            request.plugin_runtime,
+                            "build_unverified_merge",
+                            None,
+                        )
+                        if callable(unverified_builder):
+                            merge_builder = unverified_builder
+                    merge_action = merge_builder(
                         parent=graph.units[registration.root_unit.unit_id],
                         canonical_children=merge_children,
                         slot_integrity_enabled=(
@@ -2019,6 +2054,24 @@ class ProtocolRunCoordinator:
                 submission,
                 parsed_candidate_directive,
             )
+        if not request.mechanism_policy.verification_enabled:
+            prepare_unverified = getattr(
+                request.plugin_runtime,
+                "prepare_unverified_submission",
+                None,
+            )
+            if callable(prepare_unverified):
+                submission = prepare_unverified(
+                    submission,
+                    unit=scheduled.task_unit,
+                )
+            if any(
+                ref.artifact_type != "canonical_output"
+                for ref in submission.candidate_output_refs.values()
+            ):
+                raise ValueError(
+                    "verification-disabled candidate must be promoted to canonical output"
+                )
         submission_flow = self._engine.record_execution_submission(
             submission=submission,
             attempt=scheduled.attempt,
@@ -2358,6 +2411,17 @@ def _scoped_unit_ids(*, request, graph, unit_ids, expansion_started):
         for unit_id in candidates
         if request.plugin_runtime.planned_ai_unit_id(graph.units[unit_id])
         in selected
+    )
+
+
+def _recovery_ready_unit_ids(*, graph, retry_counts, unit_ids):
+    """返回已由 engine 接受 requeue、仍等待 replacement 调度的 unit。"""
+
+    return tuple(
+        unit_id
+        for unit_id in unit_ids
+        if graph.units[unit_id].state == TaskState.READY
+        and retry_counts.get(unit_id, 0) > 0
     )
 
 
