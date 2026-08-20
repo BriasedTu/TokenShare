@@ -91,7 +91,8 @@ TokenShareData/outputs/slim_v2/<run_id>/
 - 文档只做路由、边界和冻结合同，不复制完整系统规格。
 - 发现指标字段没有实际来源时，先记录接口缺口；不得从旧 pipeline 偷取数据或自行改变指标。
 - 在实现前先写该 focus 的 focused tests；真实 API 调用必须得到用户对相应执行的明确授权。
-- Thread/Process backend 不由用户预选；实施 Agent 必须通过 Factorization/Lean 的 k>1 focused tests 给出答案。worker death 的真实进程终止语义仍使用 Process。
+- Slim V2 默认不运行 Lean 专项测试、LeanAudit、全量 Lean catalog、`lake`/`lean` 回归或为了重新证明现有系统机制正确而执行的 Lean 测试。调度、worker、恢复和 reducer 优先用 Factorization、fake checker、固定 fixture 或静态合同测试；只有 Slim-local Lean 接线本身无法由这些轻量方法定位时，才允许在运行前记录理由和时间上限后执行最小单 case Lean smoke，禁止扩大成 suite。论文 representative/full 中权威要求的 Lean roots 是实验样本，不属于这里禁止的额外 verification。
+- Thread/Process backend 不由用户预选；实施 Agent 必须先用 Factorization 的 k>1 focused tests 和 Lean 的 fake/固定 fixture 接线测试给出答案。worker death 的真实进程终止语义仍使用 Process。
 
 ## 后续顺序
 
@@ -103,4 +104,4 @@ TokenShareData/outputs/slim_v2/<run_id>/
 
 ## 可选的串行新任务接力
 
-若用户希望把设计、实施计划、代码监督和 representative 运行交给彼此上下文隔离的全新 Codex 任务串行执行，读取 `Doc/SlimV2/slim_v2_stage_relay_protocol.md`。该文档只定义阶段 owner、子 Agent、checkpoint、短交接胶囊、委托审批和下一任务创建流程；它不能覆盖本 README、指标权威或系统接线合同，也不能授权修改 shared code。未由用户显式选择接力流程时，不自动创建新任务。
+若用户希望把设计、实施计划、代码监督和 representative 运行交给彼此上下文隔离的全新 Codex 任务串行执行，读取 `Doc/SlimV2/slim_v2_stage_relay_protocol.md`。该文档只定义阶段 owner、子 Agent、checkpoint、短交接胶囊、委托审批、30 分钟恢复 heartbeat 和下一任务创建流程；它不能覆盖本 README、指标权威或系统接线合同，也不能授权修改 shared code。未由用户显式选择接力流程时，不自动创建新任务或 heartbeat。

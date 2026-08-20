@@ -178,7 +178,7 @@ Slim V2 对一个 root 的唯一入口是：
 - Experiment 2 保留 `worker_count ∈ {1,3,7,10,30,50}`；Experiment 1、3、4、5 固定 `worker_count=10`。
 - Experiment 1/5 当次真实运行：`trace_delay_policy="online_real_time"`，不创建 logical scheduler；wall-clock 来自 observation clock 和 worker facts。
 - Experiment 2–4 固定回答运行：使用 `trace_delay_policy="logical_source_latency_1x"` 与 `LogicalSourceLatencyScheduler`；该时间只能称为固定回答运行时间。
-- 除 worker death 的进程终止要求外，本文不决定 worker>1 使用 Thread 还是 Process。实施 Agent 必须为 Factorization 与 Lean 的 k>1 接法编写 focused tests，并以测试结果选择 backend；未经测试不得宣称任一后端是稳定合同。
+- 除 worker death 的进程终止要求外，本文不决定 worker>1 使用 Thread 还是 Process。实施 Agent 必须用 Factorization 的真实 k>1 focused tests，加上 Lean adapter 的 fake checker、固定 fixture 或静态合同测试来选择 backend；默认不运行 Lean 专项 suite、LeanAudit、全量 catalog 或 `lake`/`lean` 回归。论文实验中的 Lean roots 仍由真实 checker 执行，但它们是实验样本，不是为了选择 backend 而增加的验证矩阵。未经上述轻量测试不得宣称任一后端是稳定合同。
 - `runtime_observation` 直接提供 planned/dispatched/completed/unscheduled IDs、witness in-flight、worker facts、peak concurrency 与 runtime wall-clock。
 - root loop 始终串行。`root_start_at_ms` 在 `run_root` 进入 root 协议生命周期、任何 AI unit 调度之前记录；`root_terminal_at_ms` 在 root 完成或失败终止后记录；`runtime_wall_clock_ms` 必须由两者相减。Experiment 1/5 使用真实时钟，Experiment 2–4 使用 logical scheduler 的同一逻辑时钟。worker 首次 `started_at` 只作诊断，不能替代 root start。Experiment 1 coverage tail 在 terminal 之后执行且下一个 root 尚未开始；正文跨-root wall-clock 使用协议 runtime 之和，tail wall 单列。
 
@@ -451,7 +451,7 @@ append exactly one normalized root JSONL row
 
 1. **固定 trace 主矩阵没有可用的 Slim 公共实现**：Experiment 2–4 已冻结为复用 Experiment 1 普通 per-unit trace JSONL，但当前公共接口中没有一个可直接采用、且不依赖旧实验设施的 executor。后续必须在 `src/tokenshare/experiments/slim_v2/` 实现最小只读 fixed-response executor，严格按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 匹配、核对普通 unit 语义字段、exact ordinal优先且缺失时回退同 trace 最后自然 attempt，并禁止 transport fallback；不得读取旧实现补位。
 2. **Slim 真实 provider caller 尚未实现**：接线合同冻结的是单 entry 输入、真实 transport、raw/usage/latency/model 输出与小 execution bridge 能力，不要求复用旧 `AIAPIExecutor` 整类。后续可复用现有 provider-specific body builder、urllib transport 和 envelope parser，在 Slim 目录实现薄 caller/bridge；不得重新带入旧 selection、prepared identity、hard-deadline child 或 evidence/budget 依赖。
-3. **adapter 并发保证不闭合**：两个 runtime adapter 都保存每 root 可变状态，并在源码中声明单次 run/顺序执行约束；Experiment 2 需要 worker>1，其余实验固定 worker=10。实施 Agent 必须分别为 Factorization/Lean 和所需场景编写 focused tests，对 `ThreadWorkerBackend` 与 `ProcessWorkerBackend` 的可行接法给出测试证据，再选择实现；本文不推荐或预选答案。worker death 因真实进程终止语义仍必须使用 `ProcessWorkerBackend`。
+3. **adapter 并发保证不闭合**：两个 runtime adapter 都保存每 root 可变状态，并在源码中声明单次 run/顺序执行约束；Experiment 2 需要 worker>1，其余实验固定 worker=10。实施 Agent 必须用 Factorization 的真实 k>1 focused tests，以及 Lean adapter 的 fake checker、固定 fixture 或静态合同测试，对 `ThreadWorkerBackend` 与 `ProcessWorkerBackend` 的可行接法给出证据，再选择实现；不得为此运行 Lean 专项 suite、LeanAudit、全量 catalog 或 `lake`/`lean` 回归。本文不推荐或预选答案。worker death 因真实进程终止语义仍必须使用 `ProcessWorkerBackend`。
 4. **结果不是一个扁平 DTO**：`ProtocolRunResult` 不直接暴露完整 submission、usage、verification/checker 和 recovery chain。数据并未丢失，可由公共 `EventLedger.read_all()` 与 `ArtifactStore.read_bytes()`取得；因此首版可在 Slim 目录实现只读 projector，无需修改 shared code。若用户要求单对象返回全部字段，才构成需要批准的 shared-interface 变更。
 5. **condition 不属于 `ProtocolRunRequest`**：`condition_id`、fault rate、mode 等由 Slim runner和hook闭包持有；公共 request不保存这些实验标签。首版由 Slim JSONL 记录即可，不需要污染 core request。
 6. **Experiment 1 coverage tail 需要 Slim-local 实现**：当前 coordinator 正确地在 root terminal 后返回，不应修改。Slim runner 需要一个窄 tail acquisition 组件：接收同 root plan、`unscheduled_ai_unit_ids`、已有 protocol trace keys、provider caller 与领域 parser/verifier/checker，逐 target 写唯一 `coverage_tail` trace和普通资源 summary。它不得创建 protocol attempt/canonical/merge，也不得延长 root runtime；崩溃恢复只按当前 root 已持久化三元 key 跳过，不引入 response-bank authority。
@@ -469,4 +469,4 @@ append exactly one normalized root JSONL row
 - 已冻结：价格版本为 `slim_v2.pricing.2026-08-20`；DeepSeek 峰/谷、SiliconFlow 四 endpoint 与 reasoning-as-completion-subset 口径按指标权威第 1.4 节，普通 pricing projector 不构成预算或 gate。
 - 已冻结：除 Experiment 2 的六档 worker 外，Experiment 1、3、4、5 的 `worker_count=10`。
 - 已冻结：Experiment 2/3 在线检查退出 Slim V2，不存在待选 case IDs。
-- 实施期验证项：用户不预选 Thread 或 Process。实施 Agent 必须用 focused tests 证明 Factorization/Lean 在各自 k>1 场景中的安全接法，并据证据选择；测试尚未通过时不得修改 shared runtime 来强行满足假设。
+- 实施期验证项：用户不预选 Thread 或 Process。实施 Agent 必须用 Factorization 的真实 k>1 focused tests 和 Lean adapter 的 fake checker、固定 fixture 或静态合同测试证明安全接法，并据证据选择；默认禁止 Lean 专项 suite、LeanAudit、全量 catalog 和 `lake`/`lean` 回归。轻量测试尚未通过时不得修改 shared runtime 来强行满足假设。

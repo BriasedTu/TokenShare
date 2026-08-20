@@ -56,7 +56,7 @@ Slim V2 跨越设计、实施计划、代码实现和真实运行。让一个 Ag
 
 1. Experiment 1–5 和指标/原始字段完整性；
 2. 系统接线、真实 API、trace、worker/scheduler 的可实现性；
-3. 精简性、representative、资源和禁止依赖回流。
+3. 精简性、representative、资源、Lean 测试裁剪和禁止依赖回流。
 
 reviewer 不得改文件。Stage 1 owner 统一裁决、修复，并执行第二轮交叉审查。
 
@@ -84,6 +84,7 @@ reviewer 不得改文件。Stage 1 owner 统一裁决、修复，并执行第二
 
 - 计划状态为 `approved_under_user_delegation`；
 - 每一条设计要求都能映射到具体 task 和验证；
+- verification 任务默认不包含 Lean 专项 suite、LeanAudit、全量 catalog 或 `lake`/`lean` 回归；Lean 接线优先映射到 fake、固定 fixture 或静态合同；
 - 没有占位符、模糊“以后实现”或大而不可审查的 task；
 - 0 个未解决 Critical，0 个未解释 Important；
 - 文档检查通过并更新 progress 顶部；
@@ -102,7 +103,8 @@ Stage 3 owner 保留集成所有权。每个 implementation task 使用一个新
 **完成标准**：
 
 - 实施计划中的代码任务全部有测试和验证证据；
-- Factorization、Lean、k>1 worker、fixed response、coverage tail、Exp2/3/4 scenario、Exp5 fake transport、result sink/resume 和 reducer focused tests 通过；
+- Factorization k>1 worker、Lean fake/固定 fixture 接线、fixed response、coverage tail、Exp2/3/4 scenario、Exp5 fake transport、result sink/resume 和 reducer focused tests 通过；
+- 没有运行 Lean 专项 suite、LeanAudit、全量 Lean catalog 或 `lake`/`lean` 回归；若确实执行了最小单 case Lean smoke，已在运行前记录轻量替代无法定位的理由和时间上限；
 - Exp2–4 的 provider-call=0 有测试证明；
 - 字段合同与指标覆盖检查通过；
 - 0 个未解决 Critical/Important；
@@ -118,7 +120,7 @@ Stage 3 owner 保留集成所有权。每个 implementation task 使用一个新
 
 **必须读取**：README、指标权威、接线合同、已批准设计、已批准计划、本文、representative profile 和 progress 顶部。不得依赖 Stage 3 的对话历史。
 
-Stage 4 owner 负责长命令和真实 provider 调用；子 Agent只处理一个已定位的 bug 或一组独立日志，不得获得 secret，不得自行启动另一套 representative。每个修复都必须经过 regression test、spec review、quality review 和重新运行受影响的 representative cell。模型自然失败是实验结果，不当作设施 bug。
+Stage 4 owner 负责长命令和真实 provider 调用；子 Agent只处理一个已定位的 bug 或一组独立日志，不得获得 secret，不得自行启动另一套 representative。每个修复都必须经过轻量 regression test、spec review、quality review 和重新运行受影响的 representative cell。不得额外运行 Lean suite/LeanAudit/catalog；representative 中权威要求的 Lean root 属于实验数据，不是附加 verification。模型自然失败是实验结果，不当作设施 bug。
 
 **Representative 设施通过标准**：
 
@@ -145,7 +147,8 @@ Stage 4 默认是本协议的终点。如果启动时的用户授权明确包含
 5. 生成不超过约 2,000 个中文字符的“交接胶囊”。胶囊只写不可从仓库直接推导的信息：阶段结论、关键裁决、验证证据、真正未解决的问题和下一任务目标。
 6. 通过 Codex 新建任务能力创建恰好一个下一阶段顶层任务：先列出 saved projects 并选择本地路径为 `E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline` 的项目，再以该 project 的 `local environment` 创建新任务，把第 6 节模板作为完整 initial prompt。不要为这次接力创建默认 worktree，也不要只创建空任务后依赖另一条消息补全目标。
 7. 使用任务等待/状态能力做一次即时确认：下一任务 ID 已产生且状态为 active/in progress。若创建仍在 setup，只能等待或重新列出任务以取得真实 thread/task ID；不要把临时 client ID传给发送消息、读取或等待工具。
-8. 将下一任务 ID写入当前任务最终报告。此后当前 owner 不再编辑仓库或继续阶段工作。
+8. 等待下一任务报告 `RECOVERY_HEARTBEAT_ACTIVE`；在此之前保留当前任务 heartbeat，但不得继续修改仓库。确认后禁用当前 heartbeat，避免两个阶段重复唤起。
+9. 将下一任务 ID和 heartbeat 交接状态写入当前任务最终报告。此后当前 owner 不再编辑仓库或继续阶段工作。
 
 若本阶段未完成或命中强制停止条件，禁止创建下一阶段任务。必须在 progress 顶部和最终报告记录 blocker。
 
@@ -170,6 +173,8 @@ codex/slim-v2-baseline
 4. 接力协议中 Stage <N> 点名的权威/设计/计划文件
 5. progress.md 顶部 Slim V2 当前状态
 6. Doc/agent-navigation.md 的 Slim V2 路由
+
+读完上述启动文件后，在进行任何长工作前，按接力协议第 9 节为当前顶层任务创建或更新唯一的 30 分钟恢复 heartbeat，并在 commentary 明确报告 `RECOVERY_HEARTBEAT_ACTIVE`。如果无法建立 heartbeat，命中强制停止条件，不要假装可以无人监督运行。
 
 当前阶段：<阶段名称>
 唯一目标：<只写一个阶段目标>
@@ -196,7 +201,8 @@ run_scope：<representative_only 或 representative_then_full>
 2. 更新 progress 顶部；
 3. 创建本地 checkpoint commit；
 4. 按本接力模板创建恰好一个 Stage <N+1> 全新顶层任务；
-5. 确认下一任务 active/in progress 后结束本任务。
+5. 确认下一任务 active/in progress 且已报告 `RECOVERY_HEARTBEAT_ACTIVE`；
+6. 禁用当前任务 heartbeat 后结束本任务。
 
 如果当前是接力协议定义的终点，则生成最终报告，不创建空任务。
 ```
@@ -217,6 +223,7 @@ run_scope：<representative_only 或 representative_then_full>
 8. 实际 provider-call 计划超出冻结实验的 attempt 上限。
 9. 同一设施 blocker 经过系统性诊断和三种有依据的修复尝试后仍未闭合。
 10. 无法在指定 local checkout 创建下一阶段的全新任务。
+11. 无法为当前 Stage owner 创建或更新唯一的 30 分钟恢复 heartbeat。
 
 模型答案错误、checker rejection、正确率低和权威实验定义内的单 root/fault失败不属于停止条件。
 
@@ -229,15 +236,44 @@ run_scope：<representative_only 或 representative_then_full>
 - 每阶段只保留一个 active focus。完成的研究和决定写入正式设计、计划、测试或 progress，不依赖聊天记忆。
 - 日志和大输出留在文件/运行目录，交接只给路径、命令、退出码和摘要。
 - 如果某阶段仍然过大，owner 可以在阶段内按已经批准的 task边界使用新鲜子 Agent，但不能再产生第二条顶层接力链。
+- 测试默认排除 Lean 专项 suite、LeanAudit、全量 catalog 和 `lake`/`lean` 回归；不要为了“保险”重复证明系统本体。代表性/正式实验中的 Lean roots 仍按指标权威运行。
 
-## 9. 第一棒的最短启动方式
+## 9. 30 分钟恢复 heartbeat
+
+用户已经为整条接力链授权任务级恢复轮询。每个 Stage owner 在读完启动文档后、开始任何长工作前，必须用 Codex automation 能力为**当前顶层任务**创建或更新恰好一个 heartbeat：
+
+- 名称包含 `Slim V2 Stage <N> recovery`；
+- 每 30 分钟唤起一次，附着当前任务，不创建新的独立任务或新 worktree；
+- 创建前先检查当前任务是否已有同名 heartbeat，存在则更新，不得创建重复项；
+- heartbeat 在本阶段未完成期间保持启用；交棒时按第 5 节确认下一阶段 heartbeat 后禁用当前项；终点阶段完成后直接禁用。
+
+每次 heartbeat 唤起必须执行一次真正的恢复循环：
+
+1. 读取 `progress.md` 顶部、本阶段产物、工作树状态和最近 terminal/命令输出，判断阶段是否已经完成、仍在运行、意外中断或命中强制停止条件。
+2. 若长命令仍存活，继续监督现有 session/process；使用短的有界等待持续读取输出，不启动重复命令。
+3. 若 Agent turn、shell、provider transport 或网络连接中断，从最近已持久化 checkpoint/result key 恢复。重试真实 provider 前先检查进程、普通结果文件和 per-unit trace，避免把未知终态的既有调用盲目重复计费；任何重试仍受冻结 attempt 上限约束。
+4. 若发现设施 bug，立即做系统性诊断，分派边界明确的新鲜子 Agent，并在同一次自动唤起中继续修复、验证和推进。
+5. 不得只回复“仍在等待”“稍后再看”或只输出状态摘要。除非阶段已经完成或命中第 7 节强制停止条件，本次唤起必须持续推进到当前可执行工作耗尽；不能主动结束并等待下一次 30 分钟唤起。
+6. 若当前 Stage owner 已有一个活跃 turn 正在推进，heartbeat 不得建立第二条写路径、重复实验或重复 provider 调用；只确认现有工作仍活跃并让唯一 owner 继续。
+
+heartbeat 的恢复 prompt 必须包含上述六项语义，并明确写出：`CONTINUE_THIS_WAKE; DO_NOT_WAIT_FOR_NEXT_HEARTBEAT`。这只是任务恢复机制，不是实验 budget、门禁、receipt 或 evidence 系统，也不得为此向 Slim runtime 增加代码。
+
+可直接使用以下 heartbeat prompt；创建时把 `<N>` 和 `<阶段名称>` 替换为当前值：
+
+```text
+这是 TokenShare Slim V2 Stage <N>（<阶段名称>）的 30 分钟恢复 heartbeat。检查当前任务、progress 顶部、本阶段产物、工作树、最近 terminal/进程和持久化结果。如果阶段未完成且没有命中接力协议强制停止条件，立即从当前 checkpoint 恢复，并在本次唤起中持续执行所有现有可推进工作；不得只报告状态、不得主动等待下一次 heartbeat。已有命令或 owner turn 仍活跃时只继续监督，不建立第二条写路径。重试 provider 前先核对进程、results 和 per-unit trace，禁止盲目重复调用。默认不运行 Lean 专项测试、LeanAudit、全量 catalog 或 lake/lean 回归。阶段完成时执行规定的 checkpoint/交棒或终点收口。
+
+CONTINUE_THIS_WAKE; DO_NOT_WAIT_FOR_NEXT_HEARTBEAT
+```
+
+## 10. 第一棒的最短启动方式
 
 用户只需要在 Stage 1 新任务中发送：
 
 ```text
 请在 E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline 开始 Slim V2 串行接力流程。
 
-完整阅读 AGENTS.md、Doc/SlimV2/README.md 和 Doc/SlimV2/slim_v2_stage_relay_protocol.md，然后担任 Stage 1 设计规格 owner。严格按接力协议完成设计、只读子 Agent审查、委托审批、验证和本地 checkpoint；完成后自行创建并启动 Stage 2 的全新 Codex 任务。后续每一阶段都必须继续按同一接力协议创建下一阶段新任务，不要等待我做例行批准。
+完整阅读 AGENTS.md、Doc/SlimV2/README.md 和 Doc/SlimV2/slim_v2_stage_relay_protocol.md，然后担任 Stage 1 设计规格 owner。开始长工作前，先为当前任务创建或更新唯一的 30 分钟恢复 heartbeat，并报告 RECOVERY_HEARTBEAT_ACTIVE；每次自动恢复都必须在本次唤起持续推进，不能只报状态后等待下一轮。严格按接力协议完成设计、只读子 Agent审查、委托审批、验证和本地 checkpoint；完成后自行创建并启动 Stage 2 的全新 Codex 任务。后续每一阶段都必须继续按同一接力协议创建下一阶段新任务和自己的 heartbeat，不要等待我做例行批准。默认不运行 Lean 专项测试、LeanAudit、全量 Lean catalog 或 lake/lean 回归；权威实验要求的 Lean roots 除外。
 
 run_scope=representative_only
 ```

@@ -16,7 +16,7 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
 4. 只读取 `progress.md` 顶部的 Slim V2 当前状态，以及 `Doc/agent-navigation.md` 的 Slim V2 路由。不要继续展开下方 R54/representative/Full 历史状态。复用清单中的 legacy 例外只允许固定 SHA + allowlist + `git show` 定点只读，不允许 checkout archive 或建立运行时依赖。
 5. Slim V2 当前 focus 以后续获批的设计规格和实施计划为准。`feature_list.json` 与 `session-handoff.md` 当前记录 legacy 工作，不是 Slim V2 的启动必读项，也不得覆盖 Slim V2 默认主线。
 6. 只有用户在当前任务中明确指定非 Slim V2 的 legacy/维护工作时，才读取 `feature_list.json`、完整 `progress.md`、`session-handoff.md` 和对应旧权威文档。
-7. Slim V2 不在启动时运行 `.\init.ps1`、`./init.sh`、Full 或 LeanAudit；久未更新的全局基线不作为参数、接口、readiness 或完成状态判断依据。设计/实施阶段只运行获批计划要求的 focused verification；若获批修改 shared code，再按影响范围追加共享验证。
+7. Slim V2 不在启动时运行 `.\init.ps1`、`./init.sh`、Full 或 LeanAudit；久未更新的全局基线不作为参数、接口、readiness 或完成状态判断依据。设计/实施阶段只运行获批计划要求的 focused verification；若获批修改 shared code，再按影响范围追加共享验证。Slim V2 默认不运行 Lean 专项测试、LeanAudit、全量 Lean catalog、`lake`/`lean` 回归或以证明旧系统机制正确为目的的 Lean 测试；优先使用 fake、固定 fixture、静态合同和 Factorization 路径验证 Slim 接线。权威实验中的 Lean 样本仍按实验运行，不属于额外测试。
 8. 如果需要判断代码应该放在哪个模块、哪些外部参考资料可借鉴，先看 `Doc/agent-navigation.md`。
 9. 如果本轮需要联网查找资料，必须按 `Doc/agent-navigation.md` 的“外部参考资料落库与使用规则”执行本地落库和文档同步。
 
@@ -30,6 +30,7 @@ Slim V2 是对现有膨胀论文实验设施的独立精简路径，不是旧 pa
 4. 获批后的常规写入范围仅为 `src/tokenshare/experiments/slim_v2/`、`tests/experiments/slim_v2/`、`Doc/SlimV2/`；shared core/local_runtime/plugin/executor 默认只读，修改前必须证明明确接口缺口并再次获得用户批准。
 5. 不重新引入 receipt、budget authority、digest/lineage closure、publication gate、paper eligibility 或 evidence closure。
 6. 新实验设施只能在 Slim V2 获批目录中搭建和运行；不得新建另一套平行实验 runner，也不得继续扩建旧 paper/formal runner。
+7. 用户显式启动 `slim_v2_stage_relay_protocol.md` 后，每个 Stage owner 必须为自己的当前顶层任务创建或更新唯一的 30 分钟恢复 heartbeat。自动唤起后必须在同一轮恢复并持续推进，不能只报告状态或等待下一次唤起；具体恢复、去重和交棒规则以接力协议为准。
 
 ## 项目边界（Project Boundaries）
 
@@ -83,7 +84,7 @@ V1 范围外：
 - 验证证据已经写入当前 focus 的获批计划/文档和 `progress.md`；明确的 legacy feature 才写入 `feature_list.json`。
 - 如果修改了协议、event、artifact schema，必须同步记录。
 - 如果使用了联网资料，论文/报告已经下载或转写到 `Doc/TechnicalDocument/tokenshare-paper-tex/` 并更新论文映射；开源项目已经浅克隆或 sparse checkout 到 `reference_repos/` 并更新 `reference_repos/README.md`；普通在线文档已经记录来源、访问日期、本地摘要和影响范围。
-- Slim V2 按获批实施计划执行 focused verification；陈旧全局基线不单独构成失败或完成结论。只有 shared code 变化或获批计划明确要求时，才按影响范围追加 `.\init.ps1` / Full / LeanAudit；明确的 legacy feature 继续遵守其原验证要求。
+- Slim V2 按获批实施计划执行 focused verification；陈旧全局基线不单独构成失败或完成结论。只有 shared code 变化或获批计划明确要求时，才按影响范围追加非 Lean 的共享验证；Slim V2 不因 shared code 变化自动升级为 LeanAudit，只有用户在当前任务再次明确授权时才可例外执行。明确的 legacy feature 继续遵守其原验证要求。
 
 ## 验证命令（Verification Commands）
 

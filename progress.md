@@ -1,11 +1,14 @@
 # TokenShare 当前进度
 
-更新时间：2026-08-20 +08:00
+更新时间：2026-08-21 +08:00
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
 ## Slim V2 前置权威文档：已获用户批准并冻结
 
+- 用户新增无人监督运行规则：接力链每个 Stage owner 都必须为自己的当前顶层任务创建/更新唯一的 30 分钟 recovery heartbeat；每次唤起先检查已有进程和持久化结果，再从原阶段恢复并在同一轮持续推进，禁止只报状态或等待下一次唤起。交棒时确认下一阶段 heartbeat active 后才禁用当前项；未来任务尚未创建，不能在本任务预绑定其 heartbeat。
+- 用户新增测试裁剪规则：Slim V2 默认不运行 Lean 专项 suite、LeanAudit、全量 Lean catalog 或 `lake`/`lean` 回归，不为证明已完善的系统本体重复跑 Lean；优先用 Factorization、fake、固定 fixture 和静态合同验证 Slim 接线。指标权威要求的 representative/full Lean roots 仍作为实验样本运行，不属于额外测试。README、接力协议、AGENTS、Agent 导航和接线合同中三处旧 k>1 Lean focused-test 要求均已同步，避免权威冲突。
+- `2026-08-21` 新规则 focused verification：6 份 Slim V2 Markdown 严格 UTF-8 读取；heartbeat 30 分钟/同轮持续推进/单实例/交棒/真实调用去重断言、Lean 测试裁剪正反断言、Markdown 表格列数、尾随空白和 `git diff --check` 全部 PASS；纯 harness 测试 `tests/test_init_verification_profiles.py` 为 `25 passed`。本轮没有运行 Lean、LeanAudit、catalog、`lake` 或 `lean` 命令，也没有调用 provider。
 - 已新增 `Doc/SlimV2/slim_v2_stage_relay_protocol.md`，用于在设计、实施计划、代码实施监督和 representative 运行之间创建上下文隔离的全新 Codex 顶层任务；阶段内部只使用边界明确的子 Agent。该协议是用户授权的可选工作流，不覆盖三份冻结权威，未显式启动时不自动创建任务。接力文档 focused verification：6 份 Slim V2 Markdown 严格 UTF-8 读取、四阶段/双 `run_scope`/委托审批/单下一任务断言、Markdown 表格列数、尾随空白和 tracked diff check 全部 PASS；`tests/test_init_verification_profiles.py` 为 `25 passed`。
 - `Doc/SlimV2/README.md`、`slim_v2_experiment_metrics_authority.md`、`slim_v2_system_integration_contract.md` 均为 `status: user_approved`，已成为 Slim V2 范围内的当前权威；下一步是编写 Slim V2 设计规格，尚未授权代码实现。
 - Slim V2 现为默认开发主线：除非用户在当前任务中明确指定其他维护范围，所有后续 Agent 都从 `Doc/SlimV2/README.md` 进入，不再自行梳理旧 paper/formal pipeline、archive、历史 Rxx 输出或 `TokenShareData` 历史结果；legacy `feature_list/session-handoff` 和陈旧基线不能覆盖该默认路由。

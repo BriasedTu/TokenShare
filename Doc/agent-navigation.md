@@ -80,7 +80,7 @@ Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx �
 | harness/context | `tests/test_init_verification_profiles.py` |
 | runtime data paths | `tests/test_runtime_paths.py`、`tests/experiments/test_runtime_output_defaults.py` |
 
-默认运行 `.\init.ps1`；feature 完成、提交/合并或发布实验结果前运行 `.\init.ps1 -Full`。Lean 共享输入变化或正式发布时按 `AGENTS.md` 加 `-LeanAudit`，不要用普通 catalog load 代替 checker evidence。
+上述默认/Full/LeanAudit 命令只适用于用户明确指定的 legacy/非 Slim 工作。Slim V2 只运行获批设计/计划点名的 focused verification，默认排除 Lean 专项 suite、LeanAudit、全量 catalog 和 `lake`/`lean` 回归；权威实验要求的 Lean roots 仍作为实验样本运行。具体例外边界以 `Doc/SlimV2/README.md` 和串行接力协议为准。
 
 ## 外部资料落库规则
 
