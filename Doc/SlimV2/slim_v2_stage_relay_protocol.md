@@ -6,7 +6,7 @@ scope: Serial fresh-task handoff for Slim V2 design, planning, implementation, a
 
 # Slim V2 串行新任务接力协议
 
-本文只定义 Slim V2 如何在多个上下文彼此隔离的新 Codex 任务之间串行接力。它不定义实验参数、指标、系统接口或实现方案，不能覆盖三份冻结权威文档。
+本文只定义 Slim V2 如何在多个上下文彼此隔离的新 Codex 任务之间串行接力。它不定义实验参数、指标、系统接口或实现方案，不能覆盖四份冻结前置权威文档。
 
 ## 1. 为什么使用新任务接力
 
@@ -39,7 +39,7 @@ Slim V2 跨越设计、实施计划、代码实现和真实运行。让一个 Ag
 1. 确认仓库根目录、分支、HEAD 和工作树状态。
 2. 完整阅读根目录 `AGENTS.md`。
 3. 完整阅读 `Doc/SlimV2/README.md`。
-4. 按 README 顺序阅读当前阶段要求的指标权威、接线合同、复用清单、已批准设计和实施计划。
+4. 按 README 顺序阅读当前阶段要求的设计宪章、指标权威、接线合同、复用清单、已批准设计和实施计划。
 5. 只读取 `progress.md` 顶部 Slim V2 状态和 `Doc/agent-navigation.md` 的 Slim V2 路由。
 6. 不读取 legacy 状态、archive、Rxx 输出或历史实验数据；固定 archive 参考仍只允许复用清单中的 SHA + allowlist + `git show` 定点只读。
 7. 核对本阶段输入文件存在、状态正确、没有未解决 Critical/Important 后才工作。
@@ -50,7 +50,9 @@ Slim V2 跨越设计、实施计划、代码实现和真实运行。让一个 Ag
 
 **唯一目标**：编写并收口 `Doc/SlimV2/slim_v2_design_spec.md`，不写实现代码。
 
-**必须读取**：三份冻结权威、复用清单、本文和 progress 顶部。
+**最高优先级**：以最快速度得到真实有效实验结果，只保留冻结指标不可缺少的功能。reviewer不得假设人为伪造、恶意篡改、注入攻击或其他设计宪章已排除的攻击者模型；此类意见由owner标记`out_of_scope_by_user`并拒绝实施，不进入Critical/Important计数。
+
+**必须读取**：四份冻结前置权威、复用清单、本文和 progress 顶部。
 
 **阶段内子 Agent**：设计草稿完成后并行分配三个只读 reviewer，分别检查：
 
@@ -58,7 +60,7 @@ Slim V2 跨越设计、实施计划、代码实现和真实运行。让一个 Ag
 2. 系统接线、真实 API、trace、worker/scheduler 的可实现性；
 3. 精简性、representative、资源、Lean 测试裁剪和禁止依赖回流。
 
-reviewer 不得改文件。Stage 1 owner 统一裁决、修复，并执行第二轮交叉审查。
+reviewer 不得改文件。Stage 1 owner 统一裁决、修复，并执行第二轮交叉审查。审查不能把设计宪章明确排除的攻击/防伪需求重新包装成“数据完整性”“安全性”“鲁棒性”或“论文严谨性”。
 
 **完成标准**：
 
@@ -266,14 +268,218 @@ heartbeat 的恢复 prompt 必须包含上述六项语义，并明确写出：`C
 CONTINUE_THIS_WAKE; DO_NOT_WAIT_FOR_NEXT_HEARTBEAT
 ```
 
-## 10. 第一棒的最短启动方式
+## 10. 第一棒强约束启动 prompt
 
-用户只需要在 Stage 1 新任务中发送：
+文档阅读不能替代 prompt 内的硬约束。用户在 Stage 1 新任务中发送以下完整 prompt；Stage 1 owner 必须同时服从 prompt 与仓库权威，不能以“细节已在文档中”为由忽略这里的边界：
 
 ```text
-请在 E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline 开始 Slim V2 串行接力流程。
+请在以下现有本地 checkout 中启动 TokenShare Slim V2 串行接力流程：
 
-完整阅读 AGENTS.md、Doc/SlimV2/README.md 和 Doc/SlimV2/slim_v2_stage_relay_protocol.md，然后担任 Stage 1 设计规格 owner。开始长工作前，先为当前任务创建或更新唯一的 30 分钟恢复 heartbeat，并报告 RECOVERY_HEARTBEAT_ACTIVE；每次自动恢复都必须在本次唤起持续推进，不能只报状态后等待下一轮。严格按接力协议完成设计、只读子 Agent审查、委托审批、验证和本地 checkpoint；完成后自行创建并启动 Stage 2 的全新 Codex 任务。后续每一阶段都必须继续按同一接力协议创建下一阶段新任务和自己的 heartbeat，不要等待我做例行批准。默认不运行 Lean 专项测试、LeanAudit、全量 Lean catalog 或 lake/lean 回归；权威实验要求的 Lean roots 除外。
+工作目录：E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline
+固定分支：codex/slim-v2-baseline
+环境：该 saved project 的 local environment
+
+不得切换到 main，不得创建默认 worktree，不得 checkout archive，不得 push、merge 或创建 PR。以启动时该分支的当前 HEAD 为 checkpoint；先确认工作树状态，保留任何已有用户修改。
+
+你是 Stage 1：Slim V2 设计规格 owner。本阶段唯一交付物是：
+
+Doc/SlimV2/slim_v2_design_spec.md
+
+本阶段只能编写和审查设计文档，不得编写 Slim V2 实现代码，不得启动 representative/full，不得调用真实 provider。
+
+最高设计指示：Slim V2以最快速度得到真实有效的论文实验结果为唯一核心，只保留产生冻结指标不可缺少的功能。“真实有效”指真实provider、真实系统本体/插件/checker运行和正确统计口径，不表示需要证明本地文件无人伪造。任何新增组件都承担举证责任；不能指出它直接服务的冻结实验、必需字段或不可恢复故障时，禁止加入。
+
+本项目假设受信本地研究环境。人为伪造、手工篡改、路径/链接/SQL/JSON/prompt/命令注入、恶意plugin/executor/provider envelope、签名鉴权、权限系统、安全fuzzing和攻击者模型全部明确排除。不得为这些威胁增加hash、digest、receipt、lineage、审计、sandbox或gate。Experiment 3/4的冻结fault/challenge只是论文实验变量，不得扩张成通用安全防护。reviewer若提出上述意见，必须标记out_of_scope_by_user并拒绝实施，不计入Critical/Important，也不能阻塞阶段完成。
+
+一、启动阅读与权威顺序
+
+必须完整阅读并按以下优先级执行：
+
+1. AGENTS.md
+2. Doc/SlimV2/README.md
+3. Doc/SlimV2/slim_v2_stage_relay_protocol.md
+4. Doc/SlimV2/slim_v2_design_charter.md
+5. Doc/SlimV2/slim_v2_experiment_metrics_authority.md
+6. Doc/SlimV2/slim_v2_system_integration_contract.md
+7. Doc/SlimV2/slim_v2_reuse_inventory.md
+8. progress.md 顶部 Slim V2 状态
+9. Doc/agent-navigation.md 的 Slim V2 路由
+
+指标权威决定论文实验和指标；接线合同决定系统公共接口；复用清单只能提供参考位置，不能反向定义设计。新增实验内容或指标在旧代码中不存在是正常情况，禁止为了迁就旧代码删减、改名或弱化权威要求。现有代码只能被选择性复用，不能成为设计规格的上位约束。
+
+禁止广泛阅读 legacy paper/formal pipeline、Doc/archive、历史 Rxx、local 历史输出、TokenShareData 历史结果或旧 session-handoff。legacy 代码仅允许按 reuse inventory 固定 SHA、allowlist 路径和符号用 git show 定点只读。
+
+二、Slim V2 不可改变的总目标
+
+设计一个独立、最小、可运行的论文实验设施。它只负责：
+
+1. 把冻结实验参数接入现有 TokenShare 系统本体；
+2. 调用现有 Factorization 插件和真实 Lean 插件完成实验；
+3. 在 Experiment 1 和 Experiment 5 执行必要的真实 AI API 调用；
+4. 调度 Experiment 1–5 的冻结场景；
+5. 保存计算全部论文指标所需的最小原始数据；
+6. 从普通输出目录离线计算 CSV/JSON 指标；
+7. 支持中断恢复和跳过已完成的普通样本。
+
+这不是旧实验设施的重构，也不是生产平台。优先删除非必要抽象、门禁、authority 和审计层。设计不得因为“以后可能有用”加入权威实验没有要求的设施。
+
+三、必须排除的设施
+
+设计和未来实现都不得重新引入或依赖：
+
+- budget authority、预算审批或预算门禁；
+- receipt；
+- hash/digest 防伪链；
+- lineage/evidence closure；
+- publication gate、paper eligibility；
+- response-bank authority 或独立回答库；
+- selection digest、prepared identity、hard-deadline child gate；
+- 旧 paper/formal runner、旧 publication pipeline；
+- 为证明数据未伪造而增加的审计系统；
+- 任何会阻止实验运行的价格、余额或发布资格检查。
+
+官方价格表只是普通静态成本换算常量，不是预算设施或门禁。Agent审查属于开发工作流，不得被实现成 Slim V2 runtime gate。
+
+四、代码与复用边界
+
+未来常规写入范围只能是：
+
+- src/tokenshare/experiments/slim_v2/
+- tests/experiments/slim_v2/
+- Doc/SlimV2/
+
+shared core、local_runtime、Factorization/Lean plugin、executor 和 storage 默认只读。设计必须优先使用 Slim-local adapter。只有权威合同证明存在明确接口缺口、Slim-local adapter 确实无法解决时，才能记录为强制停止问题；不得预先设计 shared-code 改造。
+
+真实 API 只复用底层请求构造、HTTP transport、provider envelope 解析以及 usage/model 提取能力；不得复用臃肿的 AIAPIExecutor 整类，也不得继承其 selection、预算、prepared identity、hard deadline 或 evidence 依赖。设计一个薄的 single-entry provider caller/bridge：输入单一 provider entry、prompt 和请求控制，输出 raw response、usage、latency、错误及 configured/requested/resolved model。
+
+系统 runtime、worker、scheduler、恢复逻辑和插件公共接口可以按接线合同复用。旧指标代码只能借公式或局部纯逻辑，不能继承 contract、receipt、lineage、publication gate 或完整旧 runner。
+
+五、冻结实验语义
+
+设计必须覆盖 Experiment 1–5 的全部冻结 condition、原始字段和指标，且提供“指标 → 原始字段 → 产生组件 → 输出文件”的完整映射。不得用现有代码缺失为理由删除指标。
+
+以下语义不得重新讨论或改变：
+
+1. 所有 roots 在 runner 层串行；worker_count 只控制单 root 内 AI-unit 并发。
+2. 除 Experiment 2 外，Experiment 1、3、4、5 固定 worker_count=10；Experiment 2 固定使用 1/3/7/10/30/50。
+3. Experiment 1 每个 root 分为正常协议阶段和紧随其后的 coverage tail。正常 run_root() terminal 后，tail 只补 unscheduled planned units，不重复调用 protocol units；trace_origin=protocol/coverage_tail。tail 完成后才能开始下一 root。
+4. root_terminal_at_ms 在正常协议终止时冻结；coverage tail 不延长 Experiment 1 正文 runtime。tail wall-clock、tokens 和 cost 必须单列。
+5. Experiment 2 不使用独立 split，必须原样继承 Experiment 1 的任务计划、子任务范围、planned_ai_unit_id、prompt 和依赖。
+6. Experiment 2–4 只消费 Experiment 1 source_repeat_id=0 的普通 per-unit traces；来源键固定为 case_id × source_repeat_id × planned_ai_unit_id，并核对 Factorization range 或 Lean lemma/dependency 普通字段。
+7. Experiment 2–4 provider calls 必须为 0。请求 ordinal 不存在时，确定性回退到同一 trace 最后一个自然 attempt；不得新增 AI 调用，不得换 unit，不得 transport fallback。
+8. Experiment 2 使用同一批任务、回答和 source latency进入不同容量的逻辑调度器，不能用 Experiment 1 总时间除以 worker_count。
+9. Experiment 3 严格使用权威规定的五类 fault、planned first-attempt 分母、ordinal 0 注入、replacement 和 seed=20260820 的 token/latency 扰动；资源必须标为 simulated trace-attributed，不能称为当次真实 provider usage。
+10. Experiment 4 固定 FULL、四个单机制和六个双机制共 11 modes，使用 mode-blind 确定性 challenge；不得恢复旧 mode 或离线拼接双机制结果。
+11. Experiment 5 使用冻结的四个 SiliconFlow endpoint、相同 hard roots、零重试和真实 provider usage。
+12. DeepSeek/SiliconFlow 成本使用 slim_v2.pricing.2026-08-20；reasoning_tokens 是 completion_tokens 子集，禁止重复计价。
+13. 单 root 失败仍必须写结果行，固定分母不得删除失败、超时或未恢复 root。
+
+六、原子运行与复用要求
+
+Slim V2 必须支持原子化命令和组合命令：
+
+- 单独运行 Experiment 1；
+- 单独运行 Experiment 2、3 或 4，并显式选择某一组已完成的 Experiment 1 traces；
+- 单独运行 Experiment 5；
+- 一条命令按依赖顺序运行全部实验；
+- 单独运行 reducer；
+- 单独运行 representative；
+- 在普通文本主键已经完成时安全 resume/skip。
+
+Experiment 2–4 不得隐式启动 Experiment 1，也不得重新取得回答。依赖输入缺失时必须明确报告普通接线/输入错误，不能回退到旧输出或实时 API。
+
+七、输出与资源约束
+
+输出根固定设计为普通目录：
+
+TokenShareData/outputs/slim_v2/<run_id>/
+
+只使用普通 JSONL/JSON/CSV 和 responses/或等价的原始响应文件。reducer 必须只靠该 run 目录工作，不读取数据库 authority、旧实验输出或聊天上下文。
+
+设计必须适合全量实验：
+
+- roots 串行；
+- 逐 root/attempt 增量写盘；
+- 不把全量 responses、events 或结果一次性载入内存；
+- reducer 支持流式/分块聚合，只有确有必要的分组状态驻留内存；
+- 文件句柄、线程、进程和临时文件有明确生命周期；
+- bounded queue/backpressure；
+- 崩溃后按普通 case/condition/repeat/unit 主键恢复；
+- 不重复调用已持久化的真实 provider unit；
+- 单 root 失败不能导致整批结果丢失；
+- 明确磁盘空间预估、响应文件布局、日志轮转/上限和 CPU/内存并发上限。
+
+八、representative 强约束
+
+representative 必须与 full 使用完全相同的 CLI、runner、adapter、provider caller、输出 schema、resume 和 reducer，只能通过 profile 缩小数据集/condition规模，禁止另写 representative runner 或 mock 掉 full 才会使用的关键路径。
+
+设计必须冻结一个最低成本 profile：Experiment 1 至少两道 Factorization 和两道 Lean；Experiment 5 至少一道 Factorization；Experiment 2–4按依赖关系等比例缩小但仍覆盖各自关键 worker/fault/ablation路径。设计文档必须列出精确 representative condition/root 清单、选择规则、预期 provider-call 上限和通过标准，不能只写“选少量样本”。
+
+representative 的目标是验证设施和接线，不要求模型答案全部正确。模型自然错误、checker rejection或低正确率是实验结果；缺行、错误 provider 调用、schema 不完整、trace 错配、resume 失败才是设施问题。
+
+九、Lean 测试裁剪
+
+默认禁止 Lean 专项 suite、LeanAudit、全量 Lean catalog 和 lake/lean 回归，也不要为了重新证明现有系统本体正确而运行 Lean 测试。并发、调度、恢复、输出和 reducer 优先用 Factorization、fake checker、固定 fixture 或静态合同测试。
+
+只有 Slim-local Lean 接线无法通过轻量方法定位时，才允许预先记录理由与时间上限后运行最小单 case Lean smoke，禁止扩大为 suite。权威实验和 representative中要求的 Lean roots 仍是真实实验样本，不得从实验设计中删除。
+
+十、设计规格必须包含的章节
+
+slim_v2_design_spec.md 至少必须完整定义：
+
+1. 目标、非目标和不可违反约束；
+2. 最小总体架构及模块树；
+3. 现有系统公共接口与 Slim-local adapter边界；
+4. Experiment 1–5 各自的数据流、控制流和失败语义；
+5. 真实 provider caller、fixed-response executor、coverage tail、logical scheduler、fault/challenge hooks、projector、sink、resume、pricing projector和 reducer；
+6. CLI 命令、配置 schema、experiment/profile选择和依赖解析；
+7. run目录布局、results/trace/response schema和普通主键；
+8. 指标到原始字段的逐项追踪矩阵；
+9. root/attempt/trace 状态机、崩溃恢复和幂等边界；
+10. representative与 full profile的精确差异；
+11. CPU、内存、磁盘、文件句柄和并发控制；
+12. secret、provider model identity和错误记录边界；
+13. 非 Lean focused verification策略；
+14. 明确的实现顺序、模块依赖和验收标准；
+15. 复用清单：直接复用、轻量适配、只借逻辑、禁止复用；
+16. 所有尚存的真实接口缺口；没有缺口时明确写 none。
+
+设计不得只有原则或方框图。每个组件必须写清输入、输出、所有者、持久化位置、调用顺序、失败行为和测试方式。不得留下 TODO、TBD、“后续决定”或由实施 Agent重新决定的实验语义。
+
+十一、Stage 1 审查与委托审批
+
+完成初稿后，并行分派三个只读子 Agent：
+
+1. metrics reviewer：逐项核对 Experiment 1–5、所有必须指标、原始字段和统计口径；
+2. integration reviewer：核对系统接线、真实 API、trace、worker/scheduler、恢复、原子 CLI 和资源可实现性；
+3. slimness reviewer：核对最小化、禁止门禁、legacy 回流、representative、资源上限和 Lean 测试裁剪。
+
+子 Agent不得修改文件。三个reviewer的prompt都必须引用设计宪章第0节，并明确禁止基于人为伪造、恶意篡改、注入攻击或其他范围外攻击者模型提出加固需求。你必须统一裁决并修复所有范围内发现，然后再做一次跨文档二审。0 个未解决的范围内Critical、0 个未解释的范围内Important后，才可把设计状态设为approved_under_user_delegation；`out_of_scope_by_user`意见不进入未解决计数。该审批只是文档工作流，不得实现为runtime gate。
+
+普通、可逆且不改变冻结实验语义的设计选择由你依据权威自行裁决，不等待我例行批准。若冻结权威存在无法同时满足的实质冲突、必须修改 shared code、必须改变实验/指标/provider/价格/fault/ablation/timing语义，才按接力协议强制停止。
+
+十二、30 分钟恢复 heartbeat
+
+读完启动文件后、开始任何长工作前，为当前顶层任务创建或更新恰好一个附着当前任务的 30 分钟 recovery heartbeat，并在 commentary明确报告：
+
+RECOVERY_HEARTBEAT_ACTIVE
+
+heartbeat 必须使用接力协议第 9 节的完整恢复 prompt。每次自动唤起都必须检查当前进程、terminal、工作树、阶段产物、progress和持久化结果，然后在本次唤起中恢复并持续推进。不得只报告状态，不得主动等待下一次 heartbeat。已有 owner turn或长命令仍活跃时不得建立第二条写路径。重试 provider 前必须先检查进程、results和 per-unit trace，禁止因网络波动盲目重复调用。
+
+十三、完成和自动接力
+
+Stage 1 完成后必须：
+
+1. 运行不包含 Lean 的 focused文档验证；
+2. 更新 progress.md 顶部；
+3. 创建本地 checkpoint commit，不 push；
+4. 生成不超过约 2,000 个中文字符的交接胶囊；
+5. 在同一个 saved project的 local environment中创建恰好一个全新的 Stage 2 顶层任务；不得使用继承完整历史的 fork；
+6. 使用接力协议第 6 节模板，并把上述不可违反约束继续写入下一阶段 prompt，不能再次缩水成“请阅读文档”；
+7. 确认 Stage 2 active/in progress且已报告 RECOVERY_HEARTBEAT_ACTIVE；
+8. 禁用 Stage 1 heartbeat并结束当前任务。
+
+Stage 2、3、4 必须继续按同一协议串行创建下一阶段的新任务和 heartbeat，不等待我做例行批准。每一棒的 prompt 都必须保留与本阶段相关的硬约束，不能只传文档路径。
 
 run_scope=representative_only
 ```
@@ -284,4 +490,4 @@ run_scope=representative_only
 run_scope=representative_then_full
 ```
 
-这段启动 prompt 只负责选择工作目录、第一阶段和最终运行范围；全部阶段职责、审查、交接和停止条件都以本文为准。
+若 prompt 与四份冻结前置权威的细节出现差异，实验/指标以指标权威为准，系统接口以接线合同为准，架构理念和最小化边界以设计宪章为准；prompt 中的最小化、禁止项、原子运行、资源、heartbeat、Lean 测试裁剪和接力要求不得被省略或弱化。

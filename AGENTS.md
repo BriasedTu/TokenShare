@@ -2,7 +2,9 @@
 
 TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前使用 Python/SQLite/JSONL 的共享系统本体、factorization 插件、真实 Lean 插件和 AI API executor 作为实验基础。
 
-**默认开发主线（2026-08-20 用户决定）**：除非用户在当前任务中明确指定其他维护范围，所有后续 Agent 都必须把新的实验设施设计、实现和运行归入 **Slim V2**。唯一入口是 `Doc/SlimV2/README.md`；实验与指标以 `Doc/SlimV2/slim_v2_experiment_metrics_authority.md` 为权威，系统接线以 `Doc/SlimV2/slim_v2_system_integration_contract.md` 为权威。旧 paper/formal pipeline、旧 Rxx 工作、`feature_list.json` 中的 legacy active feature 和 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` 都不能把 Agent 自动带回旧主线。
+> **Slim V2最高设计指示：以最快速度得到真实有效的论文实验结果，只保留产生冻结指标不可缺少的功能。** “真实有效”指真实provider、真实系统/插件/checker运行和权威统计口径，不要求证明本地数据无人伪造。Slim V2假设受信本地研究环境；人为伪造、恶意篡改、注入攻击、恶意plugin/provider、签名鉴权和安全fuzzing均明确排除。reviewer基于这些范围外威胁提出的意见必须标记`out_of_scope_by_user`并拒绝实施，不能阻塞当前阶段。完整边界见`Doc/SlimV2/slim_v2_design_charter.md`第0节。
+
+**默认开发主线（2026-08-20 用户决定）**：除非用户在当前任务中明确指定其他维护范围，所有后续 Agent 都必须把新的实验设施设计、实现和运行归入 **Slim V2**。唯一入口是 `Doc/SlimV2/README.md`；顶层架构理念以 `Doc/SlimV2/slim_v2_design_charter.md` 为权威，实验与指标以 `Doc/SlimV2/slim_v2_experiment_metrics_authority.md` 为权威，系统接线以 `Doc/SlimV2/slim_v2_system_integration_contract.md` 为权威。旧 paper/formal pipeline、旧 Rxx 工作、`feature_list.json` 中的 legacy active feature 和 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` 都不能把 Agent 自动带回旧主线。
 
 2026-06-29 起，Phase 6 的 structured report stub 插件已从开发计划中剔除；后续如在历史文档或测试夹具中看到该名称，只作为早期通用插件夹具 / provenance，不作为待开发插件目标。
 
@@ -12,7 +14,7 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
 
 1. 确认当前工作目录是仓库根目录。
 2. 完整阅读本文件。
-3. 默认进入 Slim V2，不等待用户再次声明：完整阅读 `Doc/SlimV2/README.md`，随后严格按其中顺序阅读实验指标权威和系统接线合同；当前 focus 已进入获批设计/实现阶段时，再完整阅读 `Doc/SlimV2/slim_v2_reuse_inventory.md`，然后才打开源码。
+3. 默认进入 Slim V2，不等待用户再次声明：完整阅读 `Doc/SlimV2/README.md`，随后严格按其中顺序阅读设计宪章、实验指标权威和系统接线合同；当前 focus 已进入获批设计/实现阶段时，再完整阅读 `Doc/SlimV2/slim_v2_reuse_inventory.md`，然后才打开源码。
 4. 只读取 `progress.md` 顶部的 Slim V2 当前状态，以及 `Doc/agent-navigation.md` 的 Slim V2 路由。不要继续展开下方 R54/representative/Full 历史状态。复用清单中的 legacy 例外只允许固定 SHA + allowlist + `git show` 定点只读，不允许 checkout archive 或建立运行时依赖。
 5. Slim V2 当前 focus 以后续获批的设计规格和实施计划为准。`feature_list.json` 与 `session-handoff.md` 当前记录 legacy 工作，不是 Slim V2 的启动必读项，也不得覆盖 Slim V2 默认主线。
 6. 只有用户在当前任务中明确指定非 Slim V2 的 legacy/维护工作时，才读取 `feature_list.json`、完整 `progress.md`、`session-handoff.md` 和对应旧权威文档。
@@ -24,9 +26,9 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
 
 Slim V2 是对现有膨胀论文实验设施的独立精简路径，不是旧 paper/formal pipeline 的重构任务。所有后续 Agent 默认遵守：
 
-1. 唯一入口是 `Doc/SlimV2/README.md`，随后只读 `slim_v2_experiment_metrics_authority.md` 与 `slim_v2_system_integration_contract.md`；获批设计/实现阶段再按 README 顺序阅读 `slim_v2_reuse_inventory.md`。
+1. 唯一入口是 `Doc/SlimV2/README.md`，随后只读 `slim_v2_design_charter.md`、`slim_v2_experiment_metrics_authority.md` 与 `slim_v2_system_integration_contract.md`；获批设计/实现阶段再按 README 顺序阅读 `slim_v2_reuse_inventory.md`。
 2. 不广泛读取 archive、旧 paper/formal pipeline 文档/实现、历史 Rxx 输出或 `TokenShareData` 历史结果来判断当前状态，也不以陈旧基线测试结果决定参数或接口。唯一 legacy 例外是复用清单固定 SHA 中点名路径/符号的 `git show` 定点只读；Slim runtime 不得 import archive/legacy `paper_*`。
-3. 三份前置文档已获用户批准并冻结；在 Slim V2 设计规格获批并完成实施计划前，仍不写 Slim V2 代码。
+3. 四份前置权威文档已获用户批准并冻结；在 Slim V2 设计规格获批并完成实施计划前，仍不写 Slim V2 代码。
 4. 获批后的常规写入范围仅为 `src/tokenshare/experiments/slim_v2/`、`tests/experiments/slim_v2/`、`Doc/SlimV2/`；shared core/local_runtime/plugin/executor 默认只读，修改前必须证明明确接口缺口并再次获得用户批准。
 5. 不重新引入 receipt、budget authority、digest/lineage closure、publication gate、paper eligibility 或 evidence closure。
 6. 新实验设施只能在 Slim V2 获批目录中搭建和运行；不得新建另一套平行实验 runner，也不得继续扩建旧 paper/formal runner。
@@ -44,7 +46,7 @@ V1 范围内：
 - factorization 插件和真实 Lean 形式化证明插件，作为协议实验对象；structured report stub 已从 Phase 6 开发计划剔除。
 - 真实 Lean 形式化证明插件必须使用固定本地 Lean/lake/toolchain/library 环境做 proof artifact 检查；拆分必须来自插件内确定性规则，或来自 formal catalog/脚本预注册并由 Lean 插件校验的固定 lemma-DAG，不要求运行时从任意 Lean theorem 自动发现全部中间引理，不得由 AI 决定协议级拆分。
 - 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；标准 executor config 只保存 `api_key_env`，真实 API smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取明文 key 并仅注入当前进程环境变量，调用结果必须持久化为 artifact，event/artifact/SQLite/log/config digest 不得保存 secret，replay 不得重新调用 API。
-- **仅限用户明确授权的 legacy V1/paper 维护**，实验设计才遵守 `tokenshare_latest_real_plugin_experiment_design.md` 及其旧在线检查、response-bank、formal 口径；该文档不是 Slim V2 权威。Slim V2 必须遵守 `Doc/SlimV2/` 三份已批准文档，其中 Experiment 2/3 在线检查已退出，Experiment 2–4 直接复用 Experiment 1 普通真实回答，不得恢复旧 authority/gate。
+- **仅限用户明确授权的 legacy V1/paper 维护**，实验设计才遵守 `tokenshare_latest_real_plugin_experiment_design.md` 及其旧在线检查、response-bank、formal 口径；该文档不是 Slim V2 权威。Slim V2 必须遵守 `Doc/SlimV2/` 四份已批准前置权威文档，其中 Experiment 2/3 在线检查已退出，Experiment 2–4 直接复用 Experiment 1 普通真实回答，不得恢复旧 authority/gate。
 - 当前论文 Experiment 3 的 rate-fault 只实现 `false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error` 五类；`worker_death` 是单独预注册的实验条件，Experiment 4 ablation 不是新增故障类型。
 - 指标报告、状态重放、审计重放、sandbox 结算。
 

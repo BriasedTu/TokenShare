@@ -8,16 +8,17 @@
 
 1. `AGENTS.md`：项目边界、工作规则和验证命令。
 2. `Doc/SlimV2/README.md`：默认实验设施主线和范围边界。
-3. `Doc/SlimV2/slim_v2_experiment_metrics_authority.md`：Experiment 1–5 与必须指标。
-4. `Doc/SlimV2/slim_v2_system_integration_contract.md`：共享系统接线和接口缺口。
-5. 若当前 focus 已进入获批设计/实现阶段，完整阅读 `Doc/SlimV2/slim_v2_reuse_inventory.md`，再按其中 allowlist 定点打开源码；其他任务跳过本项。
-6. `progress.md` 顶部 Slim V2 段落：当前阶段和下一步。
+3. `Doc/SlimV2/slim_v2_design_charter.md`：顶层架构理念、最小化边界和明确放弃的设施。
+4. `Doc/SlimV2/slim_v2_experiment_metrics_authority.md`：Experiment 1–5 与必须指标。
+5. `Doc/SlimV2/slim_v2_system_integration_contract.md`：共享系统接线和接口缺口。
+6. 若当前 focus 已进入获批设计/实现阶段，完整阅读 `Doc/SlimV2/slim_v2_reuse_inventory.md`，再按其中 allowlist 定点打开源码；其他任务跳过本项。
+7. `progress.md` 顶部 Slim V2 段落：当前阶段和下一步。
 
 不要在启动时递归读取 `Doc/archive/`、`outputs/`、`reference_repos/`、pytest 临时目录或仓库外 `TokenShareData`。
 
 ### Slim V2 默认分流
 
-除非用户在当前任务中明确指定其他维护范围，所有 Agent 都默认进入 Slim V2，不按旧 paper/formal 路线展开 Tier 2。三份 Slim V2 前置文档均为 `user_approved`，是该范围内的当前权威；下一阶段是编写和审批设计规格，设计规格与实施计划完成前不能写代码或启动实验。
+除非用户在当前任务中明确指定其他维护范围，所有 Agent 都默认进入 Slim V2，不按旧 paper/formal 路线展开 Tier 2。四份 Slim V2 前置权威文档均为 `user_approved`，是该范围内的当前权威；下一阶段是编写和审批设计规格，设计规格与实施计划完成前不能写代码或启动实验。
 
 Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx 输出或历史实验数据来寻找“最新版本”，也不尝试修复旧设施。唯一 legacy 只读例外由 `slim_v2_reuse_inventory.md` 固定：只允许对完整 archive SHA、allowlist 路径和点名符号使用 `git show`；不得 checkout 或建立运行时依赖。需要共享系统接口时只读 Slim V2 接线合同点名的 core/local_runtime/plugin/executor/storage 公共区域；发现合同未闭合时向用户报告，不自行扩大范围。
 
@@ -27,10 +28,10 @@ Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx �
 
 | 任务 | 必读文件 |
 |---|---|
-| Slim V2 指标或范围讨论 | `Doc/SlimV2/README.md` → `Doc/SlimV2/slim_v2_experiment_metrics_authority.md` → `Doc/SlimV2/slim_v2_system_integration_contract.md`（已获用户批准并冻结） |
-| Slim V2 获批设计或实现 | 上述三份权威 → `Doc/SlimV2/slim_v2_reuse_inventory.md` → 清单允许的当前公共源码或固定 SHA `git show` 位置 |
+| Slim V2 指标、范围或设计原则讨论 | `Doc/SlimV2/README.md` → `Doc/SlimV2/slim_v2_design_charter.md` → `Doc/SlimV2/slim_v2_experiment_metrics_authority.md` → `Doc/SlimV2/slim_v2_system_integration_contract.md`（已获用户批准并冻结） |
+| Slim V2 获批设计或实现 | 上述四份权威 → `Doc/SlimV2/slim_v2_reuse_inventory.md` → 清单允许的当前公共源码或固定 SHA `git show` 位置 |
 | Slim V2 官方价格来源复核（仅价格维护任务，不是普通启动必读） | `Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md`；实际计算口径仍以指标权威第 1.4 节为准 |
-| Slim V2 定位可复用代码（支持材料，不是权威） | `Doc/SlimV2/slim_v2_reuse_inventory.md`；必须先读完三份权威文档；legacy 仅允许固定 SHA + allowlist + `git show` 定点只读，禁止 runtime import |
+| Slim V2 定位可复用代码（支持材料，不是权威） | `Doc/SlimV2/slim_v2_reuse_inventory.md`；必须先读完四份权威文档；legacy 仅允许固定 SHA + allowlist + `git show` 定点只读，禁止 runtime import |
 | Slim V2 串行新任务接力（仅在用户显式启动时） | `Doc/SlimV2/slim_v2_stage_relay_protocol.md`；只定义阶段 owner、子 Agent、checkpoint、委托审批和新任务接力，不覆盖实验/指标/接线权威，也不授权修改 shared code |
 | 仓库治理、上下文或数据位置 | `Doc/repository-governance.md` |
 | 协议对象、schema、状态机、replay 边界 | `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md` |
@@ -41,7 +42,7 @@ Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx �
 | 论文源码与论证映射 | `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md` |
 | Exp5 v3 冻结 design identity | `Doc/TechnicalDocument/2026-07-29-feat-011-exp5-siliconflow-four-model-v3-design.md` |
 
-`2026-07-29-feat-011-exp5-siliconflow-four-model-v3-design.md` 必须保留原路径，因为 tracked cohort snapshot 冻结了其路径和 digest。它不取代 Slim V2 权威；其中 14.1 等“当前差距”段落是实施前冻结快照，不描述当前状态。Slim V2 冲突以 `Doc/SlimV2/` 三份已批准文档为准；legacy 内部冲突才以 `tokenshare_latest_real_plugin_experiment_design.md` 为准。
+`2026-07-29-feat-011-exp5-siliconflow-four-model-v3-design.md` 必须保留原路径，因为 tracked cohort snapshot 冻结了其路径和 digest。它不取代 Slim V2 权威；其中 14.1 等“当前差距”段落是实施前冻结快照，不描述当前状态。Slim V2 冲突以 `Doc/SlimV2/` 四份已批准前置权威文档为准；legacy 内部冲突才以 `tokenshare_latest_real_plugin_experiment_design.md` 为准。
 
 ## 代码路由
 
