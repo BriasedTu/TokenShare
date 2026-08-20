@@ -1,78 +1,75 @@
 # TokenShare 当前进度
 
-更新时间：2026-08-04
+更新时间：2026-08-20 +08:00
 
-本文件只保留当前权威状态、最近验收锚点和后续动作。逐轮命令、评审和旧测试细节由 git history、`Doc/archive/`、`session-handoff.md` 与仓库外 `TokenShareData` 保留完整记录。
+本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## 当前权威状态（EPD-027）
+## Slim V2 前置权威文档：已获用户批准并冻结
 
-- Active feature：`feat-011`（Paper Real AI Experiments）的 EPD-027 实施已 `accepted`。
-- Feature-level 状态保持 `in-progress`；`accepted` 仅指 EPD-027 实施 focus 的 Task 0–34，正式采集与论文矩阵仍等待经校验的 paid receipt。
-- EPD-027 共 35 个 Task；Task 0–34 全部 accepted，计 `35/35`。无 active/current Task，也无下一实施 Task。
-- Task 29 实现范围严格为 `21` 个 approved implementation 文件，另有 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。未扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
-- Task 29 已审定证据（验收时未复跑）：review=`0 Critical / 0 Important`；canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core=`204`；official closure=`3`（CNY complete ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
-- provider/network calls=`0/0`，无经 Task 26 验证的 paid receipt；正式论文矩阵始终为 **NO-GO**，不得调用真实 API 或把离线/trace 结果描述为当次 `real_transport`。
-- 正式矩阵 NO-GO 原因未变：没有 `Task 26 verified paid receipt`，且 provider/network=`0/0`。receipt、offline、mode、admission、budget、secret 等门禁仍须 fail closed。
-- deferred follow-up 保留 7 类：Task28 facility predicate detail；Task29 `offline_gate_parser_only` label；Task29 top-level receipt digests；Task30 artifact-audit/tripwire order；Task32 runtime gitignore；Task33 `8` 个 EOL/stat-only housekeeping；仅 broad Full 触发的 ArtifactStore Windows long-marker `OSError 22`。这些均不改变 Task34 或 EPD-027 实施验收结论。
+- `Doc/SlimV2/README.md`、`slim_v2_experiment_metrics_authority.md`、`slim_v2_system_integration_contract.md` 均为 `status: user_approved`，已成为 Slim V2 范围内的当前权威；下一步是编写 Slim V2 设计规格，尚未授权代码实现。
+- Slim V2 现为默认开发主线：除非用户在当前任务中明确指定其他维护范围，所有后续 Agent 都从 `Doc/SlimV2/README.md` 进入，不再自行梳理旧 paper/formal pipeline、archive、历史 Rxx 输出或 `TokenShareData` 历史结果；legacy `feature_list/session-handoff` 和陈旧基线不能覆盖该默认路由。
+- 旧实验设施已固定为本地只读参考：archive branch=`archive/slim-v2-reference-20260820`，commit=`3489533e79cde05d6ae2a0c9f139785249f60f09`，annotated tag=`slim-v2-reference-20260820`。后续 legacy 参考只允许按 `slim_v2_reuse_inventory.md` 的 allowlist 使用完整 SHA + `git show` 定点读取；禁止 checkout/广泛阅读，Slim runtime 不得 import archive/legacy `paper_*`。本轮未 push。
+- 干净 Slim baseline 从 `main` commit `c963d7f8b9cc2346267279170740910a42de54fd` 建立为本地 branch=`codex/slim-v2-baseline`。清单点名的 39 个公开符号全部存在，baseline 共享接口 focused suite `81 passed`，因此没有选择性移植或修改 shared core/local_runtime/plugin/executor；当前 baseline 只收口 Slim 文档/harness。
+- 用户已冻结五项 Slim V2 补充规则：Exp2–4 复用 Exp1 正式运行自然 traces；`relative_range=(max-min)/mean`；除 Exp2 外 `worker_count=10`；Exp2/3 在线检查退出；Thread/Process 由实施 Agent 用 focused tests 裁决，不要求用户预选。trace 的精确来源键与 split 修订见下一条。
+- 用户随后冻结了回答复用修订：Exp2 取消独立 20-way split并完整继承 Exp1 任务计划；Exp1 每个实际执行 AI unit 保存 `source_repeat_id=0`、最多三个自然 attempts 的普通 per-unit trace；Exp2–4 的实验 `repeat_id` 与来源 repeat 分离，按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 命中并核对普通 Factorization range 或 Lean node/dependency 字段，不新增下游 provider call。
+- Experiment 1 trace coverage 已由用户冻结：每个 root 正常 `run_root()` terminal 后立即执行 Slim-local coverage tail，只补该 root 的 `unscheduled_ai_unit_ids` 且不重复 protocol units；trace 标记 `trace_origin=coverage_tail`，tail wall/token/cost 单列，完成后才开始下一 root。Exp1 正文批次 wall-clock 使用正常协议 `Σ runtime_wall_clock_ms`，避免 root 间 tail 泄漏进 `max-min`。Exp2–4 exact ordinal 缺失时确定性读取同 trace 最后自然 attempt；Exp3 仍按下游当前 ordinal 生成不同扰动，不增加 AI 调用。
+- 用户已批准 Experiment 4 的 challenge-driven 两两完备消融设计，并已写入指标权威：固定 FULL、4 个单机制和 6 个双机制共 11 modes；65 roots、3 repeats、Exp1 DeepSeek 回答复用和 provider calls=0 不变；四类 challenge 在 mode 前按 `case_id × repeat_id` 确定，injector 不可见 mode；配置/preflight BLOCK 使 cell 无效，协议启动后的 no-final/stuck/incorrect/root-check rejection 才计为实验结果；新增数值任务下降、pair 与 interaction 公式。
+- 用户已冻结 Experiment 3 正式故障/扰动规则：fault-rate 分母为每 root 的 planned first-attempt AI units，目标稳定均匀选取且只注入 ordinal 0；五类 fault 的动作、replacement 行为、seed=20260820 的 token/latency 扰动、配对公平和核心恢复/资源指标均已写入指标权威与接线合同。官方 usage schema 进一步确认 reasoning 是 completion 子集，因此扰动与成本不得把 `completion_tokens+reasoning_tokens` 直接重复相加。
+- 用户接受真实 API 边界按能力设计，不强制复用旧 `AIAPIExecutor` 整类；roots 固定串行，root start/terminal/runtime 使用完整协议生命周期边界；Experiment 4 五个 delta 指标使用不带附加后缀的正式名称。上述决定均已同步进三份 Slim V2 权威文档。
+- DeepSeek 与 SiliconFlow 官方价格已联网核对并冻结为 `slim_v2.pricing.2026-08-20`：DeepSeek `deepseek-v4-pro` 使用人民币峰/谷 cache-hit/cache-miss/output 表；SiliconFlow 四个 endpoint 使用专用价格页，并由用户登录后的模型详情逐项交叉核对。价格只是普通成本换算常量，不是预算或门禁。来源、访问日期、reasoning 归属和页面差异已落库到 `Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md`，索引已写入 `Doc/agent-navigation.md`。
+- 本轮按指标权威修正接线合同中的旧五模式表述，补齐 11 modes、challenge plan/observation、`disabled_mechanisms`、protocol-start、trace coverage tail、last-attempt fallback 与 ablation 细粒度字段来源；并补齐 provider request start、cache usage、静态 pricing projector 与价格字段来源。未开始 Slim V2 设计规格或代码实现。
+- 实际代码核对发现：现有 coordinator/plugin/executor 能覆盖主要生命周期，但需要 Slim-local coverage-tail acquisition、fixed-response executor、薄 provider caller、普通 pricing projector 与 metrics projector；细粒度字段从同一次 run 的 ledger/store 提取。两个 runtime adapter 的 k>1 接法仍需实施期测试证明，shared 系统代码保持只读。可直接复用/轻量适配/只借逻辑/禁止复用的精确源码位置已同步到 `Doc/SlimV2/slim_v2_reuse_inventory.md`，并按当前权威修正旧 split、fault、11-mode ablation、timing、pricing、reasoning 与 trace coverage 口径。
+- 下方 R54/representative/Full 段落描述旧 paper/formal 设施的既有状态，不是 Slim V2 的设计来源；Slim V2 Agent 不应继续阅读这些历史链路来决定实现。
+- 本轮仓库收口没有启动实验、调用 provider 或修改运行数据；创建了本地 archive commit/tag 和 Slim baseline branch，但没有 push/merge/PR。archive 纳入范围在 tag 前通过公开接口 `88 passed` 与稳定专项 `29 passed`；4 份未闭合新增 WIP 测试未进入 archive allowlist，原共享脏工作树副本保持不变。
+- 文档 focused verification 已通过：五份 `Doc/SlimV2/*.md` 均可按 UTF-8 读取；指标权威第 8 节与接线合同第 7 节原始叶字段集合 `168/168` 完全一致、missing/extra 均为 0；价格、reasoning、roots 串行、Exp1 两阶段 trace coverage/last-attempt fallback、Exp2 split、Exp3 seed、Exp4 11 modes、固定 archive SHA/tag 与 `git show` allowlist 断言全部 PASS；清单 85 个代码跨度无越界/歧义、36 个关键公开符号定位匹配；Markdown 表头列数一致，Slim harness 定向测试 `25 passed`，相关文件 `git diff --check` 无 whitespace error（仅既有 Windows LF/CRLF 提示）。
 
-## Task 30–34 accepted / EPD-027 implementation complete
+## 当前结论：representative 与 Full 均不可宣称完成
 
-- prestart commits=`2d7240f4`/`012fcc32`，90-minute checkpoint=`23a21146`；Task30 implementation=`9ec806b4`。范围严格为原 `8` 文件加唯一批准的第 `9` 文件 `tests/experiments/test_paper_full_resource_trace.py`，无第 `10` 文件或 production 扩张。
-- RED=`10/15`，canonical 最终=`25 passed`。profiles final：L1=`441`、L2=`8`、L3=`2`、L4=`2`，总计 `453 selectors / 892 items`；L1 首次=`32`，expanded=`855 passed`，final composite full-run=`877 passed` + `2` precise repaired passes。
-- 新增 GREEN：Task19=`2`、Task23=`6`、Task24=`1`；L2 relative root=`2 passed`；L3 missing root blocked exit=`3`、outside root exit=`1`、PowerShell/Bash exit=`3`；overlap=`1 passed in 9.08s`；500-root=`1 passed in 1846.39s`。
-- final review=`0 Critical / 0 Important`；minimizer `<3m` 且零修改。provider/network=`0/0`，无 receipt/secret；formal matrix 仍 **NO-GO**。
-- Task31 初始 precondition 在 artifact directory 缺失时 fail closed、收集 `0 tests`；创建 planned exact directory 后，权威 profile 仅实际运行一次：L1 exit=`0`，`882 passed / 0 failed / 0 errors`，`441` exact selectors，`2155.58s`，digest=`sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c`，status=`passed`。
-- coverage 覆盖 Task0–29（含25–29）、Task24 pure=`2` / artifact audit=`0` 和 two-stage gate；Lean root=`1` / checker=`1<=2`。唯一 Fast exit=`0`：`525 passed, 1 skipped in 38.84s`。
-- review=`0C/0I/0M`，证据链为真实 production、无 shadow；minimizer=`N/A`、零修改。provider/network=`0/0`，无 receipt/secret；L3/L4 unset，formal matrix **NO-GO**。既有4项 deferred Minor 与 code-map milestone follow-up 不变。
-- Task32 runtime-only：无 source/test commit；保留 `local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}`，工作树显示 `?? local/verification/`。profile exit=`0`：`8 passed in 8.41s`，status=`passed`，digest=`sha256:145059c...cef2a`。
-- positive source=`heiyucode_gpt56_smoke_20260716`；number=`4733749`，predicate=`passed/true/true`，factors=`1013×4673`；case/batch/tree/raw/provenance digests 已在 runtime summary 记录。真实链 terminal=`SETTLEMENT_RECORDED`、无 shadow；classification=`regression_only`、`paper=false`、not formal。
-- negative expected-fail hash before=after=`sha256:7f2a...1c60`。双 replay 使用独立 root；observations=`sha256:4b125...4192`、table=`sha256:c4f4...5ae9`、lineage=`sha256:9af8...a9a0` 与 ledger 相等，`113` files inventory/content 相同。
-- review=`0C/0I`；minimizer=`N/A`、零修改。provider/network=`0/0`（历史 source attempt 独立，不等于本次调用）；无 receipt/secret，formal matrix **NO-GO**，L2 不替代 L4。
-- Task33 owning fix=`a10e988ddfc923cca28423dfd83af60a96863a4f`，follow-up fix=`7c9dff7c`；主实现 exact `12` 文件：sidecar/semantic-authority/environment/fixed_plan/catalog/audit/profile/Exp5 + `4` tests；PLAN_OUT 仅 `profile`、`Exp5`、`fixed_plan` 三个 production 文件，无未批准文件。
-- RED module-missing exit=`2`；targeted=`140/140 in 30.10s`，contracts=`12/12`，native receipt=`1/1 in 6.07s`，L1 Lean=`1/1 in 3.12s`。bridge RED=`0/1 in 0.68s`→GREEN=`1/1 in 0.62s`，fixedplan=`1/1 in 0.72s`，diffcheck=`0`。
-- 唯一 Fast exit=`1`：`524 passed / 1 failed / 1 skipped in 83.83s`，因 L1 function count `40!=39`；最小合并后失败 node=`1/1 in 0.25s`、既有 tests=`2/2 in 19.78s`，reviewer 明确无需重跑 Fast。final review=`0C/0I`，minimizer=`NO_CHANGE`。
-- public CLI 仅一次 exit=`3 in 83.67s`，因 receipt absent 正确 BLOCKED；budget=`516/171708288/979.524864/CNY1000`，blocked digest=`sha256:47598f070d41715b99a58034b223c3c18664fa9a9a970af059f0750acaf5b8f5`；provider/network=`0/0`，3 roots/marker/ledger absent，launcher/audit skipped；runtime `local/verification/` 保留。
-- rejected cascade：official 600 checker 曾 success=`516.23s`，但架构已弃用；Full 一次 exit=`1`：`2752p/86f/1s in 3826.97s`，未进入 LeanAudit、不重跑。formal matrix **NO-GO**，receipt absent。
-- Task34 在 L3 receipt-absent BLOCKED 后按计划仅写 `l4_cell_traceability_blocked`；L4 diagnostic root 不是 formal/canonical L3 terminal output，`formal_l4_pass=false`。blocked record digest=`sha256:17ccfc2fc72184a9ee6151b910d462b5ba8014c8d55e9f9597931b3d6bbfa268`。
-- execution/publication gate 均稳定 `BLOCKED`，执行 gate 不依赖未来 L3/L4/terminal 输出，publication gate 仅在 terminal evidence 边界检查，因而 DAG 无环；无 receipt、dispatch 或 provider attempt。execution digest=`sha256:b1dfa6edf77b3a0982dc72ce09fde74f1fe1300d7f055520c95cfe7cc721de3c`，publication digest=`sha256:7b49f79a7a22f63eb7bf9e3ba7056fd61c918b12deeed5070433a03113273d0c`。
-- focused profiles：L2=`8 passed`；L3/L4 均 exit=`3`/blocked。首次 L1 exit=`1`，`880 passed / 2 failed in 2834.24s`，暴露 Task33 ordinary environment refs bug；owning fix `7c9dff7c` review=`0C/0I`、minimizer=`NO_CHANGE`；post-fix L1 exit=`0`，`882 passed in 2807.21s`。Fast exit=`0`，`525 passed / 1 skipped in 75.85s`。
-- Task34 comprehensive review=`0 Critical / 0 Important`，Minor 仅为既有 `offline_gate_parser_only` deferred；minimizer=`N/A`。未运行 Full、LeanAudit 或 600-entry checker；provider/network=`0/0`，`provider-attempts.log` 为空。三份计划内 tracked docs 与本次四份状态文件共同完成 Task34 收尾，无 production/test 修改。
-- EPD-027 实施已 accepted，但这不表示正式论文实验已完成。receipt 仍 absent，formal matrix 仍 **NO-GO**；未来只有在用户提供并通过 Task26 校验的 paid receipt 后才能进入 formal acquisition，不得自动调用 provider。
+- `R54` 的 plan-only、receipt、paid reload/attestation 均绑定同一个预算 digest=`sha256:551c5699...`，且 `Exp1 new_paid=false`、`global_new_paid=Exp5 only` 正确；失败并非这两个字段在进程间丢失。paid service 在消耗 readiness 并物化 Exp1 acquisition bundle 后再次推导预算，改用当前 Exp5 pricing binding，得到不同 digest=`sha256:8a004584...`，随后以 `results-first execution requires the exact prepared provider budget` 阻断，控制流尚未到 external-bank resolver 或 Exp5 transport。
+- 直接根因在 fresh Exp4-excluded loader：它先刷新 current Exp5 execution binding，却只在 Full 有 `approval_authority` 时把该 binding 传给预算推导；representative 因此回退到 frozen endpoint/pricing digests。paid service 的二次推导则无条件传 current Exp5 binding。金额、calls、tokens 与 `new_paid` 均一致，只有 Exp5 pricing provenance digests 不同。
+- 这是系统性预算注册缺陷而非单字段事故：同一预算 authority 在 fresh loader、paid service 与 legacy warm/plan/cold restore 多处重新推导，且 optional authority context 不一致；现有 `persist_results_first_provider_budget()` 没有 production callsite。最快建议是 representative/Full 统一消费已刷新 Exp5 binding、预算只签发/持久化一次、receipt 后只校验不重算，并在 external-bank reuse 时跳过 90-call Exp1 acquisition bundle 物化；实施仍待用户确认。
+- `R52`（`representative_exp1_exp3_exp5`）已按用户要求启动后不监督；本轮不读取或推测其终态。
+- `local/Newfullrun.ps1` + `local/newfullrun_audit.py` 只生成固定 selection=`full_exp1_exp3_exp5`（Exp4 excluded）的 current-pricing、zero-call Full 预算审批 authority；状态为 `awaiting_user_approval`，receipt=`not_issued`，不创建 bank、不 dispatch。
+- `local/Newfullrun_execute.ps1` 已接通单 A → internal receipts → Full bank → scope → plan-only → paid canonical loader；本轮按用户要求不启动 Full，Full paid 结果仍未宣称完成。
+- `2026-08-20` authority review 发现并修复 execute.ps1 的空 planning-root P0；representative 新鲜 scope/plan-only 验证 `selection=representative_exp1_exp3_exp5`、115 conditions/roots、provider_calls=0、budget authority=`sha256:84a33a6d...`。本轮未启动 Full。
 
-## 已接受历史摘要（Task 0–28）
+## 最近修复
 
-- Task 0–3：固定配置、ledger binding、typed-hook/direct-results 等协议和 evidence 基础已 accepted；历史 Fast 曾为 `468 passed, 1 skipped`，均离线且 provider/network=`0/0`。
-- Task 4–11：request identity、immutable response bank、inventory/preflight、SQLite WAL budget、acquisition/reconcile、deterministic scheduler、parent-owned commit ABI、trace-backed executor / dual provenance 已 accepted。所有验收保持本地 fake/trace 口径，不解锁真实 API。
-- Task 12–20：Exp1–5 observations/projectors、registry/formal metric drafts、evidence eligibility、normal formal lifecycle、per-cell lineage 等已 accepted；历史 smoke/fixture 仅可作为 provenance 或回归，不能升级为论文在线证据。
-- Task 21–24：canonical direct results、deterministic traceability replay、formal runner/persisted generation 和输出 lineage 已 accepted；derived artifact 只能从持久化 ledger/artifact/manifest 重投影，缺失/漂移必须 fail closed。
-- Task 25：online-check plan/evidence contract 已 accepted；冻结 capability=`4 calls`、Exp2=`24 refs/480 upper`、Exp3=`2 roots/12 upper`、`max_concurrent_roots=1`。在线检查仍需当次真实 API，并受 receipt/admission 门禁。
-- Task 26：paid-receipt validator 已 accepted（commit=`e9ab3d9c`）；真实 receipt persistence/provider/network=`0/0/0`，当前没有 user-provided valid receipt。
-- Task 27：accepted（commit=`b5f340f5`），历史 canonical+network tripwire=`358 passed in 470.24s`；provider/network=`0/0`，无 paid receipt。
-- Task 28：execution/publication gate accepted（commit=`7338f177`）；正式磁盘/receipt/L1–L4/bank/terminal 缺失时稳定 BLOCKED，不能由 capability/facility 推导 formal publication PASS。该 Task 留下上述前两项 deferred Minor。
+- Exp5 pricing authority 已拆出 R13 source-bank 复用边界：R13 response bank 只复用 Exp1–3 trace，Exp5 binding 从当前 provider config 重建。定向测试 `2 passed`，未调用 provider；R51 的旧 `provider_calls=0` blocked 记录不被改写。
+- R50 Exp1 finalizer 已修复 partial committed-source coverage 与 raw response artifact identity 对齐；定向回归分别 `28 passed`、`32 passed, 35 deselected`，未调用 provider。
+- current-price authority 已接入 Full materializer/loader；新增 external-bank manifest binding 与 structured freshness blocked 校验。representative 仍使用 R13 frozen Exp1 pricing/bank，Full-only current pricing 仍需真实 acquisition 才能产生 paid 结果。
 
-## 2026-07-31 当前正式规模与资源门禁（EPD-026）
+## Representative 固定边界与已付 acquisition
 
-- active scale profile=`paper_suite_scale_300_50_54.v1`，Factorization 稳定 hash corpus=`100/100/100`；Exp1=300，Exp2 hard=50，Exp3/4 共享=`17/17/16`。旧 v1 profile 只供历史 replay。
-- Exp5 active selection=`exp5_parent_quarter_selection.v4.json`，42 Factorization hard + Lean 三 topic 各 4，共 54 roots/model-repeat；8-root smoke suite=`paper_smoke_exp5_v4`，其 launcher 名仍为 `local/run_exp5_v3_smoke.ps1`。
-- 精确正式计划：Exp1=`435/1,970/1,970`，Exp2=`600/12,000/12,000`，Exp3=`3,726/17,148/54,372`，Exp4=`975/4,410/7,938`，Exp5=`648/4,992/4,992`（roots/first-attempt units/provider-attempt upper）。Exp1–5 合计=`6,384/40,520/81,272`。
-- 冻结全量 ceiling：tokens=`23,503,151,360`，cost=`7,346.259328`，required disk=`63,406,407,680` bytes（59.05 GiB）；2026-07-31 E: free snapshot=`471,755,141,120` bytes。正式启动前仍按实际 output 重算。
-- 共享 reference 一次性索引与 500-root runner 压力证据尚非 formal GO；不得将离线规模探针宣称为正式全量内存风险已解决。
+- representative 固定 `145` roots，Exp1/2/3/4/5=`12/6/81/30/16`；`representative_exp1_exp3_exp5` 本轮实际保留 Exp1/2/3/5=`12/6/81/16`，Exp4 排除，不能用 Full 或历史 145-root 结果替代。
+- Exp2–4 主矩阵只消费可追溯的 immutable response bank，完整重跑 TokenShare 状态机、fault/recovery、worker death、ablation、verifier/checker、merge 与 settlement，标为 `real_model_trace_protocol_run`；当前 provider calls 必须为 `0`。只有 Exp1、Exp5及另行批准的 Exp2 在线检查、Exp3 在线恢复允许真实 API。
+- Exp1 acquisition inventory=`90`，`90/90 settled`，`76 success + 14 provider_failure/usage_missing`，provider calls=`90`，每 slot 至多一次且无 reacquisition。known actual=`1,733,487 tokens / CNY 10.021065`；usage-missing 上界 charged=`6,027,352 tokens / CNY 35.502660`。
+- typed representative cap=`202 calls / 34,385,749 tokens / CNY 242.762815`，budget digest=`sha256:9f3e0ffbb7f27a5c970a27a1b9c5d62ceb5dd0634dd2dc1a308c114471540d8e`；Exp1 已占 90 calls，后续 Exp5 上限 112，外层 CNY1500 不得抬高 typed cap。
+- R13 paid ledger `local/paid-representative-20260816-r13-paid-output/acquisition/acquisition_budget.v1.sqlite3` SHA256=`ea778c0f5cadabc8cfa02f94d8b335eebb4d3a6c08d4130f45ed3b494fad53fe`，WAL/SHM absent。R15 plan-only source pin 已因 bootstrap adapter 变化而 stale，不得用于 paid resume。
 
-## 2026-08-01 两阶段真实回答库决定（EPD-027）
+## Bootstrap / authority 门禁
 
-- `76,280` 保留为 Exp1–4 旧全在线 attempt 上界/trace-slot capacity；主矩阵在线 acquisition 预算须由稳定 outbound-body digest 枚举完整 bank inventory 后冻结。Experiment 5 SiliconFlow 预算单列。
-- Exp2–4 主矩阵的完成率/机制指标由完整 TokenShare 状态机产生；wall-clock/token/cost/call 使用 trace-replay、trace-attributed、bank-slot 口径，不得冒充条件当次在线支出。
-- Exp3 `wasted_actual_tokens` 仅用于小型在线恢复检查；主矩阵用 `discarded_trace_tokens`。故障后在线恢复必须有新 attempt、新 provider response/provenance 和独立 actual usage。
-- DeepSeek acquisition 与在线检查目标 CNY hard stop=`1,000`；Task 7/8 已实现本地 authority，但没有 valid paid receipt 时不能真实 dispatch。
+- 最新唯一 official provider-zero bootstrap session=`18419` fail-closed，`ValueError / staged_publication_preflight`；进程已回收，四个正式 publication target absent，ledger/source/provider unchanged (`0/0`)。禁止 blind retry。
+- 历史 official bootstrap 曾因 multi-entry condition 的 `entry_digests` 排序/映射契约 fail-closed；该记录只保留为旧边界证据，不再作为 R54 的当前根因或修复判断。
+- L2=`8 passed`；L3/L4 为 exit=`3` blocked。Task34 follow-up L1=`882 passed`，Fast=`525 passed / 1 skipped`；review=`0 Critical / 0 Important`。这些是边界证据，不是 formal publication PASS。
+- execution/publication gates 保持 BLOCKED 且无环；execution digest=`sha256:b1dfa6edf77b3a0982dc72ce09fde74f1fe1300d7f055520c95cfe7cc721de3c`，publication digest=`sha256:7b49f79a7a22f63eb7bf9e3ba7056fd61c918b12deeed5070433a03113273d0c`。formal matrix **NO-GO**。
 
-## 历史真实 smoke 与证据边界
+## Full 固定规模与旧 FullAudit 证据
 
-- `exp34-smoke-20260731-041442` 为用户此前启动的历史真实运行：36 个 DeepSeek HTTP 200 provider attempts、839,054 tokens；估算 CNY=`4.6147626`，不是实付。负向结果保留为真实失败，不能改写为成功。
-- 历史输出曾通过真实性审计，但 canonical 论文证据审计为 FAIL：no-return provenance、ledger hash/body、timing/fault refs、model inventory 与 replay closure 均存在问题。历史输出保持只读，不能升级为论文证据。
-- 后续 canonical materialization、fault/recovery、Exp5 smoke evidence 与 renderer 已补 fail-closed 规则；但这不改变当前无 verified paid receipt、provider/network=`0/0` 和 formal matrix **NO-GO** 的结论。
+- Full authority 固定 `324 conditions / 6,384 roots / 40,520 first attempts`；正式 Full 不得重建 catalog/snapshot/inventory 或复用 R13 representative bank。
+- 正式规模 profile=`paper_suite_scale_300_50_54.v1`，Exp1–5 roots/first-attempt/provider-attempt upper=`435/1970/1970`、`600/12000/12000`、`3726/17148/54372`、`975/4410/7938`、`648/4992/4992`，合计 `6384/40520/81272`；冻结 ceiling=`23,503,151,360 tokens / CNY 7,346.259328`，启动前仍须按 current authority 重算。
+- `2026-08-18` FullAudit 是 zero-call preparation，不是 Full run：`234 conditions / 5409 roots / 36110 selected units`，source bank=`pending_new_full_exp1_acquisition`、`r13_bank_accepted=false`，projection=`6962 calls / 909477542 tokens / CNY 7113.566514`，状态=`ready_for_user_paid_receipt`，无 paid receipt、无 acquisition、provider=`0`。其专项 focused test `1 + 3 passed`，未运行 Full E2E/LeanAudit。
 
-## 未执行与边界
+## 历史验收摘要
 
-- 本轮不运行 Full、LeanAudit、force-all、真实 API smoke 或正式矩阵；不新增网络资料、provider 调用、stage、commit、push、merge 或 PR。
-- V1 仍是本地可复现实验协议内核；不扩展到生产网络、安全对抗、动态 provider 平台或 Lean 服务。
-- TTFT 无持久化来源时保持 missing，不伪造为 0；已知历史 P2（Exp5 bundle path portability、PowerShell EOF 极端等待）维持 deferred，不能表述为已修复。
+- Task0–6：协议基础、ledger binding、typed hooks、direct-results 与正式 evidence 基础已 accepted；离线回归 provider/network=`0/0`。
+- Task7–18：request identity、immutable response bank、inventory/preflight、budget/WAL、scheduler、trace-backed executor、lineage、Factor/Lean、metrics、replacement、receipt/replay 门禁已 accepted。
+- Task19–28：在严格 plan-out 必要性批准后接入 trace、lineage producers、direct merge、traceability、online checks、paid authorization、pipeline 与 execution/publication gate；专项回归通过，provider/network=`0/0`，无真实 paid receipt。
+- Task29–34：readiness/profile、Full-resource/L1/L2/L3/L4 边界已验收；L3/L4 仍 blocked，formal matrix 不得升级为 PASS。完整逐轮证据见 `session-handoff.md` 与 git history。
+
+## 下一步与禁止事项
+
+- 当前只推进 R54 canonical budget authority 修复设计：先让 representative/Full 使用相同 current Exp5 pricing binding，再移除 receipt/readiness 后的重复预算推导，并把 external-bank lineage 校验前置以跳过无意义的 Exp1 acquisition bundle 物化。实现前不得启动新的 paid run、Full、LeanAudit、force-all、正式矩阵或额外真实 API。
+- 陈旧默认基线的失败只留作环境记录，不作为本轮根因、修复正确性或运行 readiness 的判断依据；后续仅运行针对 R54 authority/data-flow 的 focused tests、纯离线 artifact diff 与 provider-zero dry-run。
+- 不得伪造 receipt、accepted、正确率、usage、latency、terminal 或 publication；TTFT 无持久化来源时保持 missing。
+- 不联网、不 stage/commit/push/merge/PR，不做 destructive worktree 操作；V1 仍限于本地可复现实验协议内核。
