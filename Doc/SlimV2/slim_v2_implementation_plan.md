@@ -361,6 +361,13 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_system_v
 
 两领域均产生可解释普通root结果；Sequential路径无shared接口缺口；里程碑review范围内Critical/Important关闭。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 2/6 owner，确认其heartbeat active后结束；不得自行继续Task 2。
 
+**Task 1完成证据与里程碑review（2026-08-21）**：
+
+- fail-first为缺少`projector`模块，`1 error in 0.29s`；实现者最终focused验证为`3 passed in 10.19s`。
+- spec reviewer独立复跑为`3 passed in 9.85s`，结论`Critical/Important/Minor=0/0/0`；implementation-quality reviewer独立复跑为`3 passed in 8.67s`，结论`Critical/Important/Minor=0/0/0`；shared interface gap=`none`。
+- 真实成功Factorization root触发early merge：`planned=3/dispatched=2/completed=2`，`range_2`保持unscheduled；真实成功Lean fixed-DAG root经过child checker、merge与root recheck；真实自然rejection root可通过`run_root_slice`投影；每个root的`run_root`均恰好调用一次。
+- provider/network=`0/0`；未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
+
 #### 10. 明确非目标
 
 不创建生产`execution.py`、provider/fixed adapter、trace、resume、scenario、reducer或CLI；不证明Thread；不复制engine/ledger/storage/worker/verifier/checker/merge。

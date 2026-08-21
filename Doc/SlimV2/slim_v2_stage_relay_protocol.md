@@ -169,12 +169,15 @@ Stage 4 默认是本协议的终点。如果启动时的用户授权明确包含
 Stage 3 的六个大型task必须由六个连续、互不复用上下文的顶层owner串行完成，固定记为`Stage 3 Task 1/6`至`Stage 3 Task 6/6`。该划分是唯一Stage 3顶层接力链，不是六条并行分支，也不改变实施计划中的task语义。
 
 1. 每位owner启动时只接收当前一个大型task的唯一目标、允许写入、权威引用、上一task checkpoint和不超过约2,000中文字符的交接胶囊；不得fork上一owner完整历史。
-2. 当前owner只能实现、验证、审查和提交当前task。即使剩余上下文充足、下一task看似简单，也禁止继续实施、分派或监督下一task。
-3. Task 1–5完成后，当前owner按第5节创建恰好一个下一编号的全新顶层Stage 3 owner；Task 6完成并满足Stage 3总完成标准后，创建Stage 4 owner。不得创建空的“总监督owner”悬在六个task之上。
-4. 下一owner必须使用同一saved project的local environment、同一branch和当前working tree；不得创建默认worktree、full-history fork或复制/cherry-pick当前提交。
-5. 每个owner拥有恰好一个名称包含`Slim V2 Stage 3 Task <K> recovery`的30分钟heartbeat。下一owner active/in progress且明确报告`RECOVERY_HEARTBEAT_ACTIVE`前，当前owner保留自己的heartbeat但停止写入；确认后立即禁用当前heartbeat。任一时刻只能有一个Stage 3实现写owner。
-6. 每棒progress顶部和交接胶囊必须记录`stage=3`、`task_index=K/6`、当前task checkpoint SHA、允许/遗留dirty文件、verification、review结论、未解决问题、下一task唯一目标和两个heartbeat状态。旧task完成证据不能仅存在于聊天。
-7. 当前task未满足完成标准或命中第7节时，禁止创建下一task owner。heartbeat恢复只能恢复当前task，不能借自动唤起跨到下一task。
+2. 每位owner必须作为当前task的主监督智能体：把具体实现分派给范围明确的子智能体，并把独立spec审计和implementation-quality review分派给与实现者分离的子智能体；owner保留范围裁决、冲突处理、集成、最终验证、checkpoint commit和接力责任，不得亲自包办全部实现与审计/review。
+3. 当前owner只能实现、验证、审查和提交当前task。即使剩余上下文充足、下一task看似简单，也禁止继续实施、分派或监督下一task。
+4. Task 1–5完成后，当前owner按第5节创建恰好一个下一编号的全新顶层Stage 3 owner；Task 6完成并满足Stage 3总完成标准后，创建Stage 4 owner。不得创建空的“总监督owner”悬在六个task之上。
+5. 下一owner必须使用同一saved project的local environment、同一branch和当前working tree；不得创建默认worktree、full-history fork或复制/cherry-pick当前提交。
+6. 每个owner拥有恰好一个名称包含`Slim V2 Stage 3 Task <K> recovery`的30分钟heartbeat。下一owner active/in progress且明确报告`RECOVERY_HEARTBEAT_ACTIVE`前，当前owner保留自己的heartbeat但停止写入；确认后立即禁用当前heartbeat。任一时刻只能有一个Stage 3实现写owner。
+7. 每棒progress顶部和交接胶囊必须记录`stage=3`、`task_index=K/6`、当前task checkpoint SHA、允许/遗留dirty文件、verification、review结论、未解决问题、下一task唯一目标和两个heartbeat状态。旧task完成证据不能仅存在于聊天。
+8. 创建下一棒时，第6节完整initial prompt及其中的交接胶囊必须显式传递第2项主监督与子智能体分工规则，不能只依赖下一owner自行从文档推导。
+9. 从Task 1交至Task 6的每棒initial prompt/胶囊还必须持续传递Task 6预留preflight边界：只允许防止程序失控、磁盘耗尽、重复调用或重复付费的运行安全检查；禁止价格/余额审批、`budget authority`、人工授权、`publication readiness`和`evidence completeness`，价格表缺失或变化不得阻止实验。该边界只约束未来Task 6，不得前移为当前Task 2–5的实现范围。
+10. 当前task未满足完成标准或命中第7节时，禁止创建下一task owner。heartbeat恢复只能恢复当前task，不能借自动唤起跨到下一task。
 
 ### 5.2 下游阶段已启动后的上游重规划接力
 
