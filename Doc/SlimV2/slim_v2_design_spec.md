@@ -255,7 +255,7 @@ full按四model×三repeat×54roots得到648 root-runs；roots串行，root内`w
 | `minimax_m2_5_exp5_v3` | `MiniMaxAI/MiniMax-M2.5` | thinking, budget 32768 |
 | `deepseek_v3_pro_exp5_v3` | `Pro/deepseek-ai/DeepSeek-V3` | nonthinking |
 
-公共控制为timeout 600、max tokens 32768、零重试、`replacement_attempts_allowed=false`；repeat model顺序固定`ABCD/BDAC/CADB`。每AI unit最多一个provider attempt，自然早停保留planned-but-unscheduled。configured/requested/resolved model不一致立即停止该model condition尚未执行roots，并为固定库存写infrastructure-invalid。provider自然失败、parse/checker rejection仍是结果。
+公共控制为timeout 600、max tokens 100000、零重试、`replacement_attempts_allowed=false`；三个thinking entry的`thinking_budget=32768`保持不变，不能与response `max_tokens`混用。repeat model顺序固定`ABCD/BDAC/CADB`。每AI unit最多一个provider attempt，自然早停保留planned-but-unscheduled。configured/requested/resolved model不一致立即停止该model condition尚未执行roots，并为固定库存写infrastructure-invalid。provider自然失败、parse/checker rejection仍是结果。
 
 ## 6. Provider caller、fixed executor、tail、scenario、projector、sink和reducer
 

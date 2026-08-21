@@ -81,7 +81,7 @@ class ProviderSubmissionAdapter:
             raise ValueError("prompt package lacks prompt_text")
         controls = {
             "exp1": (600.0, 300_000),
-            "exp5": (600.0, 32_768),
+            "exp5": (600.0, 100_000),
         }
         try:
             timeout_seconds, max_tokens = controls[self.root_key[0]]

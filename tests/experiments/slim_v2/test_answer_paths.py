@@ -1014,7 +1014,7 @@ def test_exp5_four_siliconflow_entries_complete_without_tail_or_replacement(
     assert assembly.mechanism_policy.replacement_attempts_allowed is False
     assert len(factory.responses) == len(submission_adapter.requests) == 3
     assert factory.timeout_seconds == [600.0, 600.0, 600.0]
-    assert all(body["max_tokens"] == 32_768 for body in factory.request_bodies)
+    assert all(body["max_tokens"] == 100_000 for body in factory.request_bodies)
     assert not scan_resume(ordinary.run_dir).trace_keys
     assert not scan_resume(ordinary.run_dir).protocol_root_keys
     assert all(body["model"] == model for body in factory.request_bodies)

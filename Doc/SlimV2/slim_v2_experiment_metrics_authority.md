@@ -564,7 +564,7 @@ Experiment 4 沿用已冻结的 11 个 modes、四类 mode-blind challenge、现
   - B `Qwen/Qwen3-14B`，thinking，`thinking_budget=32768`；
   - C `MiniMaxAI/MiniMax-M2.5`，thinking，`thinking_budget=32768`；
   - D `Pro/deepseek-ai/DeepSeek-V3`，nonthinking。
-- **公共控制**：`timeout_seconds=600`，`max_tokens=32768`，SiliconFlow 全局 in-flight=3；repeat 顺序固定 `ABCD / BDAC / CADB`。
+- **公共控制**：`timeout_seconds=600`，`max_tokens=100000`，SiliconFlow 全局 in-flight=3；A/B/C的`thinking_budget=32768`保持不变，它不是response token上限；repeat 顺序固定 `ABCD / BDAC / CADB`。
 - **成本口径**：四个 endpoint 全部使用第 1.4 节的 `pricing_version="slim_v2.pricing.2026-08-20"`；reasoning 是 completion/output 子集，不重复计价。
 - **grouping**：正文按 model endpoint 汇总；domain/topic/repeat 和 failure taxonomy 留在明细。不得创建 pairwise significance、排名或综合分数。
 
