@@ -4,17 +4,16 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 当前 focus：Stage 3 Task 6/6已完成；正在向fresh Stage 4 representative交棒
+## Slim V2 当前 focus：Stage 4 representative已启动但命中credential强制停止
 
-- **接力身份与实现checkpoint**：`stage=3`、`task_index=6/6`、branch=`codex/slim-v2-baseline`，Task 6=`01a02577-5180-7c53-8472-eb7e517b0c4f`，`previous_task_id=01a024f3-1950-7ad2-84a1-17e10780bc97`；实现checkpoint=`d6e5610c10782add73f70397aca88ec79fc79145`，证据checkpoint为本条所在提交。Stage 3六Task蓝图已完成；当前owner只允许创建fresh Stage 4、确认其heartbeat active并关闭本Task heartbeat，不得自行运行真实representative。
-- **同一CLI与薄GUI链**：`cli.py`已接通`plan/run/run-all/reduce/representative`、原子单实验inventory、串行roots、显式Exp2–4 source、同run reducer和resume；唯一Windows链为`run_slim_v2.cmd → gui.py → 同一CLI argv/一个子进程`。GUI只选择profile、Exp1–5/all、run ID/output、必要source与resume，没有第二runner、service、看板、日志系统、偏好、队列或自动重试。
-- **恢复与防重复付费**：所有Exp1–5 root在`run_root`后写typed `protocol.json`；Exp1额外冻结protocol traces、tail requests和base projection。fresh process可重建缺失tail，复用typed terminal/response；dead intent写`unknown_transport_outcome`且不重调同ordinal，live owner fail closed，journal-only tail不因缺secret被阻断。run-scoped外部锁阻止重复CLI，同token清理且stale回收防竞态。
-- **运行安全preflight**：只校验inventory/caps、entry/model/实际pending secret、显式source closure与Factorization range/Lean node dependency语义、下一root动态磁盘上界；Exp1 provider permit=`10`、Exp5=`3`且worker backend capacity不变。价格、余额、budget、人工批准、publication readiness与evidence completeness均不参与启动。
-- **失败作用域与普通布局**：source缺失或语义错按condition fail-stop并为当前/剩余预注册roots写infra-invalid，后续condition继续；protocol-only fixed root直接恢复typed projection，不第二次`run_root`/provider；system artifacts只有一层`system/artifacts/`，run/config/reference/root/trace/call文件均经公开`RunStore`原子边界。
-- **独立review**：spec初审`4 Critical/3 Important`，修复后复审另发现单实验inventory泄漏`1 Important`，最终`SPEC_COMPLIANT`、C/I/M/OOS=`0/0/0/0`；不同quality reviewer发现journal-only tail secret误阻断`1 Important`，修复后`APPROVED`、C/I/M/OOS=`0/0/0/0`。
-- **owner fresh验证**：Task 6四文件focused=`47 passed in 26.96s`；Slim V2全包=`125 passed, 3 failed in 285.87s`，三项仅为既有`test_schema.py` authority fixture未纳入新增ablation leaves，和上一checkpoint一致且Task 6未改schema/profiles/authority fixture。scoped compile、tracked/untracked`git diff --check`、legacy import/GUI forbidden import/额外gate absence均通过。
-- **provider与运行边界**：Task 6 provider/network=`0/0`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。Stage 4只运行representative，不运行full；`representative_only`为终点，不创建Stage 5。
-- **dirty保护**：范围外用户`AGENTS.md`继续保留dirty，SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`；禁止reset/revert/stash/delete或纳入Task 6/Stage 4提交。
+- **接力身份与checkpoint**：`stage=4`、`run_scope=representative_only`、branch=`codex/slim-v2-baseline`，Stage 4 Task=`01a026aa-cece-7391-9815-65a3487d87cb`，`previous_task_id=01a02577-5180-7c53-8472-eb7e517b0c4f`；启动HEAD=`5e9eab24a23ee7fc11075fc741c581923bd58678`，implementation parent=`d6e5610c10782add73f70397aca88ec79fc79145`。本条所在提交是Stage 4强制停止证据checkpoint，不是representative完成checkpoint。
+- **仓库事实**：启动时branch/HEAD/parent精确匹配接力输入；工作树只有受保护`M AGENTS.md`，SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`，未reset/revert/stash/delete/edit或提交；固定reference tag解析为`3489533e79cde05d6ae2a0c9f139785249f60f09`。
+- **heartbeat**：当前Task唯一`TokenShare Slim V2 Stage 4 recovery` heartbeat已创建并验证为`ACTIVE`、`FREQ=MINUTELY;INTERVAL=30`，绑定当前Task；Stage 4尚未完成，故按relay保持启用。没有创建Stage 5。
+- **零调用plan**：同一CLI `plan --profile representative --run-id slim-v2-representative-20260822-stage4`成功，精确输出论文roots=`72`、executions=`74`、provider-call upper=`89`；Exp1/2/3/4/5 roots=`4/12/8(+2 references)/44/4`，Exp2–4 provider upper=`0`；估算=`0.239 GiB`、hard upper=`3.498 GiB`、逐root margin=`0.5 GiB`，E盘可用空间约`824 GiB`。
+- **credential强制停止**：`DEEPSEEK_API_KEY`在当前进程存在；`SILICONFLOW_API_KEY`在Process/User/Machine与`conda run -n tokenshare`子进程中均不存在，`local/ai_api_smoke.local.json`也不存在。按relay §7.7，缺credential属于客观强制停止条件，法定人数无法生成外部secret，因此未分派quorum、未运行partial representative、未修改代码。
+- **正式CLI证据**：仅执行一次`conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.slim_v2.cli representative --run-id slim-v2-representative-20260822-stage4`，exit code=`1`，失败点为provider preflight的`missing provider secret/API key env var: SILICONFLOW_API_KEY`；失败发生在写run inventory和调用`execute_root`之前。
+- **进程/results/trace/journal核对**：启动前无Slim V2 CLI/GUI遗留进程，目标run目录不存在；失败后目标run目录仍不存在，因此results/traces/calls/responses均为0，provider/network=`0/0`，没有未知终态或可盲目重试的attempt。credential外部可用后应再次先核对进程与该run目录；若仍不存在，使用同一run ID不带`--resume`重新执行同一`representative`命令。
+- **禁止项**：未运行full、Lean专项suite、LeanAudit、全量catalog、`lake`/`lean`回归，未push/merge/PR。Stage 4没有满足设施通过标准，不能标记representative完成，也不能关闭heartbeat或创建Stage 5。
 
 ## Slim V2 旧Stage 3 provenance：已暂停并由六Task重规划取代
 

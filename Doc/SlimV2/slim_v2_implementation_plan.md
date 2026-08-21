@@ -777,3 +777,11 @@ review只在三个里程碑触发：
 | blueprint usability | `PASS; Critical=0, Important=0` | 纵链可装配性、tail/caller/resume/backend/API owner、无第二状态机/runner/service |
 
 两路review都把relay SHA256 `B7F6785957B0FD0EC5D35A4AE18A81715476A4DD6EFEDB1A78B8BD8B41FE0777`作为输入，并确认六个Task必须由六名连续fresh顶层owner逐棒完成，而不是交给同一个Stage 3总owner。本蓝图状态恢复为`approved_under_user_delegation`；这只表示实施蓝图可执行，不是runtime、representative或论文结果批准。
+
+## 12. Stage 4 representative运行记录（2026-08-22）
+
+- Stage 4使用同一CLI和`profile=representative`，`run_scope=representative_only`；启动branch/HEAD/parent分别为`codex/slim-v2-baseline`、`5e9eab24a23ee7fc11075fc741c581923bd58678`、`d6e5610c10782add73f70397aca88ec79fc79145`。
+- 零调用plan成功：论文roots=`72`、executions=`74`、provider-call upper=`89`，Exp2–4 provider upper=`0`，estimate/hard upper=`0.239/3.498 GiB`，逐root margin=`0.5 GiB`；E盘可用空间约`824 GiB`。
+- preflight核验发现`DEEPSEEK_API_KEY`存在，但`SILICONFLOW_API_KEY`在Process/User/Machine、conda子进程和指定gitignored local JSON来源中均不存在。按relay §7.7命中credential强制停止，不以代码修复、partial run或provider fallback规避。
+- 正式命令只执行一次：`conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.slim_v2.cli representative --run-id slim-v2-representative-20260822-stage4`，exit code=`1`，在`_preflight_provider_entries`报告`missing provider secret/API key env var: SILICONFLOW_API_KEY`。失败时run目录尚未创建，普通results/traces/calls/responses和provider/network均为`0`，没有未知transport终态。
+- 当前Stage 4设施通过标准尚未满足；不创建Stage 5。唯一Stage 4 recovery heartbeat保持`ACTIVE`。credential外部可用后仍须先核对进程、run目录、results、trace和journal；若目标run目录仍不存在，使用同一run ID、不带`--resume`恢复执行同一representative命令。
