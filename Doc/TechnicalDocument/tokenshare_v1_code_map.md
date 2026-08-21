@@ -1,6 +1,6 @@
 # TokenShare V1 当前 Code Map
 
-更新时间：2026-08-04
+更新时间：2026-08-21
 
 状态：当前总体代码归属权威。本文回答“改动应该放哪里、哪些边界不能跨”，不记录逐次修复历史。协议语义看 `tokenshare_v1_complete_spec.md`，论文实验参数看 `tokenshare_latest_real_plugin_experiment_design.md`。
 
@@ -18,6 +18,21 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 - `plugins` 拥有领域 split/parser/verifier/merge。
 - `executors` 拥有执行配置、transport、输出 artifact 和 replay，不拥有论文 cohort/fault 策略。
 - `experiments` 可以组装以上层，但不能伪造协议 event、canonical、merge 或 settlement。
+
+## Slim V2 精简实验路径
+
+Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokenshare/experiments/slim_v2/`，不得import旧`paper_*`/formal runner。Task 4的主要归属如下：
+
+| 文件 | 职责 |
+|---|---|
+| `experiments/slim_v2/scenarios.py` | 组装Exp2六worker logical replay、Exp3 ordinal-0 fault/真实Process death/reference与Exp4 mode-blind 11-mode结构旁路；普通路径使用现有Thread/Sequential，death继续由真实`ProcessWorkerBackend`产生PID/exit/progress事实。 |
+| `experiments/slim_v2/execution.py` | Exp1/provider与fixed-trace submission边界；Task 4增加parser前P route、Lean normalize/checker前Slim bridge以及Process结果透明prepare/export/ingest。 |
+| `experiments/slim_v2/runtime.py` | 把scenario scheduler/policy/hooks/backend注入同一个`ProtocolRunCoordinator.run_root`，不建立第二runner或状态机。 |
+| `experiments/slim_v2/projector.py` | 从同一次system result、ledger、worker facts、plugin/checker与Slim route artifacts投影Exp2–4字段；只认actual evidence，未到达checker为`false/null/0`。 |
+| `experiments/slim_v2/schema.py` | Slim root/attempt/fault/recovery/death/challenge/ablation typed schema与跨字段不变量。 |
+| `tests/experiments/slim_v2/test_scenarios.py` | 风险驱动覆盖Thread双域事实、Exp2六worker、Exp3五fault与12-cell真实Process death、Exp4四family×11 modes、default-zero与零provider/transport。 |
+
+Task 4获批的shared例外仍保持最小：`local_runtime/contracts.py`定义optional`RecoveryMergeContext`，`local_runtime/coordinator.py`只在真实recovery记录后/replacement前调用capability并记录固定synthetic-V provenance；`plugins/contracts.py`的`IncompleteMergeInputError(ValueError)`只替换Factorization/Lean adapter原有incomplete-required-input异常分支。P、Lean-V、mode/challenge、premature-v2和projector全部留在Slim-local。
 
 ## 根模块
 

@@ -4,19 +4,18 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 当前 focus：Experiment 4结构性局部旁路已获批；docs-only checkpoint后恢复同一Task 4/6
+## Slim V2 当前 focus：Stage 3 Task 4/6已完成；正在向fresh Task 5/6交棒
 
-- **接力身份**：`stage=3`、`task_index=4/6`、branch=`codex/slim-v2-baseline`。既有Task 4=`01a0238e-b2db-7da1-9d6c-60bb12d79ecd`；本轮结构设计、三票审核、权威同步和docs-only checkpoint按用户明确说明不属于任何Stage/Task，获批代码实施仍归该Task 4。完成checkpoint后必须唤起同一Task，不另建Task 4。
-- **真实缺口证据**：Factorization composite fixture已改用`all_true_divisor_ranges`。fresh命令`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios.py tests/experiments/slim_v2/test_answer_paths.py -q`为`1 failed, 27 passed`；唯一失败是`REQUIRED_CHILD_DELAY × NO_MERGE_GATE`在replacement完成后才进入normal merge，实际`gate_satisfied=true`，无法观察权威要求的pre-replacement false。`before_requeue.stop`会把M偷换成R，不能采用。
-- **V/P同步发现**：P的真实`_parse_domain`发生在coordinator hook前；Lean child checker发生在`LeanExecutionBridge.normalize_proof_submission`内、也早于coordinator verification gate。获批方案因此把P放在raw持久化后/parser前，把Lean V放在Slim-local bridge normalize/checker前；invalid candidate同样前移但controller保持mode-blind。
-- **三票重大裁决**：首轮三名reviewer均为`RECOVERY_MERGE_FIRST + authorize=no`，共同Critical是V/P假旁路、checker-not-reached被硬写false和projector反推；修订后第二轮三票均为`RECOVERY_MERGE_FIRST + authorize=yes`，范围内`Critical/Important=0/0`。全部Minor已吸收，权威设计为`Doc/SlimV2/slim_v2_exp4_structural_bypass_design.md`。
-- **四类旁路与RM**：V/P/R/M都在真实调用/调度前换路；其余五个pairs直接组合。`{R,M}`固定M-first：M在recovery记录后、replacement前尝试并抢先终止时，R=`preempted_by_merge_first`、`stuck_due_to_no_requeue=false`，同一run禁止premature-M与stuck-R双阳性。
-- **最小shared授权**：只允许coordinator optional`RecoveryMergeContext` seam与synthetic V provenance、必要local_runtime context、`plugins/contracts.py`的`IncompleteMergeInputError(ValueError)`、两plugin既有incomplete-required-input分支改抛subclass。NoOp/Exp1/2/3/5/非Slim caller无capability时零新增调用；P/Lean-V、Exp4 mode/challenge、premature v2、route evidence和projector留在Slim-local。任何扩大重新三 Agent投票。
-- **指标真值**：inventory只建立disabled-mechanism身份行。checker未到达=`false/null`；wrong canonical、raw exposure/acceptance、R-stuck、readiness、premature outcome均只认actual event/artifact/plugin/checker/route evidence。缺本应存在的route evidence为`null + missing_actual_route_evidence`，不得按mode、`processing`或`not verified_correct`反推。
-- **Task 4实施门**：按实施计划先补两领域P/V调用计数、logical/non-logical default、FULL false→replacement→true、两领域typed M rejection、R-only、RM互斥、projector负测和Exp1/3/5默认兼容；当前`1 failed,27 passed`必须由真实seam修成全绿，不能修改期望或伪投影。
-- **dirty保护与提交边界**：Task 4现有`execution.py/projector.py/runtime.py/scenarios.py/test_scenarios.py`改动和范围外`AGENTS.md`均属既有WIP，禁止reset/revert/stash/delete或纳入本轮checkpoint。本轮只提交权威/设计/计划/路由/progress文档；提交后这些代码dirty必须原样保留。
-- **运行边界**：`run_scope=representative_only`，本轮provider/network=`0/0`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。Tasks 1–3=`completed`，Task 4=`resume_after_docs_checkpoint`，Tasks 5–6=`pending`；禁止提前Task 5/6。
-- **既有跨Task规则继续有效**：已启动但无final的root仍进入固定正确率分母；Task 5不得丢弃，Task 6停止后续roots前先commit当前失败root。Task 6薄Tk GUI蓝图与checkpoint=`117c9c6e`保持不变，不前移为Task 4范围。
+- **接力身份与实现checkpoint**：`stage=3`、`task_index=4/6`、branch=`codex/slim-v2-baseline`，Task 4=`01a0238e-b2db-7da1-9d6c-60bb12d79ecd`；实现checkpoint=`af4e9b0a515fd7e381da97d623d0fe99abbe7643`。Task 4已完成Exp2–4系统场景路径；当前owner只允许补证据checkpoint并按relay §5.1创建且只创建fresh Task 5/6，不得自行实现或监督Task 5。
+- **Exp2/Thread**：六worker档均消费Exp1 fixed traces并走现有system/plugin/checker，ordinary backend为Thread（worker1为Sequential）；Factorization k>1和Lean fake fixed-DAG的unit/attempt/canonical/checker事实完整，logical scheduler真实投影capacity、makespan与early-stop。
+- **Exp3/fault/death/reference**：五类rate-fault只在ordinal 0实施，replacement/recovery由existing engine拥有；Lean false±在normalize/checker前的Slim bridge边界实施。两领域`dead={1,3} × progress={25%,50%,75%}` 12-cell均使用真实Process；Factor dead=3三格均为三条真实PID/exit/progress facts、两次replacement及failed/no-final terminal row。reference不进入论文root分母且不混入fault/death字段。
+- **Exp4结构性旁路**：四family×11 modes全部真实运行；六个双机制在单root同时生效。P/V/R/M分别在真实parser/verifier/replacement/merge前换路，`{R,M}`固定`RECOVERY_MERGE_FIRST`且R=`preempted_by_merge_first`、stuck=false。projector只认actual evidence；checker未到达=`false/null/0`，缺actual route evidence不按mode反填。
+- **shared范围**：仅使用已批准的optional`RecoveryMergeContext` seam与synthetic V provenance、通用`IncompleteMergeInputError(ValueError)`及两plugin既有incomplete-required-input分支；无capability默认零新增调用/observation。未建立第二runner、状态机或普通场景bounded-process facade，未发现新的shared gap。
+- **最终review与验证**：spec reviewer独立固定=`37 passed in 244.64s`并实跑12-cell，`SPEC_COMPLIANT`、C/I/M/OOS=`0/0/0/0`；quality reviewer固定=`37 passed in 247.26s`、shared/plugin=`32 passed in 28.21s`，`APPROVED`、C/I/M=`0/0/0`。owner fresh固定=`37 passed in 243.68s`，shared/plugin=`32 passed in 28.15s`；compile、禁止import、whitespace/diff-check均通过。
+- **provider与运行边界**：Task 4 provider/network=`0/0`，全部scenario attempts均`provider_call_made=false`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。
+- **Task 5唯一下一步**：实现一个`reduce_run()`读取Task 2 `RunStore.iter_*`与Task 4 committed rows/references，生成Experiment 1–5全部表与精确153 metric IDs；固定分母必须保留每个已启动失败/no-final row，reducer不得导入runtime/checker/provider或读取raw/system全目录。provider/network继续为`0/0`。
+- **Task 6边界继续传递**：未来只实现薄`run_slim_v2.cmd → gui.py → 同一CLI`参数窗口与运行安全preflight；只选择representative/full、Exp1–5/all、run_id/output、Exp2–4必要source、resume。禁止第二runner/service/计划看板/日志系统/偏好保存/队列/自动重试、价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness；价格缺失/变化不得阻止实验。
+- **dirty保护**：范围外用户`AGENTS.md`继续保留dirty，SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`；禁止reset/revert/stash/delete或纳入Task 4/5提交。
 
 ## Slim V2 旧Stage 3 provenance：已暂停并由六Task重规划取代
 

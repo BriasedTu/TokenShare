@@ -558,18 +558,27 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenario
 
 #### 9. 完成标准
 
-Exp2–4代表性root均一次`run_root`且0 provider calls；Thread选择有证据；death使用真实Process facts；Exp4四个single与六个pair在单次root中按实际boundary机会生效，RM不双阳性；当前`1 failed, 27 passed`的M核心失败必须由真实pre-replacement readiness修复并使focused命令全绿，不得改期望或按mode投影false；第二个里程碑review关闭范围内Critical/Important。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 5/6 owner并完成heartbeat交棒，不得自行继续Task 5。
+Exp2–4代表性root均一次`run_root`且0 provider calls；Thread选择有证据；death使用真实Process facts；Exp4四个single与六个pair在单次root中按实际boundary机会生效，RM不双阳性；实施前`1 failed, 27 passed`的M核心失败须由真实pre-replacement readiness修复并使focused命令全绿，不得改期望或按mode投影false；第二个里程碑review关闭范围内Critical/Important。上述门已按第11项完成证据闭合。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 5/6 owner并完成heartbeat交棒，不得自行继续Task 5。
 
 #### 10. 明确非目标
 
 不预建bounded-process facade，不生成Slim canonical/recovery/worker/root状态，不增加fault/challenge，不运行额外Lean专项suite/LeanAudit/catalog/`lake`/`lean`或provider。不扩shared ablation-mode whitelist，不用现有premature v1作为Slim科学真值，不为M建立第二runner/状态机。
 
-#### 11. Task 4结构旁路审批与当前证据
+#### 11. Task 4结构旁路审批与完成证据
 
 - 用户已直接批准结构性局部旁路与所需最小shared gap修复；该设计/审核/文档同步本身不属于任何Stage或Task，获批后的实现属于本Task 4。
 - 首轮三名reviewer一致`RECOVERY_MERGE_FIRST + authorize=no`，共同指出V/P真实调用更早、checker-not-reached被伪写false、projector反推等问题；修订设计全部闭合。
 - 第二轮同三名reviewer`3/3 RECOVERY_MERGE_FIRST + authorize=yes`，范围内`Critical/Important=0/0`；全部Minor已写回设计。
-- fixture已使用`all_true_divisor_ranges`。fresh命令`tests/experiments/slim_v2/test_scenarios.py tests/experiments/slim_v2/test_answer_paths.py -q`当前为`1 failed, 27 passed`，唯一失败是M cell真实`gate_satisfied=true`而权威要求pre-replacement false；这是实施输入，不是完成证据。
+- 实施前fixture已使用`all_true_divisor_ranges`；当时fresh命令`tests/experiments/slim_v2/test_scenarios.py tests/experiments/slim_v2/test_answer_paths.py -q`为`1 failed, 27 passed`，唯一失败是M cell真实`gate_satisfied=true`而权威要求pre-replacement false。该结果只保留为实施输入；完成证据见下文。
+
+**Task 4完成证据与第二里程碑review（2026-08-21）**：
+
+- 实现checkpoint=`af4e9b0a515fd7e381da97d623d0fe99abbe7643`。新增`scenarios.py/test_scenarios.py`并校准Slim runtime/execution/schema/projector；Exp2六个worker档均从Exp1 fixed traces运行，普通Factorization k>1与Lean fake fixed-DAG的Thread unit/attempt/canonical/checker事实完整，`worker_count=1`的early-stop与logical makespan差异来自真实scheduler记录。
+- Exp3五类rate-fault只在ordinal 0实施，replacement/recovery、verification/canonical与terminal仍由existing engine/plugin拥有；Lean false-positive/false-negative在normalize/checker前的Slim bridge边界实施。worker death使用真实Process backend；两领域`dead={1,3} × progress={25%,50%,75%}` 12-cell均实跑，Factor composite以结构化source中的真实witness planned ID在冻结progress位置终止，dead=3三格均为三条真实PID/exit/progress facts、两次replacement和failed/no-final terminal row。辅助reference不混入fault/death事实。
+- Exp4四个challenge family逐一运行同一11-mode plan；六个双机制在单次root同时生效。P在raw持久化后/parser前真实旁路，V在Factor verifier与Lean normalize/child-checker前真实旁路，R在已记录retry-allowed recovery后/replacement前旁路，M经optional recovery-premerge seam真实触发typed incomplete merge；`{R,M}`为`RECOVERY_MERGE_FIRST`且R=`preempted_by_merge_first`、stuck=false。projector只join actual route/plugin/checker/worker/ledger evidence，checker未到达为`false/null/0`，缺actual route evidence不按mode反填。
+- shared写入没有超出获批范围：`RecoveryMergeContext` optional capability与synthetic V provenance、`IncompleteMergeInputError(ValueError)`及两plugin既有incomplete-required-input分支；无capability的caller零新增调用/observation。未建立第二runner、状态机或bounded-process facade。
+- fail-first先后捕获缺scenario模块、M pre-replacement timing gap、P/V边界过晚、Lean false±未到达checker前、failed-source实际证据缺失、Lean Process state未回传、terminal worker-death投影与Factor dead=3在25%/75%被early-stop抢先等问题；全部范围内finding由原实现者关闭。spec reviewer最终独立固定命令=`37 passed in 244.64s`并实跑12-cell，结论`SPEC_COMPLIANT`、`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；quality reviewer=`37 passed in 247.26s`、shared/plugin=`32 passed in 28.21s`，结论`APPROVED`、`Critical/Important/Minor=0/0/0`。
+- owner最终fresh固定命令=`37 passed in 243.68s`；受影响shared/plugin四文件=`32 passed in 28.15s`；scoped compile、禁止legacy/paper import、tracked/untracked whitespace与`git diff --check`通过。provider/network=`0/0`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。Task 6仍只允许薄`run_slim_v2.cmd → gui.py → 同一CLI`与运行安全preflight，不前移到Task 5。
 
 ### Task 5 统一 reducer
 
