@@ -150,6 +150,7 @@ roots 串行，单 root 内并发；结果逐 root/attempt 增量落盘；响应
 - Factorization/Lean 领域语义不进入通用 runner；
 - shared code 默认只读；
 - coordinator 正常终态后由 Slim-local coverage tail补齐未调度 unit，不修改 coordinator。
+- Experiment 4 的消融采用同一协议本体上的结构性局部旁路，不复制 runner、scheduler、状态机或 event ledger；只有真实调用边界早于现有 hook、且 Slim-local 无法得到 required evidence 时，才能按获批设计增加默认零影响的 shared optional seam。
 
 ### 5.4 两种回答执行能力
 
@@ -162,6 +163,7 @@ roots 串行，单 root 内并发；结果逐 root/attempt 增量落盘；响应
 - Experiment 3 fault/worker-death 与确定性扰动；
 - Experiment 4 mode-blind challenge 和 11 modes；
 - 场景层只改变权威允许改变的变量，不反填结果。
+- Experiment 4 把 mode-blind challenge controller 与 mode-aware structural route observer分开；parser/verifier/checker/recovery/merge是否真实调用必须由实际 route/event/artifact证据证明，不能把“先运行再忽略”当作消融。
 
 ### 5.6 Projector、sink 与 resume
 
@@ -314,6 +316,8 @@ representative通过表示：所有预期 cell可启动、每个预注册 root�
 6. 它是否让全量内存、CPU、磁盘或provider调用失去上界？
 7. 它是否可以缩成一个纯函数、薄adapter或普通文件？
 8. 审查意见是否假设了本文明确排除的人为伪造、恶意篡改或注入攻击？若是，是否已标记`out_of_scope_by_user`并拒绝实施？
+9. 消融是否在真实 parser/verifier/checker/replacement/merge 调用前换路，还是只在调用后覆盖结果？
+10. checker 未到达、plugin 拒绝、checker 明确拒绝和 no-final 是否由不同的实际证据表示？
 
 任何新增设施的举证责任在提出者。无法给出具体答案时，默认删除。
 
@@ -327,5 +331,7 @@ representative通过表示：所有预期 cell可启动、每个预注册 root�
 - 建立第二条runner、response authority或数据真值；
 - 让representative与Full走不同关键路径；
 - 取消原子运行、普通文件恢复或资源有界要求。
+
+`2026-08-21` 当前用户已直接批准一项精确例外：Experiment 4 按 `slim_v2_exp4_structural_bypass_design.md` 的 `RECOVERY_MERGE_FIRST` 三票结论实施最小 recovery-premerge shared seam、通用 incomplete-input typed rejection 和 synthetic V provenance修正。该例外不授权第二套 runner，不授权把 Exp4 mode/challenge 写入 shared，也不授权超出设计第 8.2 节的文件或接口；任何扩大必须重新执行三 Agent 同证据投票。
 
 30分钟Agent recovery heartbeat是开发任务的无人监督恢复机制，不是Slim runtime组件，不得作为理由向实验设施增加scheduler、gate或审计代码。

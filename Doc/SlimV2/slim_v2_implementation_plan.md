@@ -34,7 +34,7 @@ run_scope: representative_only
 - 不复制或改写协议状态机、event ledger、artifact store、worker、recovery、canonical、merge、settlement 或领域 checker；
 - 不建立 Slim task/attempt/retry/root 状态机、通用 workflow framework、service、daemon、HTTP API、数据库 authority 或插件框架；
 - 不引入 budget、receipt、digest/lineage、evidence closure、response-bank authority、publication gate、paper eligibility；
-- 不修改 shared core/local_runtime/plugin/executor，除非后续出现可复现的公共接口缺口并按接力协议取得授权；
+- shared core/local_runtime/plugin/executor默认只读；唯一当前例外是Task 4已经复现并按接力协议获批的最小结构性旁路范围：optional recovery-premerge seam与synthetic V provenance、其必要的通用hook contract、通用`IncompleteMergeInputError`以及Factorization/Lean既有 incomplete-required-input 分支的异常子类替换；任何超出范围的新shared需求必须重新取得授权；
 - 不把 Thread 尚未证明解释成 Thread 已损坏；不把 bounded-process facade 当成默认建设项；
 - 不运行真实 provider、representative/full、Lean 专项 suite、LeanAudit、全量 catalog、`lake` 或 `lean` 作为本实施阶段的验证；
 - 不防御设计宪章第 0.1 节排除的人为伪造、恶意篡改、注入、恶意 provider/plugin 或攻击者模型。
@@ -381,7 +381,7 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_system_v
 **Task 1完成证据与里程碑review（2026-08-21）**：
 
 - fail-first为缺少`projector`模块，`1 error in 0.29s`；实现者最终focused验证为`3 passed in 10.19s`。
-- spec reviewer独立复跑为`3 passed in 9.85s`，结论`Critical/Important/Minor=0/0/0`；implementation-quality reviewer独立复跑为`3 passed in 8.67s`，结论`Critical/Important/Minor=0/0/0`；shared interface gap=`none`。
+- spec reviewer独立复跑为`3 passed in 9.85s`，结论`Critical/Important/Minor=0/0/0`；implementation-quality reviewer独立复跑为`3 passed in 8.67s`，结论`Critical/Important/Minor=0/0/0`；该Task 1纵链范围当时未发现shared gap。后续Task 4的recovery-premerge gap见Task 4第11项，不得用本历史结论覆盖。
 - 真实成功Factorization root触发early merge：`planned=3/dispatched=2/completed=2`，`range_2`保持unscheduled；真实成功Lean fixed-DAG root经过child checker、merge与root recheck；真实自然rejection root可通过`run_root_slice`投影；每个root的`run_root`均恰好调用一次。
 - provider/network=`0/0`；未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
 
@@ -438,7 +438,7 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.p
 - `SlimRunConfigV1`已收窄为设计规格7.2的12个普通字段，`ordinary_parallel_backend_kind="thread"`、`reducer_workers=1`和16 MiB response上限固定，不含日志轮转framework；`select_trace_attempt`只接收并验证typed连续自然ordinal的`UnitTraceV1`。resume只扫精确committed文件名，不repair、compaction或重建协议状态。
 - 冻结profile复核：Full roots/executions=`7,554/7,660`；Exp3 rate/death/planned/upper=`13,920/2,808/16,728/52,992`，references=`468/1,404`；Exp4 planned/upper=`9,669/15,822`且每mode/repeat=`293`；Exp5顺序=`ABCD/BDAC/CADB`。Representative roots/executions/cap=`72/74/89`、Exp3=`42/16/58/190`、Exp4=`209/342`。Exp4 195个challenge的配额=`49/49/48/49`，Factorization composite/prime与Lean delay target均按authority冻结。
 - spec reviewer最终独立复跑为`28 passed in 1.17s`，并重算Full/Representative inventory、153 metric records与168 authority leaves，结论`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；implementation-quality reviewer独立复跑为`28 passed in 1.18s`，结论`APPROVED`且`Critical/Important/Minor=0/0/0`。
-- owner最终fresh focused验证为`28 passed in 1.39s`，`git diff --check`通过；provider/network=`0/0`，shared interface gap=`none`。未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
+- owner最终fresh focused验证为`28 passed in 1.39s`，`git diff --check`通过；provider/network=`0/0`，该Task 2 profile/runtime范围当时未发现shared gap。后续Task 4的recovery-premerge gap见Task 4第11项。未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
 
 #### 10. 明确非目标
 
@@ -498,7 +498,7 @@ fake transport下Exp1/5两领域均完成生产路径；每个Exp1 planned unit�
 - 风险驱动fail-first依次捕获缺provider/execution模块、配置错误越过condition边界、tail语义/恢复target不一致、冻结controls缺失、tail timing未持久化及已启动失败root不可投影；所有范围内Critical/Important均由原实现者修复。`test_system_vertical.py`仅把Task 1 Factorization fixture改为第三range终止，使无tail纵链诚实保持`unscheduled=[]`；Task 3的91/8..9 tail fixture独立拥有自身语义。
 - 用户覆盖Exp5 response上限前，spec reviewer独立复跑为`22 passed in 26.61s`、`SPEC_COMPLIANT`且`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；implementation-quality reviewer为`22 passed in 28.88s`、`APPROVED`且`Critical/Important/Minor=0/0/0`；owner fresh为`22 passed in 26.63s`。这些结果只作为Task 3主体纵链基线，不替代下述`max_tokens=100000`覆盖后的fresh证据。
 - 用户随后明确把Exp5 response `max_tokens`由`32768`提高到`100000`，并要求代码与文档同步后才能交棒；A/B/C的`thinking_budget=32768`不变。四个Exp5参数用例先取得预期RED，随后targeted=`4 passed in 8.60s`、实现者双文件fresh=`22 passed in 26.82s`。参数覆盖首轮re-audit中，spec reviewer=`22 passed in 28.44s`、quality reviewer=`22 passed in 27.92s`，两者均确认代码、四endpoint与design/metrics authority参数一致且provider/network=`0/0`；各自唯一`Important=1`都是本段fresh证据当时尚未写入计划/progress。补录后原spec reviewer短复核=`SPEC_COMPLIANT`、原quality reviewer短复核=`APPROVED`，最终`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；owner post-override fresh=`22 passed in 26.79s`。
-- 当前conda环境未editable-install本仓库，所有focused命令仅为当前进程设置`PYTHONPATH=src`；裸命令会在collection前报`ModuleNotFoundError: tokenshare`，未为此修改共享环境或conftest。scoped compile、禁止依赖扫描与`git diff --check`均通过；shared interface gap=`none`。未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
+- 当前conda环境未editable-install本仓库，所有focused命令仅为当前进程设置`PYTHONPATH=src`；裸命令会在collection前报`ModuleNotFoundError: tokenshare`，未为此修改共享环境或conftest。scoped compile、禁止依赖扫描与`git diff --check`均通过；该Task 3 answer/trace范围当时未发现shared gap，后续Task 4 timing证据已另行获批。未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
 
 ### Task 4 Experiment 2–4 系统场景路径
 
@@ -508,11 +508,19 @@ fake transport下Exp1/5两领域均完成生产路径；每个Exp1 planned unit�
 
 #### 2. 创建/修改文件
 
-创建`scenarios.py`,`test_scenarios.py`；按需修改`runtime.py`,`execution.py`,`projector.py`，不创建额外scenario framework。
+创建`scenarios.py`,`test_scenarios.py`；按结构旁路方案修改`runtime.py`,`execution.py`,`schema.py`,`projector.py`，不创建额外scenario framework。获用户授权的最小shared修改仅限：
+
+- `src/tokenshare/local_runtime/coordinator.py`：optional recovery-premerge helper与synthetic V provenance；
+- `src/tokenshare/local_runtime/contracts.py`：`RecoveryMergeContext`/optional capability的最小通用合同；
+- `src/tokenshare/plugins/contracts.py`：`IncompleteMergeInputError(ValueError)`；
+- Factorization/Lean `runtime_adapter.py`：两个既有incomplete-required-input分支改抛上述subclass；
+- 对应`tests/local_runtime/`与两plugin的最小focused tests。
+
+V/P alternate route、Exp4 mode/challenge、premature v2、route evidence和projector必须留在Slim-local。任何扩大重新三 Agent投票。
 
 #### 3. 导出的类、函数、CLI
 
-`build_scenario`,`build_exp3_reference`,`build_challenge_plan`及最小hook/collector类；没有新的公开CLI。
+`build_scenario`,`build_exp3_reference`,`build_challenge_plan`、`ModeBlindChallengeController`、`Exp4StructuralRouteObserver`、`PrematureMergeObservationV2`与Slim-local `SlimLeanExecutionBridge`；shared新增通用`RecoveryMergeContext`和`IncompleteMergeInputError`，没有新的公开CLI。
 
 #### 4. 输入/输出类型
 
@@ -520,19 +528,29 @@ fake transport下Exp1/5两领域均完成生产路径；每个Exp1 planned unit�
 
 #### 5. 上游/下游及精确公共符号
 
-使用`LogicalSourceLatencyScheduler`,`RuntimeHooks`,`ProtocolMechanismPolicy`,`ProcessWorkerBackend`,`WorkerTerminationPolicy`以及engine recovery/requeue；普通并发先使用`ThreadWorkerBackend`做证据测试。
+使用`LogicalSourceLatencyScheduler`,`RuntimeHooks`,`ProtocolMechanismPolicy`,`ProcessWorkerBackend`,`WorkerTerminationPolicy`以及engine recovery/requeue；普通并发先使用`ThreadWorkerBackend`做证据测试。M只使用获批optional recovery-premerge capability，不复用normal`before_merge`或`before_requeue.stop`。
 
 #### 6. 关键控制流/实现逻辑
 
 先实测Thread在Factorization k>1和Lean fake fixed-DAG下的unit/attempt/canonical/checker事实完整性；通过即使用Thread。若Thread出现明确失败证据，先验证现有`ProcessWorkerBackend`能否直接闭合普通场景；只有Thread与现有Process普通场景都不能闭合时，才提出Slim-local bounded-process facade作为条件性补救并按接力规则审议。worker death直接使用Process。Exp3/4判断全部读取结构化字段，禁止解析condition ID。
 
+Exp4严格按`slim_v2_exp4_structural_bypass_design.md`实施：
+
+1. challenge controller保持mode-blind；invalid candidate在fixed adapter parse后、Lean normalization/checker前注入；
+2. P在raw artifact后、`_parse_domain`前选择`PARSE/RAW_PASSTHROUGH`；
+3. Factorization V由coordinator verifier gate跳过，Lean V由Slim bridge在normalize/checker前跳过；synthetic report使用固定bypass validator/verifier与显式domain layer reason；
+4. recovery记录后、replacement前调用optional `RecoveryMergeContext` capability；logical/non-logical共用helper，default caller无capability则零调用；
+5. `{R,M}`固定`RECOVERY_MERGE_FIRST`；M抢先时R=`preempted_by_merge_first`且stuck=false；
+6. observer只捕获`IncompleteMergeInputError`，其他exception保持infrastructure-invalid；premature v2把plugin outcome、checker reached/nullable pass与no-final分开；
+7. projector只做actual evidence join，缺route evidence为`null + missing_actual_route_evidence`。
+
 #### 7. 状态真值owner与失败作用域变化
 
-Slim只配置fault/challenge/mode并记录实际hook动作；recovery、requeue、death、canonical、root status由existing engine/backend/plugin拥有。source错配或transport attempt停止condition；实验性失败保留root行；Thread验收失败只触发backend选择证据，不表示shared系统失败。
+Slim只配置fault/challenge/mode/structural route并记录实际动作；recovery、requeue、death、canonical、root status仍由existing engine/backend/plugin拥有。recovery-premerge observer可以真实调用plugin `build_merge`作为M实验probe，但不得创建core merge task、canonical root或final。source错配或transport attempt停止condition；非typed plugin异常为infrastructure-invalid；实验性失败保留root行；Thread验收失败只触发backend选择证据，不表示shared系统失败。
 
 #### 8. 风险驱动验证场景与命令
 
-覆盖Thread事实完整性、Process真实death、Exp2 logical capacity/early stop、Exp3 ordinal0与replacement、Exp4真实组合消融/mode-blind、全部零transport：
+覆盖Thread事实完整性、Process真实death、Exp2 logical capacity/early stop、Exp3 ordinal0与replacement、Exp4真实组合消融/mode-blind、全部零transport。Exp4必须额外覆盖：两领域P/V target parser/child-checker调用为0而FULL正常；`{V,P}`不经过parser/Lean checker；logical/non-logical default零新增hook；FULL premerge false→replacement→normal true；两领域M typed rejection与`reached=false/pass=null`；R-only；RM仅M terminal且stuck=false；projector的plugin rejected/checker unreached/checker rejected/no-final/missing-evidence负测；`IncompleteMergeInputError`仍是`ValueError` subclass；Exp1/3/5和非Slim默认路径不变：
 
 ```powershell
 conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios.py tests/experiments/slim_v2/test_answer_paths.py -q
@@ -540,11 +558,18 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenario
 
 #### 9. 完成标准
 
-Exp2–4代表性root均一次`run_root`且0 provider calls；Thread选择有证据；death使用真实Process facts；Exp4六个双机制mode在单次root中真实同时生效；第二个里程碑review关闭范围内Critical/Important。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 5/6 owner并完成heartbeat交棒，不得自行继续Task 5。
+Exp2–4代表性root均一次`run_root`且0 provider calls；Thread选择有证据；death使用真实Process facts；Exp4四个single与六个pair在单次root中按实际boundary机会生效，RM不双阳性；当前`1 failed, 27 passed`的M核心失败必须由真实pre-replacement readiness修复并使focused命令全绿，不得改期望或按mode投影false；第二个里程碑review关闭范围内Critical/Important。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 5/6 owner并完成heartbeat交棒，不得自行继续Task 5。
 
 #### 10. 明确非目标
 
-不预建bounded-process facade，不生成Slim canonical/recovery/worker/root状态，不增加fault/challenge，不运行真实Lean二进制或provider。
+不预建bounded-process facade，不生成Slim canonical/recovery/worker/root状态，不增加fault/challenge，不运行额外Lean专项suite/LeanAudit/catalog/`lake`/`lean`或provider。不扩shared ablation-mode whitelist，不用现有premature v1作为Slim科学真值，不为M建立第二runner/状态机。
+
+#### 11. Task 4结构旁路审批与当前证据
+
+- 用户已直接批准结构性局部旁路与所需最小shared gap修复；该设计/审核/文档同步本身不属于任何Stage或Task，获批后的实现属于本Task 4。
+- 首轮三名reviewer一致`RECOVERY_MERGE_FIRST + authorize=no`，共同指出V/P真实调用更早、checker-not-reached被伪写false、projector反推等问题；修订设计全部闭合。
+- 第二轮同三名reviewer`3/3 RECOVERY_MERGE_FIRST + authorize=yes`，范围内`Critical/Important=0/0`；全部Minor已写回设计。
+- fixture已使用`all_true_divisor_ranges`。fresh命令`tests/experiments/slim_v2/test_scenarios.py tests/experiments/slim_v2/test_answer_paths.py -q`当前为`1 failed, 27 passed`，唯一失败是M cell真实`gate_satisfied=true`而权威要求pre-replacement false；这是实施输入，不是完成证据。
 
 ### Task 5 统一 reducer
 
@@ -703,7 +728,7 @@ review只在三个里程碑触发：
 实施完成必须同时满足：
 
 - 六个Task按顺序完成，三个里程碑review的范围内Critical/Important为0；
-- Task 1两领域真实系统纵链通过，shared interface gap保持`none`或按接力协议另行获批；
+- Task 1两领域真实系统纵链通过；Task 4只实施已批准结构性旁路设计冻结的最小shared范围，并以focused verification证明无capability的默认调用者新增调用、observation与event均为0；任何新增shared接口缺口均按接力协议另行获批；
 - 最终源码只包含第2章文件树及确有证据必要的条件性补救，不存在第二个runner、service或状态机；
 - 所有论文root正常路径各一次`run_root`，Factorization/Lean真值来自现有plugin/checker；
 - Experiment 2–4 provider calls精确为0，source显式、无transport fallback；

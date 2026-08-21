@@ -285,6 +285,14 @@ run_scope：<representative_only 或 representative_then_full>
 
 除上一条由用户明确授权的受影响Slim文档同步例外外，法定人数只能在用户已经授权的本地Slim V2任务边界内替代用户选择，不能覆盖system/developer指令、工具权限或法律/平台限制，也不能自行扩大`run_scope`、突破provider attempt上限、启用明确禁止的攻击/安全范围、push/merge/PR、删除/迁移用户数据或创建额外顶层接力链。对这些不可授权动作，reviewer只能选择现有范围内方案或`safe_no_action`，仍不得询问用户。
 
+#### 7.1.1 当前 Experiment 4 结构旁路裁决（2026-08-21）
+
+- 用户明确说明该设计、审核、权威同步和docs-only checkpoint不属于任何Stage/Task；获批代码实施归入既有Stage 3 Task 4。不得因此新建Task 4或改变六Task串行链。
+- 用户直接批准为V/P/R/M与必要pair设计结构性局部旁路，并授权已证明shared gap的最小修复；同时要求重大决策使用三Agent投票且不询问用户。
+- 首轮同证据三票均为`RECOVERY_MERGE_FIRST + authorize=no`；设计修正V/P真实调用边界、typed incomplete rejection、nullable root check、evidence-only projector和默认零影响shared seam后，第二轮三票均为`RECOVERY_MERGE_FIRST + authorize=yes`，范围内`Critical/Important=0/0`。
+- 获批方案为`slim_v2_exp4_structural_bypass_design.md`。`{R,M}`中M抢先时R=`preempted_by_merge_first`且stuck=false；不得恢复旧双阳性断言。
+- 本轮完成全部权威同步、fresh一致性审查和docs-only checkpoint后，必须重新唤起同一Task `01a0238e-b2db-7da1-9d6c-60bb12d79ecd`，发送checkpoint SHA与获批方案，要求其继续Task 4及其余内容；不得创建替代Task。
+
 ## 8. 上下文控制规则
 
 - 顶层阶段 owner 不继承上一任务历史；只读取仓库、progress 顶部和短交接胶囊。

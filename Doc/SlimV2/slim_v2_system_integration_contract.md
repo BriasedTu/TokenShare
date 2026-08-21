@@ -247,13 +247,21 @@ target_count = ceil(fault_rate × planned_first_attempt_ai_unit_count)
 
 全部 11 个 modes 均设置 `ProtocolConfig.max_retries=1`；`slot_integrity_enabled` 始终为 true。六个双机制 mode 必须真实运行一次同时关闭两项的完整 root 生命周期，不得离线拼接两个单项结果。不得根据 mode 名称直接填充任何 observation 或 count。
 
+policy布尔值只描述配置，不能证明实际机制被删除。结构路由还必须满足：
+
+- P：`FixedTraceSubmissionAdapter` 保存 raw artifact后、调用 `_parse_domain` 前选择 `PARSE/RAW_PASSTHROUGH`；P disabled不得调用domain parser。
+- V：Factorization由coordinator在`verify_submission`前跳过；Lean使用Slim-local bridge在`normalize_proof_submission`/child checker前跳过。synthetic verification使用固定bypass validator/verifier provenance，root checker仍独立运行。
+- R：真实recovery decision记录且`retry_allowed=true`后、replacement创建前停止requeue。
+- M：使用独立的optional recovery-premerge capability；不得复用normal `before_merge`或`before_requeue.stop`冒充。`{R,M}`固定`RECOVERY_MERGE_FIRST`，M抢先时R=`preempted_by_merge_first`且stuck=false。
+
 ### 6.6 Experiment 4 challenge 与观察
 
 - Slim V2 在展开 11 个 modes 之前，按指标权威为每个 `case_id × repeat_id` 生成一次普通 challenge plan；同一个 plan 对象的 `challenge_plan_id`、family、target set 和 ordinal rule 在全部 modes 中复用。
-- challenge injector 只接收 challenge plan、当前 unit/attempt 与已命中的 Experiment 1 source trace，不接收或读取 mode、`disabled_mechanisms` 或 `ProtocolMechanismPolicy`。
-- raw、parsed candidate、recovery 和 merge 注入边界以指标权威第 5.4 节为准。现有公共 hook 只提供执行接缝；新增 challenge plan、实际 opportunity/injection 和后续结果由 root 独占的 Slim-local collector 保存为普通内存记录，run 后由 projector写入 root JSONL。
+- `ModeBlindChallengeController`只接收challenge plan、当前unit/attempt与已命中的Experiment 1 source trace，不接收或读取mode、`disabled_mechanisms`或`ProtocolMechanismPolicy`。`Exp4StructuralRouteObserver`可以读取冻结route flags，但不得决定challenge内容；两者不能合并为同时读取challenge与mode的控制器。
+- raw transform位于domain parser前；invalid candidate transform位于fixed adapter parse后、Factorization verifier或Lean normalization/child checker前；recovery/merge边界以指标权威第5.4节和结构旁路设计为准。challenge plan、实际opportunity/injection与route outcome由root独占的Slim-local typed collector保存，run后由projector写入root JSONL。
 - `challenge_observations[]` 必须记录真实到达边界和实际动作；不得从 mode 名、plan 存在或预期结果反填。verification、canonical、recovery 与 root checker 结果仍从同一 run 的公共 event/store/plugin 事实 join。
-- FULL 不产生 disabled-mechanism observation，但与其他 modes 接收完全相同的 challenge plan。单项和双项 mode 的 `ablation_observations[]` 数量分别等于 1 和 2。
+- FULL 不产生 disabled-mechanism身份行，但与其他 modes接收完全相同的challenge plan，并可留下M enabled的真实premerge false→true观察。单项和双项mode的`ablation_observations[]`身份行数量分别等于1和2；行存在只证明配置，`route_status/outcome`必须来自actual evidence。
+- premature merge使用Slim-local `PrematureMergeObservationV2`，明确`plugin_outcome=not_attempted/rejected_incomplete_input/candidate_produced`、`root_checker_reached`、nullable `root_check_passed`与`final_result_present`。现有shared premature v1不作为Slim科学真值。
 
 ### 6.7 Experiment 5 model endpoint
 
@@ -289,7 +297,7 @@ target_count = ceil(fault_rate × planned_first_attempt_ai_unit_count)
 | `attempts[].started_at_ms`,`attempts[].ended_at_ms` | attempt state events与对应 worker execution fact |
 | `attempts[].result_kind`,`attempts[].provider_call_made`,`attempts[].http_status`,`attempts[].provider_latency_ms` | Exp1/5：完整 submission + provider-call record；Exp2–4：fixed-response submission，`provider_call_made=false`、HTTP/actual provider latency 为 null，来源 latency 写入 `source_latency_ms` |
 | `attempts[].raw_response_present` | submission `raw_output_ref != null` 且 `ArtifactStore.verify/read_bytes` 成功 |
-| `attempts[].parse_result` | submission `result_kind`、`parsed_output_ref`、`parse_failure_ref` |
+| `attempts[].parse_result` | 正常路径来自submission `result_kind`、`parsed_output_ref`、`parse_failure_ref`；P结构旁路的`bypassed`来自Slim parser-route observation，不伪装成公共`ExecutionSubmission`字段 |
 | `attempts[].verifier_result` | `VERIFICATION_RECORDED.payload.verification_report.status` 与 domain layer reason |
 | `attempts[].checker_result` | Lean `checker_report_for_request(request_id)`；merge/root 使用 `adapter.merge_result.root_checker_report`；Factorization 为 null |
 | `attempts[].canonical_accepted` | `CANONICAL_OUTPUTS_BOUND` 对应 selected attempt/submission |
@@ -311,10 +319,12 @@ target_count = ceil(fault_rate × planned_first_attempt_ai_unit_count)
 | `challenge_observations[].challenge_plan_id`,`challenge_observations[].challenge_family`,`challenge_observations[].target_planned_ai_unit_id`,`challenge_observations[].attempt_ordinal`,`challenge_observations[].injection_boundary`,`challenge_observations[].opportunity`,`challenge_observations[].injected` | mode-blind challenge plan + root 独占 Slim-local collector 的实际 hook/executor observations；不得从 mode 推导 |
 | `challenge_observations[].source_semantics_preserved`,`challenge_observations[].candidate_independent_label`,`challenge_observations[].reached_verification`,`challenge_observations[].verifier_rejected`,`challenge_observations[].escaped_to_canonical_or_root` | injector 普通字段比较/独立领域检查结果，与 verification、canonical 和 root events 按 attempt join |
 | `challenge_observations[].replacement_started`,`challenge_observations[].replacement_succeeded`,`challenge_observations[].valid_final_after_challenge` | challenge observation 与 recovery/new-attempt/final root 结果按 root/attempt join |
-| `ablation_observations[].disabled_mechanism` | `EXPERIMENT_ABLATION_GATE_APPLIED` observation |
-| `ablation_observations[].candidate_independent_label`,`ablation_observations[].wrong_canonical_accepted`,`ablation_observations[].root_checker_rejected_after_wrong_canonical` | Slim-local 独立 Factorization/Lean recheck + canonical event + 随后的 root checker report |
-| `ablation_observations[].raw_only_exposed`,`ablation_observations[].raw_only_accepted`,`ablation_observations[].stuck_due_to_no_requeue` |实际 parser/requeue hook input/result + subsequent protocol state，不从 mode 常量生成 |
-| `ablation_observations[].merge_gate_satisfied`,`ablation_observations[].missing_required_slot_ids`,`ablation_observations[].premature_merge_attempted`,`ablation_observations[].premature_merge_failed` | `MergeContext.gate_satisfied`、required/canonical child 差集与 `EXPERIMENT_PREMATURE_MERGE_ATTEMPTED` observation 的 attempt/root-check fields |
+| `ablation_observations[].disabled_mechanism`,`ablation_observations[].route_status` | Slim condition只创建机制身份行；`route_status`来自Slim-local parser/V/R/premerge actual route observation，不使用shared mode whitelist |
+| `ablation_observations[].domain_parser_call_count`,`ablation_observations[].domain_child_checker_call_count`,`ablation_observations[].plugin_verify_submission_call_count`,`ablation_observations[].root_checker_call_count` | Slim adapter/bridge与plugin spy的实际调用计数；child checker、verification wrapper与root checker分开 |
+| `ablation_observations[].candidate_independent_label`,`ablation_observations[].wrong_canonical_accepted`,`ablation_observations[].root_checker_reached`,`ablation_observations[].root_check_passed`,`ablation_observations[].root_checker_rejected_after_wrong_canonical` | mode-blind independent label + canonical event +真实root checker report；未到达为false/null，不用`not verified_correct`替代rejection |
+| `ablation_observations[].raw_only_exposed`,`ablation_observations[].raw_only_accepted`,`ablation_observations[].parse_result` | Slim P-route observation、raw/candidate refs与canonical event；不从mode常量生成 |
+| `ablation_observations[].recovery_attempt_id`,`ablation_observations[].recovery_retry_allowed`,`ablation_observations[].replacement_attempt_id`,`ablation_observations[].stuck_due_to_no_requeue` | `RecoveryMergeContext`/recovery event、R actual route、replacement attempt与final的linkage；RM preempted不计stuck |
+| `ablation_observations[].merge_gate_satisfied`,`ablation_observations[].required_child_unit_ids`,`ablation_observations[].canonical_child_unit_ids`,`ablation_observations[].missing_required_slot_ids`,`ablation_observations[].plugin_merge_attempted`,`ablation_observations[].plugin_outcome`,`ablation_observations[].plugin_error_kind`,`ablation_observations[].premature_merge_attempted`,`ablation_observations[].premature_merge_failed`,`ablation_observations[].final_result_present`,`ablation_observations[].failure_stage` | optional recovery-premerge context + Slim-local `PrematureMergeObservationV2`；typed plugin rejection与nullable checker明确分开 |
 | `missing_reason`,`not_applicable_reason` | Slim extractor在相应公共来源缺失、ratio denominator=0 或 mode不适用时生成的明确枚举值 |
 
 ## 8. 错误处理合同
@@ -456,6 +466,7 @@ append exactly one normalized root JSONL row
 5. **condition 不属于 `ProtocolRunRequest`**：`condition_id`、fault rate、mode 等由 Slim runner和hook闭包持有；公共 request不保存这些实验标签。首版由 Slim JSONL 记录即可，不需要污染 core request。
 6. **Experiment 1 coverage tail 需要 Slim-local 实现**：当前 coordinator 正确地在 root terminal 后返回，不应修改。Slim runner 需要一个窄 tail acquisition 组件：接收同 root plan、`unscheduled_ai_unit_ids`、已有 protocol trace keys、provider caller 与领域 parser/verifier/checker，逐 target 写唯一 `coverage_tail` trace和普通资源 summary。它不得创建 protocol attempt/canonical/merge，也不得延长 root runtime；崩溃恢复只按当前 root 已持久化三元 key 跳过，不引入 response-bank authority。
 7. **普通 pricing projector 需要 Slim-local 实现**：现有旧 pricing/config 路径绑定 selection digest 与预算设施；Slim V2 只需在自己的目录实现指标权威第 1.4 节静态表到 `cost_estimate_cny/pricing_version/pricing_tier` 的纯映射。它不得联网、查余额、预估预算或阻止运行。
+8. **Experiment 4 recovery-premerge shared gap 已实证并获批**：当前coordinator只在replacement完成后进入normal merge readiness，所以`REQUIRED_CHILD_DELAY × NO_MERGE_GATE`无法观察真实false。用户已批准、三名reviewer以`3/3 RECOVERY_MERGE_FIRST + authorize=yes`冻结最小修复：新增携带recovery identity的optional `RecoveryMergeContext` capability，只在hook实际实现时于logical/non-logical recovery记录后、replacement前调用；normal `before_merge`不增调用。typed incomplete-input rejection为`plugins/contracts.py`中的`IncompleteMergeInputError(ValueError)`，两个plugin只替换既有required-input拒绝分支。P与Lean V在Slim-local adapter/bridge闭合；Exp4 mode、premature v2和projector不得进入shared。
 
 ## 12. 已冻结决策与实施期验证项
 
@@ -469,4 +480,6 @@ append exactly one normalized root JSONL row
 - 已冻结：价格版本为 `slim_v2.pricing.2026-08-20`；DeepSeek 峰/谷、SiliconFlow 四 endpoint 与 reasoning-as-completion-subset 口径按指标权威第 1.4 节，普通 pricing projector 不构成预算或 gate。
 - 已冻结：除 Experiment 2 的六档 worker 外，Experiment 1、3、4、5 的 `worker_count=10`。
 - 已冻结：Experiment 2/3 在线检查退出 Slim V2，不存在待选 case IDs。
+- 已冻结：Experiment 4采用`slim_v2_exp4_structural_bypass_design.md`的四类实际调用前旁路；`{R,M}`为`RECOVERY_MERGE_FIRST`，M抢先时R-stuck=false；checker未到达为`reached=false/pass=null`，projector不从mode、processing或`not verified_correct`反推事实。
+- 已冻结：Exp4 shared修改只限第11节第8项；default/NoOp/Exp1/2/3/5与非Slim caller没有optional capability时必须零新增hook调用、observation和event。任何扩大重新三 Agent投票。
 - 实施期验证项：用户不预选 Thread 或 Process。实施 Agent 必须用 Factorization 的真实 k>1 focused tests 和 Lean adapter 的 fake checker、固定 fixture 或静态合同测试证明安全接法，并据证据选择；默认禁止 Lean 专项 suite、LeanAudit、全量 catalog 和 `lake`/`lean` 回归。轻量测试尚未通过时不得修改 shared runtime 来强行满足假设。

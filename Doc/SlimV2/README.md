@@ -8,7 +8,7 @@ scope: Slim V2 agent routing and boundaries
 
 > **最高设计指示：Slim V2以最快速度得到真实有效的论文实验结果，只保留产生冻结指标不可缺少的功能。** 真实有效不等于防伪；本项目假设受信本地研究环境，明确不防护人为伪造、恶意篡改、注入攻击、恶意plugin/provider、签名鉴权或安全fuzzing。基于这些范围外威胁的review意见标记`out_of_scope_by_user`并拒绝实施，不能阻塞阶段完成。完整原则见`slim_v2_design_charter.md`第0节。
 
-本目录是后续 Slim V2 设计与实现 Agent 的唯一入口。根据 2026-08-20 用户决定，除非当前任务明确指定其他维护范围，所有后续实验设施的设计、实现和运行都默认进入 Slim V2，不需要用户重复声明。四份前置权威文档已获得用户批准并冻结，是 Slim V2 范围内的当前权威；它们不改写 Slim V2 之外的 V1/legacy 状态。常规流程仍由用户逐阶段批准设计规格和实施计划；用户显式启动 `slim_v2_stage_relay_protocol.md` 时，则由该协议规定的多 reviewer 审查、完成标准和 `approved_under_user_delegation` 状态履行这两次委托审批。两种流程都不能绕过 shared-code 修改所需的再次用户批准。
+本目录是后续 Slim V2 设计与实现 Agent 的唯一入口。根据 2026-08-20 用户决定，除非当前任务明确指定其他维护范围，所有后续实验设施的设计、实现和运行都默认进入 Slim V2，不需要用户重复声明。四份前置权威文档已获得用户批准并冻结，是 Slim V2 范围内的当前权威；它们不改写 Slim V2 之外的 V1/legacy 状态。常规流程仍由用户逐阶段批准设计规格和实施计划；用户显式启动 `slim_v2_stage_relay_protocol.md` 时，则由该协议规定的多 reviewer 审查、完成标准和 `approved_under_user_delegation` 状态履行这两次委托审批。两种流程都不能绕过 shared-code 修改所需的再次用户批准。当前唯一例外是用户在 2026-08-21 已直接批准 Experiment 4 结构性局部旁路所需的最小 shared gap 修复；精确接口、文件范围、三票结论和验证门以 `slim_v2_exp4_structural_bypass_design.md` 为准，不能外推到其他 shared 修改。
 
 ## 目标
 
@@ -37,6 +37,7 @@ Experiment 2 的六档在线并发检查和 Experiment 3 的小型在线恢复�
 3. `Doc/SlimV2/slim_v2_experiment_metrics_authority.md`
 4. `Doc/SlimV2/slim_v2_system_integration_contract.md`
 5. 当前 focus 已进入获批的设计或实现阶段时，完整阅读支持材料 `Doc/SlimV2/slim_v2_reuse_inventory.md`，然后才打开源码；纯讨论、指标或价格维护任务不必读取它。
+6. 当前 focus 是 Experiment 4 / Task 4 时，再完整阅读 `Doc/SlimV2/slim_v2_exp4_structural_bypass_design.md`、`Doc/SlimV2/slim_v2_design_spec.md` 第 5.4/19.1 节和 `Doc/SlimV2/slim_v2_implementation_plan.md` Task 4，然后才修改源码。
 
 复用清单只提供精确源码位置、公开符号和复用等级，不能覆盖前四份权威。价格来源摘要同样只在维护价格时读取。当前 baseline 中的共享公共接口可按接线合同定点审计；旧 paper/formal 实现只能按复用清单中的固定 archive SHA 和 allowlist 使用 `git show <40位SHA>:<path>` 定点只读。不得 checkout archive branch/tag、创建 archive 工作副本或递归展开旧目录来“了解历史”。
 
@@ -52,7 +53,7 @@ Experiment 2 的六档在线并发检查和 Experiment 3 的小型在线恢复�
 - 不要为人为伪造、恶意篡改、路径/SQL/JSON/命令注入、恶意plugin/executor/provider envelope、签名鉴权或security fuzzing设计防护。Experiment 3/4的冻结fault/challenge不得扩张成攻击者模型。
 - 不要把久未更新的基线测试结果当成实验参数、接口或完成状态的判断依据；接口判断以当前允许的实际代码和 focused tests 为准。
 
-若四份权威文档指出一个公共接口问题仍无法回答，停止扩大阅读范围，先向用户报告具体缺口。
+若四份权威文档指出一个公共接口问题仍无法回答，停止扩大阅读范围；通常先向用户报告具体缺口，用户已要求无人值守重大决策时则按接力协议第7.1节执行三Agent同证据法定人数。当前Experiment 4缺口已经用户直接授权并完成`3/3`复投，实施者应执行获批设计，不再重复询问。
 
 ## 允许工作的目录
 
@@ -62,7 +63,7 @@ Experiment 2 的六档在线并发检查和 Experiment 3 的小型在线恢复�
 - `tests/experiments/slim_v2/`
 - `Doc/SlimV2/`
 
-`src/tokenshare/core/`、`src/tokenshare/local_runtime/`、Factorization/Lean plugin 与 executor 默认只读。只有四份权威文档已证明存在明确接口缺口、Slim-local adapter 无法解决，并再次获得用户批准，才能修改共享系统代码。
+`src/tokenshare/core/`、`src/tokenshare/local_runtime/`、Factorization/Lean plugin 与 executor 默认只读。只有四份权威文档已证明存在明确接口缺口、Slim-local adapter 无法解决，并再次获得用户批准，才能修改共享系统代码。Experiment 4 当前已满足该条件的唯一范围是：`local_runtime/coordinator.py` 的可选 recovery-premerge seam与 synthetic V provenance、`local_runtime/contracts.py` 中该可选 capability 的最小通用 context、`plugins/contracts.py` 的 `IncompleteMergeInputError(ValueError)`，以及 Factorization/Lean runtime adapter 两个既有 incomplete-input 分支改抛该 subclass；V/P alternate routes、premature v2、route evidence和projector必须留在 Slim-local。任何扩大仍须重新三 Agent 投票。
 
 ## 输出位置
 

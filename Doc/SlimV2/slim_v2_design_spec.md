@@ -247,8 +247,10 @@ Worker death使用Process backend，dead count `{1,3}`、progress `{25%,50%,75%}
 2. injector只接收plan、unit/attempt和fixed response，不接收mode、disabled set或mechanism policy；
 3. 四类注入严格位于权威边界：invalid parsed candidate在parser后checker前，canonical JSON在parser前，两个no-return在source usage记录后；
 4. 每个plan在以下11个mode各真实运行一次：`FULL,NO_VERIFICATION,NO_PARSER_POLICY,NO_REQUEUE,NO_MERGE_GATE,NO_VERIFICATION__NO_PARSER_POLICY,NO_VERIFICATION__NO_REQUEUE,NO_VERIFICATION__NO_MERGE_GATE,NO_PARSER_POLICY__NO_REQUEUE,NO_PARSER_POLICY__NO_MERGE_GATE,NO_REQUEUE__NO_MERGE_GATE`；组合mode同时关闭两项，不能离线拼接；全部`max_retries=1`、`slot_integrity_enabled=true`；
-5. observations只由真实hook/event/checker事实产生，不能由mode名字或预期结果反填；
-6. preflight blocked、plan mismatch、missed opportunity使相关cell科学指标为null；protocol启动后的no-final/stuck/incorrect/root checker rejection才是有效ablation结果。
+5. 四类消融按`slim_v2_exp4_structural_bypass_design.md`在真实调用前换路：P在raw持久化后、`_parse_domain`前；Factorization V在`verify_submission`前、Lean V在`normalize_proof_submission`/child checker前；R在retry-allowed recovery后、replacement前；M在同一recovery边界的独立optional premerge seam；
+6. `{R,M}`固定`RECOVERY_MERGE_FIRST`：M disabled且readiness=false时premature attempt抢先终止，R=`preempted_by_merge_first`、stuck=false；禁止同一run双阳性；
+7. observations只由真实route/hook/event/artifact/plugin/checker事实产生，不能由mode名字、`processing`、`not verified_correct`或预期结果反填；checker未到达严格为`reached=false/pass=null`；
+8. preflight blocked、plan mismatch、missed opportunity或本应到达却缺actual route evidence使相关cell科学指标为null；protocol启动后由真实证据形成的no-final/stuck/incorrect/plugin rejection/root checker rejection才是有效ablation结果。
 
 Exp4 provider calls=0，source lookup和失败规则与Exp2–3一致。
 
@@ -506,7 +508,7 @@ attempts[]  # 自然ordinal严格递增，至少一条成功或失败记录
 - `recovery_observations[]`：`original_attempt_id,replacement_attempt_id,replacement_started,replacement_succeeded,reassigned,fault_at_ms,replacement_started_at_ms,replacement_ended_at_ms`；
 - `worker_death_observations[]`：`worker_id,pid,exit_code,target_progress_ratio,actual_progress_ratio,original_attempt_id,replacement_attempt_id`；
 - `challenge_observations[]`：`challenge_plan_id,challenge_family,target_planned_ai_unit_id,attempt_ordinal,injection_boundary,opportunity,injected,source_semantics_preserved,candidate_independent_label,reached_verification,verifier_rejected,escaped_to_canonical_or_root,replacement_started,replacement_succeeded,valid_final_after_challenge`；
-- `ablation_observations[]`：`disabled_mechanism,candidate_independent_label,wrong_canonical_accepted,root_checker_rejected_after_wrong_canonical,raw_only_exposed,raw_only_accepted,stuck_due_to_no_requeue,merge_gate_satisfied,missing_required_slot_ids,premature_merge_attempted,premature_merge_failed`。
+- `ablation_observations[]`：`disabled_mechanism,route_status,domain_parser_call_count,domain_child_checker_call_count,plugin_verify_submission_call_count,root_checker_call_count,candidate_independent_label,wrong_canonical_accepted,root_checker_reached,root_check_passed,root_checker_rejected_after_wrong_canonical,raw_only_exposed,raw_only_accepted,parse_result,recovery_attempt_id,recovery_retry_allowed,replacement_attempt_id,stuck_due_to_no_requeue,merge_gate_satisfied,required_child_unit_ids,canonical_child_unit_ids,missing_required_slot_ids,plugin_merge_attempted,plugin_outcome,plugin_error_kind,premature_merge_attempted,premature_merge_failed,final_result_present,failure_stage`。inventory只建立身份行；route/outcome字段必须来自实际Slim observation/event/artifact/plugin/checker evidence。
 
 Schema集合测试把以上inner names规范化成指标权威第8节的完整路径（例如`attempts[].attempt_id`），要求集合相等、嵌套容器相同且必填/可空条件逐项相同；数量不是验收条件。
 
@@ -932,7 +934,7 @@ review只在三个里程碑触发：现有系统本体闭环、全部实验场�
 
 | Task | 可运行切片 | 主要文件 | 依赖 | 验收标准 |
 |---|---|---|---|---|
-| 1 现有系统本体纵向闭环 | test-local fake submission分别让Factorization + Lean fixed-DAG真实经过公共`run_root`纵链并投影普通结果 | `runtime.py,projector.py,test_system_vertical.py` | 当前公共runtime/plugin | 第一Gate；两领域verifier/checker/canonical/merge/root recheck真实，shared gap=none；生产execution adapter留到Task3 |
+| 1 现有系统本体纵向闭环 | test-local fake submission分别让Factorization + Lean fixed-DAG真实经过公共`run_root`纵链并投影普通结果 | `runtime.py,projector.py,test_system_vertical.py` | 当前公共runtime/plugin | 第一Gate；Task 1当时范围内两领域verifier/checker/canonical/merge/root recheck真实且未发现shared gap；该结论不覆盖Task 4后来证明并获批的结构性旁路缺口，当前口径见§19.1；生产execution adapter留到Task3 |
 | 2 profile、最小schema与普通输出 | 保留并校准已完成schema/profile/case/plan；写Task1结果并resume扫描 | `schema.py,case_source.py,profiles.py,storage.py,cli.py` | Task1事实 | 153 metric IDs可由authority §8原始字段合同计算，冻结inventory闭合；没有第二状态机/通用framework |
 | 3 Exp1/5回答路径 | fake transport通过同一caller/bridge，Exp1 protocol+tail trace闭合，Exp5四endpoint | `provider.py,execution.py,runtime.py,storage.py,projector.py` | Task2 | 16MiB/close/journal/unknown、tail隔离、fixed path无transport |
 | 4 Exp2–4系统场景 | 六worker、五fault/death/reference、11-mode challenge全部真实进system/plugin | `scenarios.py,runtime.py,execution.py,projector.py` | Task3 traces | 0 provider calls；先证明Thread，death使用Process，Slim不生成系统真值 |
@@ -990,9 +992,13 @@ Relay第7节强制停止条件全部保留：权威实质冲突、需要改变�
 
 ### 19.1 接口缺口结论
 
-**当前已证明的 shared core/local_runtime/plugin/executor接口缺口：none。**
+**当前已证明且获批的 shared接口缺口：Experiment 4 recovery-premerge timing seam。**
 
-当前缺少的是获准在Slim目录实现的local能力：single-entry bounded caller、fixed trace adapter、coverage tail、scenario hooks/collector、projector、最小ordinary storage/resume和reducer。它们不是shared接口缺口。bounded-process facade不是已确认缺口或基础计划能力；普通k>1 backend仍是实施期必须验证的风险，不在无证据时宣称缺口或修改shared code。
+修正Factorization composite fixture为`all_true_divisor_ranges`后，fresh focused test得到`1 failed, 27 passed`；唯一失败证明现coordinator在deferred recovery后先retry/requeue/dispatch-drain replacement，直到replacement完成才进入normal merge readiness，所以`REQUIRED_CHILD_DELAY × NO_MERGE_GATE`只能看到`gate_satisfied=true`。Slim-local hook无法在replacement前取得真实merge context，`before_requeue.stop`又会把M偷换成R。用户已直接批准结构旁路；同三名reviewer第二轮以`3/3 RECOVERY_MERGE_FIRST + authorize=yes`批准精确方案。
+
+获批shared范围仅为：coordinator中独立于normal`before_merge`的optional`RecoveryMergeContext` capability，logical/non-logical recovery记录后、replacement前共用helper；synthetic V provenance修正；`plugins/contracts.py`的通用`IncompleteMergeInputError(ValueError)`；Factorization/Lean adapter两个既有incomplete-required-input分支改抛subclass。没有capability的NoOp/Exp1/2/3/5与非Slim caller必须零新增调用、observation和event。P、Lean V alternate bridge、Exp4 mode/challenge、premature v2、route observer与projector均留在Slim-local；任何扩大重新三 Agent投票。
+
+其他缺少的仍是获准在Slim目录实现的local能力：single-entry bounded caller、fixed trace adapter、coverage tail、scenario controller/route observer、projector、最小ordinary storage/resume和reducer。bounded-process facade不是已确认缺口或基础计划能力；普通k>1 backend仍是实施期必须验证的风险。
 
 ## 20. Charter requirement追踪与禁止设施absence检查
 

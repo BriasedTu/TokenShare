@@ -368,6 +368,8 @@ Experiment 3 不新增 fault rate、fault type、death condition 或在线调用
 - **相对旧设计的唯一实验改动**：由五个“自然暴露、单项消融”mode 改为十一 mode 两两完备设计；新增四类固定挑战和 challenge-stratified 指标。数据集总 root 数、模型回答来源、`worker_count=10`、3 repeats 和 `max_retries=1` 不变。
 - **不研究**：不同 fault/error rate、三机制或四机制同时关闭、`ALL_OFF`、新的 provider/model 比较、统计显著性排名或综合分数。
 - **有效性原则**：FULL 与所有 NO_X/NO_X__NO_Y 都必须能够进入正常 root 协议生命周期。mode-specific 配置/preflight BLOCK 只证明消融路径未接通，不能证明机制贡献。
+- **结构性旁路原则**：V/P/R/M 必须分别在真实 verifier/checker、domain parser、replacement creation、unsatisfied merge decision 之前换路；“先调用真实机制、再覆盖其结果”不算删除该机制。挑战 controller 必须继续 mode-blind，structural route observer可以读取冻结 mechanism policy，但二者不得共享 mode-dependent challenge逻辑。
+- **事实原则**：inventory/disabled set只标识配置与适用性，不证明 route已经到达或执行。wrong canonical、raw exposure/acceptance、R-stuck、merge readiness、premature attempt与checker rejection都必须由同一次 run 的实际 event/artifact/plugin/checker/typed route observation派生。
 
 本次权威改动逐项如下：
 
@@ -413,18 +415,27 @@ Experiment 3 不新增 fault rate、fault type、death condition 或在线调用
 
 每个组合 mode 必须通过一次完整的独立配置展开；不得以“先运行单项消融、再离线拼接两个结果”代替真实组合运行。组合 mode 可因挑战在协议开始后形成 no-final、stuck、错误 final 或 root checker rejection，但不能被设施以“不允许同时关闭”直接 BLOCK。
 
+四个机制的冻结结构语义如下：
+
+- V：Factorization 在 `verify_submission` 前旁路；Lean 在 `normalize_proof_submission`/child checker 前旁路。V disabled 的 target child真实 verifier/checker调用数必须为0；独立 root checker仍启用。synthetic verification必须带独立 bypass provenance，不能冒充 plugin checker。
+- P：fixed trace raw artifact持久化后、`_parse_domain` 前旁路；P disabled 的 target domain parser调用数必须为0。
+- R：recovery decision已经记录且 `retry_allowed=true`，但 replacement attempt尚未创建时旁路；不改变 recovery policy原始决定。
+- M：recovery decision已经记录、任何 requeue/replacement前计算真实 readiness；M disabled且 false时，以当前真实 canonical children调用一次真实 plugin merge，不能合成 missing child。
+
+六个 pair均在同一个真实 root/run内组合。`{R,M}` 冻结为 `RECOVERY_MERGE_FIRST`：先执行 recovery-premerge decision；M disabled且 readiness=false时 premature attempt抢先终止，R route记为`preempted_by_merge_first`，`stuck_due_to_no_requeue=false`。同一 run禁止同时报告 premature-M 与 stuck-R。
+
 ### 5.4 mode-blind 确定性 challenge
 
 challenge plan 在展开 mode 之前，按 `(case_id, repeat_id)` 生成；`challenge_plan_id` 是普通文本 ID，不需要 digest。注入器构造函数和运行接口只接收 challenge plan、当前 unit/attempt 与固定回答，不接收 mode、disabled set 或 mechanism policy。
 
-注入边界按 challenge 语义固定：parser-required challenge 在 plugin parser 之前变换 raw content；invalid-candidate challenge 在 parser 成功后、Factorization verifier 或 Lean checker 实际读取 candidate 之前变换 candidate；两类 `no_return` challenge 在 raw/source usage 已记录后改变本次 submission result。不得在 Lean checker 已接受原 candidate 后才替换 ref 来伪装 checker interception。
+注入边界按 challenge 语义固定：parser-required challenge 在 domain parser 之前变换 raw content；invalid-candidate challenge 在 fixed adapter parser成功后、Factorization verifier或 Lean execution bridge normalization/child checker实际读取 candidate之前变换 candidate；两类 `no_return` challenge 在 raw/source usage 已记录后改变本次 submission result。不得在 Lean checker 已接受原 candidate 后才替换 ref 来伪装 checker interception。P disabled使 parsed boundary未到达时按实际 opportunity报告，不能伪造 injection。
 
 | `challenge_family` | 确定性目标与注入 | FULL 的预期协议行为 | 对应机制删除后要观察的实际结果 |
 |---|---|---|---|
 | `INVALID_PARSED_CANDIDATE` | 目标为稳定排序第一个 planned AI unit，只改 attempt ordinal 0；在 parser 成功后、Factorization verifier 或 Lean checker 前替换成 schema-valid 但领域错误 candidate。Factorization 把 candidate 的 `target_n` 改成 `target_n+1`；Lean 保留 candidate schema/ID，但把 `proof_source` 换成引用不存在标识符的固定 proof。独立领域检查必须标记 invalid。 | verifier/checker 拒绝 ordinal 0，requeue 后 ordinal 1 使用未变换的同一 Exp1 回答并完成。 | 含 `{V}` 的 mode 可能把 invalid candidate 绑定为 canonical，随后形成 incorrect final、no-final 或 root checker rejection；不能由 mode 名直接填 count。 |
 | `PARSER_REQUIRED_CANONICAL_JSON` | 目标为稳定排序第一个 planned AI unit，对该 unit 的每个 attempt 都把原本 parser-valid candidate 规范序列化为语义相同的 JSON object text；不得改变候选字段值。 | parser 把文本恢复为 typed candidate，正常进入 verification 和 merge。 | 含 `{P}` 的 mode 实际把 raw-only artifact 暴露给后续边界；记录 verifier/parser failure、raw acceptance、no-final 或额外 attempt。 |
 | `RECOVERABLE_NO_RETURN` | 目标为稳定排序第一个 planned AI unit，只把 ordinal 0 变为 `no_return`；ordinal 1 返回同一 source key 的未变换回答。 | engine 记录 recovery，启动一个 replacement，最终得到有效 canonical/root。 | 含 `{R}` 的 mode 在 recovery decision 后不得创建 replacement，形成可观察 stuck/ready/no-final；不是 preflight BLOCK。 |
-| `REQUIRED_CHILD_DELAY` | 对预注册 merge-blocker targets，仅把各 target 的 ordinal 0 变为 `no_return`。Factorization 选择所有包含真实 divisor 的 planned ranges；若 target 为 prime，则选择稳定排序最后一个 required range。这样剩余 children 不能形成 factor witness 或完整 no-factor coverage。Lean 选择稳定排序最后一个 required terminal slot；只有一个 slot 时就选择该 slot。 | merge gate 在 required child 缺失且 recovery-ready 时保持关闭；replacement 成功后才 merge。 | 含 `{M}` 的 mode 在 gate 不满足时实际调用一次 premature merge；记录 plugin/root checker rejection、missing slots 与 no-final。含 `{R,M}` 时仍必须真实运行，由系统实际顺序决定 stuck 或 premature merge，不能预填结果。 |
+| `REQUIRED_CHILD_DELAY` | 对预注册 merge-blocker targets，仅把各 target 的 ordinal 0 变为 `no_return`。Factorization 选择所有包含真实 divisor 的 planned ranges；若 target 为 prime，则选择稳定排序最后一个 required range。这样剩余 children 不能形成 factor witness 或完整 no-factor coverage。Lean 选择稳定排序最后一个 required terminal slot；只有一个 slot 时就选择该 slot。 | recovery记录后、replacement前得到真实 gate=false并继续 replacement；replacement成功后正常 merge得到true。 | 含 `{M}` 的 mode在 recovery-premerge gate不满足时实际调用一次 plugin merge，记录 typed plugin outcome、missing slots、root-check reached/pass nullable 与 no-final。`{R,M}` 固定 M-first：premature attempt抢先时R不再形成stuck，不能双阳性或预填结果。 |
 
 挑战注入是否成功必须由 hook/executor observation 与随后 protocol events 联合派生。challenge plan 存在但目标未 dispatch，不能记为 injected；mode 字符串存在，也不能推出 challenge 已应用。若 Exp1 source answer 自身未到相应 parser/checker 边界，该 root 仍留在固定任务分母并记录 `challenge_target_unreached`；只有 target 已到注入边界但 injector 未按 plan 动作，才是 challenge 接线无效。
 
@@ -512,14 +523,16 @@ challenge plan 在展开 mode 之前，按 `(case_id, repeat_id)` 生成；`chal
 | `replacement_started_after_challenge_count` | 上述 roots 中实际创建 ordinal 1 attempt 的数量 | requeue enabled modes | 只有 decision 不计 started | replacement linkage |
 | `valid_final_after_challenge_count` | 上述 roots 中最终 `verified_correct=true` 数 | 全部 mode | 固定 challenge root 分母 | challenge/root fields |
 | `valid_final_after_challenge_rate` | valid final / 实际 injected challenge roots | 全部 challenge/mode | denominator=0 为 `null` | 上述字段 |
-| `stuck_task_count` | recovery decision 允许 retry，但因 `{R}` 未创建 replacement 且 root stuck/ready/no-final 的 roots 数 | 含 `{R}` 的 mode | 必须由 recovery 与终态联合派生 | `stuck_due_to_no_requeue` |
+| `stuck_task_count` | 同一 linkage 上 recovery `retry_allowed=true`、R route实际应用、未创建 replacement且无 final 的 roots 数 | 含 `{R}` 的 mode | `{R,M}` 被M抢先时R=`preempted_by_merge_first`且不计stuck；不得从mode/processing/retry disallowed推导 | `stuck_due_to_no_requeue` |
 | `stuck_task_rate` | stuck / 实际 injected `RECOVERABLE_NO_RETURN` roots | 含 `{R}` 的 mode | denominator=0 为 `null` | 上述字段 |
 | `merge_gate_unsatisfied_observation_count` | gate_satisfied=false 且有 missing required slots 的观察数 | `REQUIRED_CHILD_DELAY` | 只看真实 hook input | merge observations |
 | `premature_merge_attempt_count` | gate 未满足时实际执行的 merge attempt 数 | 含 `{M}` 的 mode | 只有 bypass 配置而无 attempt 不计 | `premature_merge_attempted` |
-| `premature_merge_failure_count` | 上述 attempts 中 plugin/root checker 拒绝或未形成 final 的数量 | 含 `{M}` 的 mode | 按实际 attempt 结果 | `premature_merge_failed` |
+| `premature_merge_failure_count` | 上述 attempts 中 typed plugin rejection、真实 root checker rejection或未形成 final 的数量 | 含 `{M}` 的 mode | 按实际 attempt结果；checker未到达为`reached=false/pass=null`，不是checker false | `premature_merge_failed` |
 | `premature_merge_failure_rate` | failure/attempt | 含 `{M}` 的 mode | denominator=0 为 `null` | 上述字段 |
 
 不适用 challenge/mode 的专项指标写 `null` 并记录 `not_applicable`，不写 0。FULL 不得产生 disabled-mechanism observation，但必须接收与 NO_X 完全相同的 challenge。
+
+`root_checker_rejection_after_wrong_canonical_count` 只计 linked root-check report明确显示 `reached=true/pass=false` 的 roots；`not verified_correct`、plugin rejection、checker未到达或no-final均不能代替明确checker rejection。route本应到达却缺实际证据时，相应 raw field为`null`并记录`missing_actual_route_evidence`，不能用`not_applicable`或mode常量掩盖wiring error。
 
 ### 5.10 必须指标：双机制交互
 
@@ -689,11 +702,12 @@ Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或
 | `challenge_observations[].challenge_plan_id`,`challenge_observations[].challenge_family`,`challenge_observations[].target_planned_ai_unit_id`,`challenge_observations[].attempt_ordinal`,`challenge_observations[].injection_boundary`,`challenge_observations[].opportunity`,`challenge_observations[].injected` | Exp4 challenge target dispatch/边界观察后必填 | challenge opportunity/coverage、mode 间 plan 等同与实际注入事实 |
 | `challenge_observations[].source_semantics_preserved`,`challenge_observations[].candidate_independent_label`,`challenge_observations[].reached_verification`,`challenge_observations[].verifier_rejected`,`challenge_observations[].escaped_to_canonical_or_root` | 按 Exp4 challenge 适用 | parser challenge 语义等同；invalid candidate reject/escape/root linkage |
 | `challenge_observations[].replacement_started`,`challenge_observations[].replacement_succeeded`,`challenge_observations[].valid_final_after_challenge` | challenge 触发 recovery 时必填 | replacement、valid-final-after-challenge 与 no-requeue 结果 |
-| `ablation_observations[].disabled_mechanism` | Exp4 非 FULL 每个关闭机制各一条 | 单项/组合 mode 的实际机制 gate；数量应等于 disabled set 大小 |
-| `ablation_observations[].candidate_independent_label`,`ablation_observations[].wrong_canonical_accepted`,`ablation_observations[].root_checker_rejected_after_wrong_canonical` | invalid challenge 可适用时必填 | independently invalid、wrong canonical 与 root rejection |
-| `ablation_observations[].raw_only_exposed`,`ablation_observations[].raw_only_accepted` | 含 NO_PARSER_POLICY 且 parser challenge 时必填 | raw-only exposure/acceptance/count/rate |
-| `ablation_observations[].stuck_due_to_no_requeue` | 含 NO_REQUEUE 且 recovery challenge 时必填 | stuck count/rate |
-| `ablation_observations[].merge_gate_satisfied`,`ablation_observations[].missing_required_slot_ids`,`ablation_observations[].premature_merge_attempted`,`ablation_observations[].premature_merge_failed` | merge challenge 时必填 | unsatisfied gate、premature merge count/failure/rate |
+| `ablation_observations[].disabled_mechanism`,`ablation_observations[].route_status` | Exp4 非 FULL 每个关闭机制各一条 | `disabled_mechanism`只标配置身份；`route_status=applied/not_reached/preempted_by_merge_first/missing_evidence`来自实际route。数量应等于disabled set大小，但行存在不证明gate执行 |
+| `ablation_observations[].domain_parser_call_count`,`ablation_observations[].domain_child_checker_call_count`,`ablation_observations[].plugin_verify_submission_call_count`,`ablation_observations[].root_checker_call_count` | P/V challenge及兼容性观察时必填 | 证明真实parser/child checker/plugin verification是否调用，并把root checker独立计数 |
+| `ablation_observations[].candidate_independent_label`,`ablation_observations[].wrong_canonical_accepted`,`ablation_observations[].root_checker_reached`,`ablation_observations[].root_check_passed`,`ablation_observations[].root_checker_rejected_after_wrong_canonical` | invalid或merge challenge适用时必填/nullable | independently invalid、真实canonical、checker reached与nullable pass；只有reached=true/pass=false才是明确root rejection |
+| `ablation_observations[].raw_only_exposed`,`ablation_observations[].raw_only_accepted`,`ablation_observations[].parse_result` | 含 NO_PARSER_POLICY 且parser boundary适用时必填 | `parse_result=bypassed`存在Slim route observation而非公共submission字段；raw-only exposure/acceptance从实际refs/events派生 |
+| `ablation_observations[].recovery_attempt_id`,`ablation_observations[].recovery_retry_allowed`,`ablation_observations[].replacement_attempt_id`,`ablation_observations[].stuck_due_to_no_requeue` | 含 NO_REQUEUE 且recovery challenge适用时必填 | linked retry decision、replacement absence与stuck count/rate；RM preempted时stuck=false |
+| `ablation_observations[].merge_gate_satisfied`,`ablation_observations[].required_child_unit_ids`,`ablation_observations[].canonical_child_unit_ids`,`ablation_observations[].missing_required_slot_ids`,`ablation_observations[].plugin_merge_attempted`,`ablation_observations[].plugin_outcome`,`ablation_observations[].plugin_error_kind`,`ablation_observations[].premature_merge_attempted`,`ablation_observations[].premature_merge_failed`,`ablation_observations[].final_result_present`,`ablation_observations[].failure_stage` | merge challenge时按actual route必填/nullable | recovery-premerge readiness、typed plugin outcome、`not_attempted/rejected_incomplete_input/candidate_produced`、nullable checker与premature count/failure/rate |
 | `missing_reason`,`not_applicable_reason` | 任一 nullable 指标输入缺失/不适用时必填 | reducer 决定输出 `null`，并解释 ineligible pair 与不适用专项指标 |
 
 ## 9. 用户已冻结的补充规则
@@ -713,3 +727,6 @@ Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或
 11. roots 在 runner 层串行；root timing 严格使用协议生命周期开始、终止与两者差值。Experiment 4 的五个 delta metric IDs 使用不带 `_median`/`_ms` 后缀的名称。
 12. 成本换算固定使用第 1.4 节的 `slim_v2.pricing.2026-08-20` 官方价格表；价格是普通 reducer/projector 常量，不是预算或门禁。DeepSeek/SiliconFlow 的 `reasoning_tokens` 都是 `completion_tokens` 子集，不得重复计入 token 或成本。
 13. Experiment 2–4 请求的自然 ordinal 存在则精确读取；不存在则确定性读取该 per-unit trace 最后一个已有自然 attempt，不增加 provider call。回答/source result/usage/latency/cost 保持不变；Experiment 3 扰动仍按下游当前 ordinal 生成。
+14. Experiment 4的V/P/R/M采用`slim_v2_exp4_structural_bypass_design.md`批准的实际调用前旁路；P和Lean V不能在真实parser/checker运行后才覆盖结果。
+15. `{R,M}`固定为`RECOVERY_MERGE_FIRST`；M premature attempt抢先时R=`preempted_by_merge_first`、`stuck_due_to_no_requeue=false`，同一run禁止双阳性。
+16. checker未到达固定表示为`root_checker_reached=false/root_check_passed=null`；inventory只给配置身份，所有ablation outcome必须从actual evidence派生。

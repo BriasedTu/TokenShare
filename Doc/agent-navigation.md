@@ -18,7 +18,7 @@
 
 ### Slim V2 默认分流
 
-除非用户在当前任务中明确指定其他维护范围，所有 Agent 都默认进入 Slim V2，不按旧 paper/formal 路线展开 Tier 2。四份 Slim V2 前置权威文档均为 `user_approved`，是该范围内的当前权威；下一阶段是编写和审批设计规格，设计规格与实施计划完成前不能写代码或启动实验。
+除非用户在当前任务中明确指定其他维护范围，所有 Agent 都默认进入 Slim V2，不按旧 paper/formal 路线展开 Tier 2。四份 Slim V2 前置权威文档均为 `user_approved`，是该范围内的当前权威；设计规格与实施计划已经获批，当前处于Stage 3六Task实施链。Experiment 4 / Task 4还必须读取已由三票批准的`slim_v2_exp4_structural_bypass_design.md`，不能按设计前旧状态判断shared gap。
 
 Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx 输出或历史实验数据来寻找“最新版本”，也不尝试修复旧设施。唯一 legacy 只读例外由 `slim_v2_reuse_inventory.md` 固定：只允许对完整 archive SHA、allowlist 路径和点名符号使用 `git show`；不得 checkout 或建立运行时依赖。需要共享系统接口时只读 Slim V2 接线合同点名的 core/local_runtime/plugin/executor/storage 公共区域；发现合同未闭合时向用户报告，不自行扩大范围。
 
@@ -29,7 +29,8 @@ Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx �
 | 任务 | 必读文件 |
 |---|---|
 | Slim V2 指标、范围或设计原则讨论 | `Doc/SlimV2/README.md` → `Doc/SlimV2/slim_v2_design_charter.md` → `Doc/SlimV2/slim_v2_experiment_metrics_authority.md` → `Doc/SlimV2/slim_v2_system_integration_contract.md`（已获用户批准并冻结） |
-| Slim V2 获批设计或实现 | 上述四份权威 → `Doc/SlimV2/slim_v2_reuse_inventory.md` → 清单允许的当前公共源码或固定 SHA `git show` 位置 |
+| Slim V2 获批设计或实现 | 上述四份权威 → `Doc/SlimV2/slim_v2_reuse_inventory.md` → `slim_v2_design_spec.md`/`slim_v2_implementation_plan.md`当前focus → 清单允许的当前公共源码或固定 SHA `git show` 位置 |
+| Slim V2 Experiment 4 / Task 4结构旁路 | 上述获批实现顺序 → `Doc/SlimV2/slim_v2_exp4_structural_bypass_design.md`全文；`RECOVERY_MERGE_FIRST`、V/P真实调用前旁路、nullable root check与evidence-only projector覆盖旧“shared gap none”状态 |
 | Slim V2 官方价格来源复核（仅价格维护任务，不是普通启动必读） | `Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md`；实际计算口径仍以指标权威第 1.4 节为准 |
 | Slim V2 定位可复用代码（支持材料，不是权威） | `Doc/SlimV2/slim_v2_reuse_inventory.md`；必须先读完四份权威文档；legacy 仅允许固定 SHA + allowlist + `git show` 定点只读，禁止 runtime import |
 | Slim V2 串行新任务接力（仅在用户显式启动时） | `Doc/SlimV2/slim_v2_stage_relay_protocol.md`；只定义阶段 owner、子 Agent、checkpoint、委托审批和新任务接力，不覆盖实验/指标/接线权威，也不授权修改 shared code |
@@ -55,7 +56,8 @@ Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx �
 | Lean 固定计划、checker、merge | `src/tokenshare/plugins/lean_proof/` |
 | executor/config/transport/replay | `src/tokenshare/executors/` |
 | 论文实验、projection、metrics/report/CLI | `src/tokenshare/experiments/` |
-| Slim V2 runner/hooks/projector/reducer（用户批准后） | `src/tokenshare/experiments/slim_v2/` |
+| Slim V2 runner/hooks/projector/reducer（用户批准后） | `src/tokenshare/experiments/slim_v2/`；Exp4的mode/challenge/structural route/premature v2必须留在此处 |
+| Exp4已获批最小shared gap（仅Task 4） | `src/tokenshare/local_runtime/coordinator.py`、必要`contracts.py`、`src/tokenshare/plugins/contracts.py`、Factorization/Lean runtime adapter的incomplete-input分支；精确边界见结构旁路设计第8.2节，任何扩大重新三Agent投票 |
 | 仓库外数据根和历史读取映射 | `src/tokenshare/runtime_paths.py` |
 | 启动验证 | `verification/run_verification.py`、`verification/*.txt` |
 | 当前总体 code map | `Doc/TechnicalDocument/tokenshare_v1_code_map.md` |
