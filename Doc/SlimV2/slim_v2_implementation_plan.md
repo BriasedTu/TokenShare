@@ -686,6 +686,14 @@ Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Ex
 
 不在本Task调用真实provider、运行真实representative/full、增加Web UI/service/daemon、GUI偏好数据库、任务队列、自动重试、低风险控件覆盖或通用基础设施；不实现价格/余额审批、budget authority、额外人工授权门禁、publication readiness、evidence completeness，且不因价格表变化阻止实验。窗口的“启动”按钮只是现有脚本参数入口，不得膨胀成审批工作流。
 
+#### 11. 完成证据（2026-08-22）
+
+- 实现checkpoint=`d6e5610c10782add73f70397aca88ec79fc79145`。同一`cli.py`已闭合五个原子命令、run-all/reduce/representative、串行root、显式source、typed resume、run lock、逐next-root磁盘上界和condition失败作用域；薄链严格为`run_slim_v2.cmd → gui.py → 同一CLI argv/一个子进程`。
+- 所有Exp1–5 root均写typed `protocol.json`；Exp1 protocol→tail崩溃窗口只补缺失target。terminal/response离线复用、dead intent unknown/live owner拒绝、journal-only tail无secret恢复、Exp5 provider in-flight=`3`与Exp1=`10`均有fake风险测试；provider/network=`0/0`。
+- owner fresh Task 6 focused=`47 passed in 26.96s`；Slim V2全包=`125 passed, 3 failed in 285.87s`，三项均为Task 6未修改且上一checkpoint已记录的`test_schema.py` authority fixture集合差异。scoped compile、`git diff --check`、legacy/GUI forbidden import与额外gate absence均通过。
+- 独立spec最终`SPEC_COMPLIANT`、独立implementation-quality最终`APPROVED`，两者C/I/M/OOS均=`0/0/0/0`。未运行真实provider、representative/full、Lean专项suite、LeanAudit、全量catalog、`lake`或`lean`；未push/merge/PR。
+- Stage 3六Task到此完成；按relay只创建fresh Stage 4 representative owner。Stage 4使用同一CLI真实运行representative并负责进程监督、恢复与必要最小修复；`run_scope=representative_only`，完成后终止，不创建Stage 5。
+
 ## 9. 状态真值、失败作用域、恢复与资源边界
 
 状态真值集中遵守第5章矩阵，每个Task的状态条款只是应用，不另建owner。失败作用域：

@@ -21,19 +21,24 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 ## Slim V2 精简实验路径
 
-Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokenshare/experiments/slim_v2/`，不得import旧`paper_*`/formal runner。Task 4/5的主要归属如下：
+Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokenshare/experiments/slim_v2/`，不得import旧`paper_*`/formal runner。Task 4–6的主要归属如下：
 
 | 文件 | 职责 |
 |---|---|
 | `experiments/slim_v2/scenarios.py` | 组装Exp2六worker logical replay、Exp3 ordinal-0 fault/真实Process death/reference与Exp4 mode-blind 11-mode结构旁路；普通路径使用现有Thread/Sequential，death继续由真实`ProcessWorkerBackend`产生PID/exit/progress事实。 |
 | `experiments/slim_v2/execution.py` | Exp1/provider与fixed-trace submission边界；Task 4增加parser前P route、Lean normalize/checker前Slim bridge以及Process结果透明prepare/export/ingest。 |
-| `experiments/slim_v2/runtime.py` | 把scenario scheduler/policy/hooks/backend注入同一个`ProtocolRunCoordinator.run_root`，不建立第二runner或状态机。 |
+| `experiments/slim_v2/runtime.py` | 把scenario scheduler/policy/hooks/backend注入同一个`ProtocolRunCoordinator.run_root`；Task 6增加生产root装配、全实验typed protocol投影、Exp1 coverage tail/fresh resume与按root共享provider permit，不建立第二runner或状态机。 |
 | `experiments/slim_v2/projector.py` | 从同一次system result、ledger、worker facts、plugin/checker与Slim route artifacts投影Exp2–4字段；只认actual evidence，未到达checker为`false/null/0`。 |
 | `experiments/slim_v2/schema.py` | Slim root/attempt/fault/recovery/death/challenge/ablation typed schema与跨字段不变量。 |
-| `experiments/slim_v2/storage.py` | 普通run文件与resume事实；Task 5增加逐行root/reference inventory-result join、独立Exp3 reference路径和Exp4 challenge inventory只读行，缺committed result仍产出固定identity。 |
+| `experiments/slim_v2/storage.py` | 普通run文件与resume事实；Task 5增加逐行root/reference inventory-result join、独立Exp3 reference路径和Exp4 challenge inventory只读行；Task 6增加typed protocol/terminal/response恢复、公开run/reference writer与单层system root路径。 |
+| `experiments/slim_v2/provider.py` | single-entry 16MiB bounded provider调用、usage/model/cost普通投影和intent/response/typed-terminal journal；恢复只读既有事实，dead intent写unknown且不重复同ordinal。 |
 | `experiments/slim_v2/reducer.py` | 唯一Exp1–5离线统计内核；按table/slice流式归约，拥有153 occurrence/evidence合同、固定分母、pair/quadruple、type-7、sample variance、固定bootstrap、null finalizer及五表/summary staged atomic publish；不得导入runtime/checker/provider或读取raw/system目录。 |
+| `experiments/slim_v2/cli.py` | 唯一实验编排入口；实现`plan/run/run-all/reduce/representative`、串行roots、原子单实验inventory、typed resume、显式source与语义closure、run lock、调用/磁盘安全preflight和condition失败作用域。 |
+| `experiments/slim_v2/gui.py`、仓库根`run_slim_v2.cmd` | Windows薄参数窗口与双击入口；只把profile/experiment/run/source/resume确定性映射为同一CLI argv，并监督一个CLI子进程，不承载runner、preflight或恢复逻辑。 |
 | `tests/experiments/slim_v2/test_scenarios.py` | 风险驱动覆盖Thread双域事实、Exp2六worker、Exp3五fault与12-cell真实Process death、Exp4四family×11 modes、default-zero与零provider/transport。 |
 | `tests/experiments/slim_v2/test_reducer_golden.py` | 单一golden run风险驱动覆盖153/153、fixed denominator、tail、独立pair eligibility、六组四端、Exp5四端分类、bootstrap/null阈值、读取边界和晚失败/replace失败发布事务。 |
+| `tests/experiments/slim_v2/test_cli_e2e.py`、`test_runtime_resume.py` | 全离线覆盖原子命令、source/failure scope、run lock、动态磁盘、全实验protocol、fresh resume、terminal/intent防重复与Exp5 provider permit。 |
+| `tests/experiments/slim_v2/test_gui_launcher.py` | 覆盖2 profiles × Exp1–5/all参数映射、必要source、一个CLI子进程、零provider和launcher精确目标；不测试控件像素。 |
 
 Task 4获批的shared例外仍保持最小：`local_runtime/contracts.py`定义optional`RecoveryMergeContext`，`local_runtime/coordinator.py`只在真实recovery记录后/replacement前调用capability并记录固定synthetic-V provenance；`plugins/contracts.py`的`IncompleteMergeInputError(ValueError)`只替换Factorization/Lean adapter原有incomplete-required-input异常分支。P、Lean-V、mode/challenge、premature-v2和projector全部留在Slim-local。
 
