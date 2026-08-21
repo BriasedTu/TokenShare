@@ -575,13 +575,15 @@ metric ID集合精确153/153；所有公式方向与authority一致；Exp2–4�
 
 preflight在secret/runtime前校验inventory、依赖、source closure、entry/model、磁盘和调用上限；roots串行；每root前检查下一root所需空间；resume扫描committed root/trace/terminal call；run-all按`exp1→exp2→exp3→exp4→exp5→reduce`并显式传source；representative调用相同内部路径。
 
+这里的“磁盘和调用上限”只有运行安全含义：磁盘检查只防止下一次原子写耗尽空间；调用上限只核对逐root inventory派生的自然attempt hard cap、发现重复dispatch或计划越界，避免程序失控与意外重复付费。preflight不得读取或判断价格、余额或可支付性，不得创建`budget authority`，不得等待人工授权，不得检查`publication readiness`或`evidence completeness`，也不得把价格表缺失、变化或成本投影结果作为阻止实验的条件。价格问题只能使成本字段为`null + reason`或留下普通诊断，不能改变root/condition/run是否允许启动。
+
 #### 7. 状态真值owner与失败作用域变化
 
 CLI只拥有调度与退出码。单root自然失败继续；condition identity/source/model接线错停止condition并为剩余预注册roots写infra-invalid；catalog/run store/disk等全局错误安全停止run；resume跳过不是协议终态声明。
 
 #### 8. 风险驱动验证场景与命令
 
-覆盖原子命令、source显式/零fallback、roots串行、resume/unknown、防重复fake调用、89-call representative preflight、secret/磁盘preflight、全离线两领域E2E：
+覆盖原子命令、source显式/零fallback、roots串行、resume/unknown、防重复fake调用、89-call representative preflight、secret/磁盘preflight、全离线两领域E2E；另以合同/absence断言证明preflight不接受价格、余额、budget、人工批准、publication或evidence gate输入，成本投影缺失/变化不改变同一运行计划的启动结论：
 
 ```powershell
 conda run -n tokenshare python -m pytest tests/experiments/slim_v2 -q
@@ -589,11 +591,11 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2 -q
 
 #### 9. 完成标准
 
-Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Exp5 4；论文roots 72、executions 74；provider cap 89；Exp2–4 0 calls；所有root一次run_root或按第7章诚实记录中断；第三里程碑review关闭范围内Critical/Important。当前owner满足relay的Stage 3总完成标准后，按relay §5.1创建Stage 4 owner并完成heartbeat交棒；不得自行启动真实representative。
+Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Exp5 4；论文roots 72、executions 74；provider cap 89；Exp2–4 0 calls；所有root一次run_root或按第7章诚实记录中断；preflight只实施运行安全检查且不存在价格/余额/budget/人工批准/publication/evidence gate；第三里程碑review关闭范围内Critical/Important。当前owner满足relay的Stage 3总完成标准后，按relay §5.1创建Stage 4 owner并完成heartbeat交棒；不得自行启动真实representative。
 
 #### 10. 明确非目标
 
-不在本Task调用真实provider、运行真实representative/full、增加UI/service、补充低风险覆盖或继续建设通用基础设施。
+不在本Task调用真实provider、运行真实representative/full、增加UI/service、补充低风险覆盖或继续建设通用基础设施；不实现价格/余额审批、budget authority、人工授权门禁、publication readiness、evidence completeness，且不因价格表变化阻止实验。
 
 ## 9. 状态真值、失败作用域、恢复与资源边界
 
@@ -619,7 +621,7 @@ Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Ex
 - projector只保留当前root的events和必要join；root commit后释放plugin/store/ledger/backend引用；
 - reducer只载入当前table/slice的root级观察和bootstrap标量，不读raw/system目录；
 - 文件按次打开关闭，不设置与冻结实验无关的通用句柄治理框架；
-- `plan`按当前inventory逐root计算provider/protocol/simulated attempt上限，并用Representative raw-response p95与16MiB response hard limit分别给出estimate/hard scenario；磁盘preflight依据下一root所需原子写空间计算，不复制陈旧总量；
+- `plan`按当前inventory逐root计算provider/protocol/simulated attempt上限，并用Representative raw-response p95与16MiB response hard limit分别给出estimate/hard scenario；磁盘preflight依据下一root所需原子写空间计算，不复制陈旧总量；这些检查只限制技术资源和重复调用，不读取价格/余额、不产生budget或审批权威；价格表变化只影响普通成本投影，不能阻止运行；
 - secret只存在于当前进程env和HTTP调用栈，不进入run目录、event/artifact metadata、error或命令输出；
 - Representative与Full只替换profile数据，所有资源控制、runner、resume、provider和reducer路径完全相同。
 
@@ -639,6 +641,7 @@ Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Ex
 | Exp4真实消融 | mode-blind plan、11 modes、六四端组合 | 4 | 不离线拼接双机制结果 |
 | reducer统计 | 153 IDs、fixed denominator、pairs/quadruples/bootstrap/null | 5 | 不拆五套统计框架 |
 | CLI与恢复 | 显式source、roots串行、unknown、防重复、89 cap、离线E2E | 6 | 不隐式运行Exp1或更换source |
+| preflight膨胀 | preflight输入/输出absence合同；成本投影缺失或变化不改变启动结论 | 6 | 不增加价格/余额/budget/人工批准/publication/evidence gate |
 
 review只在三个里程碑触发：
 
@@ -661,7 +664,7 @@ review只在三个里程碑触发：
 - schema与metrics authority保持153/153，reducer固定分母、pair/quadruple/bootstrap/null传播正确；
 - Representative冻结为72论文roots、74 executions、provider hard cap 89；Full为7,554论文roots、7,660 executions、provider hard cap 10,902；Exp3/4 corrected upper均由逐root inventory公式得出；
 - resume跳过committed root/trace/terminal call，不重复同ordinal付费；unknown transport诚实记录；
-- `plan`、source/secret/model/disk preflight和全离线E2E通过；Representative与Full共享同一路径；
+- `plan`、source/secret/model/disk preflight和全离线E2E通过；Representative与Full共享同一路径；preflight仅防技术失控、磁盘耗尽和重复调用，不包含价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness，价格表变化不得阻止实验；
 - 未运行真实provider、representative/full、Lean专项suite、LeanAudit、全量catalog、`lake`或`lean`；
 - UTF-8、Markdown结构、旧常量、禁止依赖、公开接口符号和`git diff --check` focused verification通过；
 - `progress.md`顶部记录旧横向计划暂停、Task 3参数勘误、Task 1公共接口实证、六Task当前状态和下一步。
