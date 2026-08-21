@@ -4,13 +4,15 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 Stage 3：Task 1完成，Task 2实施中
+## Slim V2 Stage 3：Task 2完成，Task 3实施中
 
 - **Task 1完成证据**：implementation commit=`aaabca417f76c00db6011f8bf0bb04617fffa4f2`；owner fresh focused=`6 passed in 0.17s`；authority leaves=`168/168`、metric records=`153/153`、operational leaves=`5/5`、required/nullable规则=`173/173`；UTF-8、禁止import、尾随空白、cache与`git diff --check`均通过。
 - **Task 1评审**：spec最终`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`；quality最终`0 Critical / 0 Important / 0 Minor`并`APPROVED`。生命周期未启动时四个边界字段的诚实null表示经relay §7.1三票一致选择方案A，固定reason细节按两票多数，状态=`approved_under_user_delegation_by_quorum`。
-- **当前唯一 focus**：严格执行Task 2“固化case读取与full/representative有序ID”；不提前开始Task 3。
-- **Task 2允许写入**：`src/tokenshare/experiments/slim_v2/case_source.py`、`src/tokenshare/experiments/slim_v2/profiles.py`、`tests/experiments/slim_v2/test_case_source.py`、`tests/experiments/slim_v2/test_profiles.py`；计划证据表和本顶部状态仍是常设证据例外。
-- **Task 2 fail-first命令**：`conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_case_source.py tests/experiments/slim_v2/test_profiles.py -q`；允许失败为缺`load_cases/select_cases_by_ids`或frozen ID constants。
+- **Task 2完成证据**：implementation commit=`13a25193465736c0fecda5d304d9de5be3c2ecbc`；owner fresh=`8 passed in 0.20s`；Factorization/Lean catalog分别为`500/165`行与SHA256 `9ce2b31a…7774/5a134f24…2cdc`；Exp1=`300+135`且planned units=`1970`，Exp2=`50`，Exp3=`50+3`，Exp4=`50+15`，Exp5=`42+12`，representative四题units=`19`，全部tuple差集与重复为0。
+- **Task 2评审**：spec=`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`并独立重算全部tuple；quality=`0 Critical / 0 Important / 0 Minor`、`APPROVED`。正式Lean只选`preflight_status=passed`与`task14_checker_backed_pool`，准确排除30个`structured_blocked` stress cases；archive/legacy读取为0。
+- **当前唯一 focus**：严格执行Task 3“展开profile inventory、规模上限与无provider `plan`”；不提前开始Task 4。
+- **Task 3允许写入**：修改`src/tokenshare/experiments/slim_v2/profiles.py`与`tests/experiments/slim_v2/test_profiles.py`；创建`src/tokenshare/experiments/slim_v2/cli.py`与`tests/experiments/slim_v2/test_cli_plan.py`；计划证据表和本顶部状态仍是常设证据例外。
+- **Task 3 fail-first命令**：`conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_profiles.py tests/experiments/slim_v2/test_cli_plan.py -q`；允许失败为缺`build_profile/build_inventory/build_plan`或`cli plan`。
 - **运行边界**：Stage 3 provider/network spy累计保持0；不运行representative/full、Lean专项suite、LeanAudit、全量catalog或`lake`/`lean`；shared code保持只读。
 
 ## Slim V2 Stage 2：实施计划已获委托审批并完成本地checkpoint

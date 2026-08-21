@@ -168,16 +168,16 @@ run_scope: representative_only
 
 **Allowed writes:** 仅上述四个文件。
 
-- [ ] **Step 1: 写失败测试。** 测试从`benchmarks/paper/factorization_catalog.v2.jsonl`与`benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl`只读核对`profiles.py`字面tuple；独立重算本task冻结规则并要求tuple逐项相等，不调用production选择helper。明确断言Exp1 300+135且planned units=1,970、Exp2 hard 50、Exp3/4 shared 50+3或50+15、Exp5 42+12的ID唯一性/分层/顺序，设计规格第13节四个representative IDs，以及代表性Lean unit counts=`1/2`、Exp1 total units=19。
-- [ ] **Step 2: 运行先失败命令。**
+- [x] **Step 1: 写失败测试。** 测试从`benchmarks/paper/factorization_catalog.v2.jsonl`与`benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl`只读核对`profiles.py`字面tuple；独立重算本task冻结规则并要求tuple逐项相等，不调用production选择helper。明确断言Exp1 300+135且planned units=1,970、Exp2 hard 50、Exp3/4 shared 50+3或50+15、Exp5 42+12的ID唯一性/分层/顺序，设计规格第13节四个representative IDs，以及代表性Lean unit counts=`1/2`、Exp1 total units=19。
+- [x] **Step 2: 运行先失败命令。**
 
   Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_case_source.py tests/experiments/slim_v2/test_profiles.py -q`
 
   Expected: FAIL，缺`load_cases/select_cases_by_ids`或frozen ID constants。
 
-- [ ] **Step 3: 一次性生成并人工审查字面ID。** 本task不读取任何archive JSON，完全使用两个当前权威catalog和以下冻结规则：Factorization先按`sha256("slim_v2.full.v1|seed=20260820|domain=factorization|difficulty="+difficulty+"|case_id="+case_id)`升序、再按`catalog_ordinal,case_id`破同分；easy/medium各取前100，hard先按给定顺序放`factor_v2_hard_138,factor_v2_hard_145`，再接排名中其余case并取100。Exp2为Exp1 hard前50；Exp3/4 Factorization分别取Exp1 easy/medium/hard前`17/17/16`。Lean每个`paper_difficulty×topic_family`同样用上述字符串把domain替换为`lean`排序；simple/pure_logic先放`lean_v2_simple_pure_logic_direct_prop_01`，simple/induction先放`lean_v2_simple_induction_direct_nat_01`，再接排名其余case；每格取15形成Exp1。Exp3 Lean逐topic取simple格第1题；Exp4每difficulty按`pure_logic/function_set/induction=2/2/1`取各格前N；Exp5为Exp1 Factorization hard前42及Lean hard三个topic各前4。生成后把所有tuple作为只读字面常量写进`profiles.py`；runtime不得包含选择算法，也不得打开`paper_suite_scale_300_50_54.v1`、`exp5_parent_quarter_selection.v4`或其他旧selection/profile。
-- [ ] **Step 4: 最小实现。** `case_source.py`提供逐行`load_cases(path)`与`select_cases_by_ids(iterable, ordered_ids)`；`profiles.py`只先提供字面ID/stratum常量和representative challenge rows，不展开conditions。
-- [ ] **Step 5: 运行通过命令。**
+- [x] **Step 3: 一次性生成并人工审查字面ID。** 本task不读取任何archive JSON，完全使用两个当前权威catalog和以下冻结规则：Factorization先按`sha256("slim_v2.full.v1|seed=20260820|domain=factorization|difficulty="+difficulty+"|case_id="+case_id)`升序、再按`catalog_ordinal,case_id`破同分；easy/medium各取前100，hard先按给定顺序放`factor_v2_hard_138,factor_v2_hard_145`，再接排名中其余case并取100。Exp2为Exp1 hard前50；Exp3/4 Factorization分别取Exp1 easy/medium/hard前`17/17/16`。Lean每个`paper_difficulty×topic_family`同样用上述字符串把domain替换为`lean`排序；simple/pure_logic先放`lean_v2_simple_pure_logic_direct_prop_01`，simple/induction先放`lean_v2_simple_induction_direct_nat_01`，再接排名其余case；每格取15形成Exp1。Exp3 Lean逐topic取simple格第1题；Exp4每difficulty按`pure_logic/function_set/induction=2/2/1`取各格前N；Exp5为Exp1 Factorization hard前42及Lean hard三个topic各前4。生成后把所有tuple作为只读字面常量写进`profiles.py`；runtime不得包含选择算法，也不得打开`paper_suite_scale_300_50_54.v1`、`exp5_parent_quarter_selection.v4`或其他旧selection/profile。
+- [x] **Step 4: 最小实现。** `case_source.py`提供逐行`load_cases(path)`与`select_cases_by_ids(iterable, ordered_ids)`；`profiles.py`只先提供字面ID/stratum常量和representative challenge rows，不展开conditions。
+- [x] **Step 5: 运行通过命令。**
 
   Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_case_source.py tests/experiments/slim_v2/test_profiles.py -q`
 
@@ -1225,6 +1225,7 @@ Stage 3对每个task追加一行，不覆盖计划语义：
 | Task | failing command/result | passing command/result | spec review | quality review | commit |
 |---|---|---|---|---|---|
 | Task 1 | 原命令先被既有src-layout阻断：`No module named tokenshare`；仅设置进程内`PYTHONPATH=src`后得到计划允许RED：`No module named tokenshare.experiments.slim_v2`。修正轮另真实得到`6 failed`、`2 failed, 4 passed`、`1 failed, 5 passed`，分别覆盖nullable/递归/条件规则、资源族与verified/final、自然ordinal上限。 | owner fresh：`PYTHONPATH=src`、禁bytecode/cache运行Task 1命令，`6 passed in 0.17s`；authority leaves=`168/168`、metric records=`153/153`、operational leaves=`5/5`、规则=`173/173`；UTF-8、禁止import、尾随空白、cache、`git diff --check`均通过。 | 最终`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`，`Spec compliant`。生命周期未启动字段冲突按relay §7.1三票一致选择A，固定reason细节按两票多数，状态=`approved_under_user_delegation_by_quorum`。 | 最终`0 Critical / 0 Important / 0 Minor`，`APPROVED`；首次唯一Important（Exp1自然attempt必须连续且最多3次）经第四轮RED/GREEN关闭。 | implementation `aaabca417f76c00db6011f8bf0bb04617fffa4f2` |
+| Task 2 | 设置进程内`PYTHONPATH=src`运行计划命令，`8 failed in 0.26s`，首败=`No module named tokenshare.experiments.slim_v2.case_source`。首次GREEN为`7 passed, 1 failed`并暴露Lean正式case过滤缺口，修正为只选`preflight_status=passed`与`task14_checker_backed_pool`。 | owner fresh：Task 2命令`8 passed in 0.20s`；catalog为Factorization `500`行/SHA256 `9ce2b31a…7774`、Lean `165`行/SHA256 `5a134f24…2cdc`；tuple逐项、唯一/存在/分层、Exp1 units=`1400+570=1970`、representative units=`19`、UTF-8/literal-only/cache/diff均通过。 | `0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`，`Spec compliant`；独立重算所有hash/pin/slice后首个mismatch与差集均为空。 | `0 Critical / 0 Important / 0 Minor`，`APPROVED`。 | implementation `13a25193465736c0fecda5d304d9de5be3c2ecbc` |
 
 Stage 3只在某task真实完成后追加该task的具体一行；不得预填空值、预计pass数或虚构SHA。
 
