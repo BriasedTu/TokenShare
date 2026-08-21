@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 import json
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Mapping
@@ -15,6 +15,7 @@ from .schema import (
     AttemptResultV1,
     ChallengeObservationV1,
     FaultObservationV1,
+    ProviderCallResultV1,
     RecoveryObservationV1,
     RootInventoryV1,
     RootResultV1,
@@ -27,6 +28,8 @@ from .schema import (
 RootKeyV1 = tuple[str, str, str, int]
 TraceKeyV1 = tuple[str, int, str]
 WriteDisposition = Literal["written", "skipped"]
+PROTOCOL_SNAPSHOT_SCHEMA_VERSION = "slim_v2.protocol_material.v1"
+PROVIDER_TERMINAL_SCHEMA_VERSION = "slim_v2.provider_terminal.v1"
 _INVENTORIES = frozenset(
     {"conditions", "roots", "exp3_references", "exp4_challenges"}
 )
@@ -54,6 +57,17 @@ class ResumeView:
     trace_keys: frozenset[TraceKeyV1]
     terminal_call_keys: frozenset[str]
     nonterminal_call_keys: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class ProtocolSnapshotV1:
+    """可在新进程读回的 protocol 普通投影，不持有 runtime 对象。"""
+
+    root_key: RootKeyV1
+    protocol_result: Mapping[str, Any]
+    traces: tuple[UnitTraceV1, ...]
+    tail_requests: Mapping[str, Mapping[str, Any]]
+    protocol_projection: RootResultV1 | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +262,16 @@ def _trace_from_document(document: Mapping[str, Any]) -> UnitTraceV1:
     return trace
 
 
+def _provider_result_from_document(
+    document: Mapping[str, Any],
+) -> ProviderCallResultV1:
+    result = ProviderCallResultV1(
+        **_exact_values(ProviderCallResultV1, document)
+    )
+    result.validate()
+    return result
+
+
 class RunStore:
     """一个 run 的 ordinary files；不判断任何协议状态。"""
 
@@ -260,6 +284,17 @@ class RunStore:
         root_key = (experiment_id, condition_id, case_id, repeat_id)
         return self.run_dir / "roots" / _segment(root_key[0]) / _root_directory_name(root_key)
 
+    def system_root_directory(
+        self, experiment_id: str, condition_id: str, case_id: str, repeat_id: int,
+    ) -> Path:
+        root_key = (experiment_id, condition_id, case_id, repeat_id)
+        return (
+            self.run_dir
+            / "system"
+            / _segment(root_key[0])
+            / _root_directory_name(root_key)
+        )
+
     def root_result_path(
         self, experiment_id: str, condition_id: str, case_id: str, repeat_id: int,
     ) -> Path:
@@ -269,6 +304,9 @@ class RunStore:
         self, experiment_id: str, condition_id: str, case_id: str, repeat_id: int,
     ) -> Path:
         return self.root_directory(experiment_id, condition_id, case_id, repeat_id) / "protocol.json"
+
+    def run_config_path(self) -> Path:
+        return self.run_dir / "run.json"
 
     def exp3_reference_result_path(
         self,
@@ -338,6 +376,146 @@ class RunStore:
             self.root_protocol_path(experiment_id, condition_id, case_id, repeat_id)
         )
 
+    def write_root_protocol_snapshot(
+        self,
+        experiment_id: str,
+        condition_id: str,
+        case_id: str,
+        repeat_id: int,
+        *,
+        protocol_result: Mapping[str, Any] | Any,
+        traces: Iterable[UnitTraceV1],
+        tail_requests: Mapping[str, Mapping[str, Any]] | None = None,
+        protocol_projection: RootResultV1 | None = None,
+    ) -> WriteDisposition:
+        """冻结可重建 protocol-origin traces 的 typed 普通快照。"""
+
+        key = (experiment_id, condition_id, case_id, repeat_id)
+        trace_rows = tuple(traces)
+        requests = dict(tail_requests or {})
+        if experiment_id != "exp1" and (trace_rows or requests):
+            raise ValueError("non-Exp1 protocol snapshot cannot contain tail material")
+        if experiment_id != "exp1" and not isinstance(
+            protocol_projection, RootResultV1
+        ):
+            raise TypeError("non-Exp1 protocol snapshot requires a typed projection")
+        planned: set[str] = set()
+        for trace in trace_rows:
+            if not isinstance(trace, UnitTraceV1):
+                raise TypeError("protocol snapshot traces must be UnitTraceV1")
+            trace.validate()
+            if (
+                trace.case_id != case_id
+                or trace.source_repeat_id != 0
+                or trace.trace_origin != "protocol"
+                or trace.planned_ai_unit_id in planned
+            ):
+                raise ValueError("protocol snapshot trace identity is invalid")
+            planned.add(trace.planned_ai_unit_id)
+        protocol_body = _jsonable(protocol_result)
+        if not isinstance(protocol_body, Mapping):
+            raise TypeError("protocol_result must be an object")
+        if any(
+            not isinstance(key, str)
+            or not key
+            or not isinstance(value, Mapping)
+            for key, value in requests.items()
+        ):
+            raise ValueError("protocol tail requests must be keyed objects")
+        projection_body = None
+        if protocol_projection is not None:
+            protocol_projection.validate()
+            projection_key = (
+                protocol_projection.experiment_id,
+                protocol_projection.condition_id,
+                protocol_projection.case_id,
+                protocol_projection.repeat_id,
+            )
+            if projection_key != key:
+                raise ValueError("protocol projection identity differs from root")
+            projection_body = asdict(protocol_projection)
+            projection_body["schema_version"] = ROOT_RESULT_SCHEMA_VERSION
+        return self.write_root_protocol(
+            *key,
+            {
+                "schema_version": PROTOCOL_SNAPSHOT_SCHEMA_VERSION,
+                "root_key": list(key),
+                "protocol_result": dict(protocol_body),
+                "traces": [asdict(trace) for trace in trace_rows],
+                "tail_requests": requests,
+                "protocol_projection": projection_body,
+            },
+        )
+
+    def read_root_protocol_snapshot(
+        self, experiment_id: str, condition_id: str, case_id: str, repeat_id: int,
+    ) -> ProtocolSnapshotV1:
+        key = (experiment_id, condition_id, case_id, repeat_id)
+        document = self.read_root_protocol(*key)
+        if set(document) != {
+            "schema_version", "root_key", "protocol_result", "traces",
+            "tail_requests", "protocol_projection",
+        }:
+            raise ValueError("invalid protocol snapshot ordinary fields")
+        if document["schema_version"] != PROTOCOL_SNAPSHOT_SCHEMA_VERSION:
+            raise ValueError("invalid protocol snapshot schema_version")
+        raw_key = document["root_key"]
+        if not isinstance(raw_key, list) or tuple(raw_key) != key:
+            raise ValueError("protocol snapshot identity differs from its ordinary path")
+        protocol_result = document["protocol_result"]
+        raw_traces = document["traces"]
+        raw_requests = document["tail_requests"]
+        raw_projection = document["protocol_projection"]
+        if not isinstance(protocol_result, Mapping):
+            raise ValueError("protocol snapshot result must be an object")
+        if not isinstance(raw_traces, list) or not all(
+            isinstance(item, Mapping) for item in raw_traces
+        ):
+            raise ValueError("protocol snapshot traces must be objects")
+        if not isinstance(raw_requests, Mapping) or any(
+            not isinstance(name, str)
+            or not name
+            or not isinstance(value, Mapping)
+            for name, value in raw_requests.items()
+        ):
+            raise ValueError("protocol snapshot tail requests must be keyed objects")
+        if raw_projection is not None and not isinstance(raw_projection, Mapping):
+            raise ValueError("protocol snapshot projection must be an object or null")
+        traces = tuple(_trace_from_document(item) for item in raw_traces)
+        seen: set[str] = set()
+        for trace in traces:
+            if (
+                trace.case_id != case_id
+                or trace.source_repeat_id != 0
+                or trace.trace_origin != "protocol"
+                or trace.planned_ai_unit_id in seen
+            ):
+                raise ValueError("protocol snapshot trace identity is invalid")
+            seen.add(trace.planned_ai_unit_id)
+        projection = (
+            _root_result_from_document(raw_projection)
+            if isinstance(raw_projection, Mapping)
+            else None
+        )
+        if projection is not None and (
+            projection.experiment_id,
+            projection.condition_id,
+            projection.case_id,
+            projection.repeat_id,
+        ) != key:
+            raise ValueError("protocol snapshot projection identity differs")
+        if experiment_id != "exp1" and (traces or raw_requests):
+            raise ValueError("non-Exp1 protocol snapshot contains tail material")
+        if experiment_id != "exp1" and projection is None:
+            raise ValueError("non-Exp1 protocol snapshot lacks a typed projection")
+        return ProtocolSnapshotV1(
+            key,
+            dict(protocol_result),
+            traces,
+            {str(name): dict(value) for name, value in raw_requests.items()},
+            projection,
+        )
+
     def write_trace(self, trace: UnitTraceV1) -> WriteDisposition:
         trace.validate()
         return _write_json(
@@ -357,14 +535,101 @@ class RunStore:
     def write_call_terminal(self, call_key: str, value: Any) -> WriteDisposition:
         return _write_json(self.call_terminal_path(call_key), value)
 
+    def read_call_intent(self, call_key: str) -> dict[str, Any]:
+        value = _read_object(self.call_intent_path(call_key))
+        if value.get("call_key") != call_key:
+            raise ValueError("provider intent identity differs from its ordinary path")
+        return value
+
+    def read_call_terminal(self, call_key: str) -> dict[str, Any]:
+        value = _read_object(self.call_terminal_path(call_key))
+        if value.get("call_key") != call_key:
+            raise ValueError("provider terminal identity differs from its ordinary path")
+        return value
+
+    def read_provider_terminal_result(
+        self, call_key: str, *, context: Any,
+    ) -> ProviderCallResultV1:
+        """从冻结 terminal 投影与 responses/ raw 重建一次 caller 结果。"""
+
+        document = _read_object(self.call_terminal_path(call_key))
+        if set(document) != {
+            "schema_version", "call_key", "root_key",
+            "planned_ai_unit_id", "attempt_ordinal", "ok", "error_kind",
+            "provider_call_made", "http_status", "resolved_model",
+            "usage_status", "response_relative_path", "result",
+        }:
+            raise ValueError("provider terminal lacks a stable typed projection")
+        expected = (
+            PROVIDER_TERMINAL_SCHEMA_VERSION,
+            call_key,
+            list(getattr(context, "root_key", ())),
+            getattr(context, "planned_ai_unit_id", None),
+            getattr(context, "attempt_ordinal", None),
+        )
+        actual = (
+            document["schema_version"],
+            document["call_key"],
+            document["root_key"],
+            document["planned_ai_unit_id"],
+            document["attempt_ordinal"],
+        )
+        if actual != expected:
+            raise ValueError("provider terminal identity differs from request context")
+        result = document["result"]
+        if not isinstance(result, Mapping):
+            raise ValueError("provider terminal result must be an object")
+        projected = _provider_result_from_document(result)
+        if (
+            document["ok"] != projected.ok
+            or document["error_kind"] != projected.error_kind
+            or document["http_status"] != projected.http_status
+            or document["resolved_model"] != projected.resolved_model
+            or document["usage_status"] != projected.usage_status
+        ):
+            raise ValueError("provider terminal summary differs from typed result")
+        response_relative_path = document["response_relative_path"]
+        if response_relative_path is None:
+            return projected
+        if not isinstance(response_relative_path, str):
+            raise ValueError("provider terminal response path must be text or null")
+        response = self.read_relative_response(response_relative_path)
+        hydrated = replace(projected, raw_response_json=response.get("body"))
+        hydrated.validate()
+        return hydrated
+
     def write_response(self, call_key: str, value: Any) -> WriteDisposition:
         return _write_json(self.response_path(call_key), value)
+
+    def read_response(self, call_key: str) -> dict[str, Any]:
+        return _read_object(self.response_path(call_key))
 
     def read_relative_response(self, relative_path: str) -> dict[str, Any]:
         path = self.run_dir / Path(relative_path)
         if path.parent != self.run_dir / "responses" or path.suffix != ".json":
             raise ValueError("response relative path must identify a Slim response file")
         return _read_object(path)
+
+    def write_run_config(self, value: Mapping[str, Any]) -> WriteDisposition:
+        return _write_json(self.run_config_path(), dict(value))
+
+    def read_run_config(self) -> dict[str, Any]:
+        return _read_object(self.run_config_path())
+
+    def write_exp3_reference_result(
+        self, result: RootResultV1,
+    ) -> WriteDisposition:
+        result.validate()
+        if result.experiment_id != "exp3":
+            raise ValueError("Exp3 reference writer requires an Exp3 result")
+        document = asdict(result)
+        document["schema_version"] = ROOT_RESULT_SCHEMA_VERSION
+        return _write_json(
+            self.exp3_reference_result_path(
+                result.condition_id, result.case_id, result.repeat_id
+            ),
+            document,
+        )
 
     def _write_inventory(self, name: str, rows: Iterable[Any]) -> WriteDisposition:
         canonical = "".join(f"{_canonical_json(row)}\n" for row in rows)
@@ -530,6 +795,7 @@ def scan_resume(run_dir: str | Path) -> ResumeView:
 
 
 __all__ = [
-    "ResumeView", "RunStore", "SelectedTraceAttemptV1", "StorageConflictError",
+    "ProtocolSnapshotV1", "ResumeView", "RunStore", "SelectedTraceAttemptV1",
+    "StorageConflictError",
     "scan_resume", "select_trace_attempt",
 ]

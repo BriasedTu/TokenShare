@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 import os
+import ctypes
 from time import monotonic_ns
 from typing import Any
 import urllib.error
@@ -203,6 +204,8 @@ def call_provider_once(
         "provider_entry_id": entry.entry_id,
         "configured_model": entry.configured_model,
         "provider_request_started_at_utc": started,
+        "owner_pid": os.getpid(),
+        "owner_started_at_utc": started,
     }
     store.write_call_intent(context.call_key, intent)
 
@@ -279,12 +282,26 @@ def call_provider_once(
     try:
         body_value = json.loads(text)
     except json.JSONDecodeError:
-        store.write_response(context.call_key, {"http_status": status, "raw_text": text})
+        store.write_response(
+            context.call_key,
+            {
+                "http_status": status,
+                "raw_text": text,
+                "provider_latency_ms": _elapsed_ms(started_ns),
+            },
+        )
         return _finish_failure(
             store, context, entry, started, started_ns,
             "provider_envelope_invalid", "provider response is not valid JSON", status,
         )
-    store.write_response(context.call_key, {"http_status": status, "body": body_value})
+    store.write_response(
+        context.call_key,
+        {
+            "http_status": status,
+            "body": body_value,
+            "provider_latency_ms": _elapsed_ms(started_ns),
+        },
+    )
     if int(status or 0) < 400 and not _content_is_string(body_value):
         return _finish_failure(
             store, context, entry, started, started_ns,
@@ -342,7 +359,7 @@ def call_provider_once(
         usage_status=usage_status,
     )
     result.validate()
-    store.write_call_terminal(context.call_key, _terminal(context, result))
+    store.write_call_terminal(context.call_key, _terminal(store, context, result))
     return result
 
 
@@ -435,19 +452,265 @@ def _finish_failure(
         usage_status="usage_unavailable",
     )
     result.validate()
-    store.write_call_terminal(context.call_key, _terminal(context, result))
+    store.write_call_terminal(context.call_key, _terminal(store, context, result))
     return result
 
 
-def _terminal(context: ProviderCallContextV1, result: ProviderCallResultV1) -> dict[str, Any]:
+def _recovered_failure(
+    *,
+    entry: ProviderEntryViewV1,
+    started: str,
+    latency_ms: int | None,
+    kind: str,
+    message: str,
+    status: int | None,
+    raw_response: Any | None = None,
+    resolved_model: str | None = None,
+) -> ProviderCallResultV1:
+    result = ProviderCallResultV1(
+        ok=False,
+        content_text=None,
+        reasoning_content=None,
+        raw_response_json=raw_response,
+        prompt_tokens=None,
+        prompt_cache_hit_tokens=None,
+        prompt_cache_miss_tokens=None,
+        completion_tokens=None,
+        reasoning_tokens=None,
+        total_tokens=None,
+        provider_request_started_at_utc=started,
+        provider_latency_ms=latency_ms,
+        configured_model=entry.configured_model,
+        requested_model=entry.configured_model,
+        resolved_model=resolved_model,
+        provider_response_id=None,
+        finish_reason=None,
+        http_status=status,
+        error_kind=kind,
+        error_message=message,
+        usage_status="usage_unavailable",
+    )
+    result.validate()
+    return result
+
+
+def _pid_is_alive(pid: Any) -> bool:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        process_query_limited_information = 0x1000
+        still_active = 259
+        handle = ctypes.windll.kernel32.OpenProcess(
+            process_query_limited_information,
+            False,
+            pid,
+        )
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.GetExitCodeProcess(
+                handle,
+                ctypes.byref(exit_code),
+            ):
+                return False
+            return exit_code.value == still_active
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _intent_matches(
+    intent: dict[str, Any],
+    *,
+    entry: ProviderEntryViewV1,
+    context: ProviderCallContextV1,
+) -> bool:
+    return (
+        intent.get("call_key") == context.call_key
+        and intent.get("root_key") == list(context.root_key)
+        and intent.get("planned_ai_unit_id") == context.planned_ai_unit_id
+        and intent.get("attempt_ordinal") == context.attempt_ordinal
+        and intent.get("provider_family") == entry.provider_family
+        and intent.get("provider_entry_id") == entry.entry_id
+        and intent.get("configured_model") == entry.configured_model
+        and isinstance(intent.get("provider_request_started_at_utc"), str)
+    )
+
+
+def _recover_response_result(
+    *,
+    entry: ProviderEntryViewV1,
+    started: str,
+    response: dict[str, Any],
+) -> ProviderCallResultV1:
+    status = response.get("http_status")
+    latency = response.get("provider_latency_ms")
+    if isinstance(status, bool) or not isinstance(status, int):
+        raise ValueError("stored provider response lacks integer http_status")
+    if isinstance(latency, bool) or not isinstance(latency, int) or latency < 0:
+        raise ValueError("stored provider response lacks natural provider_latency_ms")
+    if "body" not in response:
+        return _recovered_failure(
+            entry=entry,
+            started=started,
+            latency_ms=latency,
+            kind="provider_envelope_invalid",
+            message="stored provider response is not valid JSON",
+            status=status,
+        )
+    body = response["body"]
+    text = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    if status < 400 and not _content_is_string(body):
+        return _recovered_failure(
+            entry=entry,
+            started=started,
+            latency_ms=latency,
+            kind="provider_envelope_invalid",
+            message="assistant message content must be a string",
+            status=status,
+        )
+    envelope = _ParserResponse(status_code=status, body=body, text=text)
+    try:
+        parsed = (
+            parse_deepseek_response(envelope)
+            if entry.provider_family == "deepseek"
+            else parse_siliconflow_response(envelope)
+        )
+    except Exception as exc:
+        error_kind = getattr(exc, "error_kind", None)
+        kind = (
+            str(error_kind)
+            if error_kind and error_kind != "invalid_output"
+            else "provider_envelope_invalid"
+        )
+        return _recovered_failure(
+            entry=entry,
+            started=started,
+            latency_ms=latency,
+            kind=kind,
+            message=str(exc),
+            status=status,
+        )
+    if (
+        parsed.response_model_status != "present"
+        or parsed.resolved_model != entry.configured_model
+    ):
+        return _recovered_failure(
+            entry=entry,
+            started=started,
+            latency_ms=latency,
+            kind="provider_model_mismatch",
+            message="provider resolved model differs from configured model",
+            status=status,
+            raw_response=body,
+            resolved_model=parsed.resolved_model,
+        )
+    try:
+        usage, usage_status = _usage(parsed.usage)
+    except ValueError as exc:
+        return _recovered_failure(
+            entry=entry,
+            started=started,
+            latency_ms=latency,
+            kind="provider_usage_invalid",
+            message=str(exc),
+            status=status,
+            raw_response=body,
+            resolved_model=parsed.resolved_model,
+        )
+    result = ProviderCallResultV1(
+        ok=True,
+        content_text=parsed.content_text,
+        reasoning_content=getattr(parsed, "reasoning_content", None),
+        raw_response_json=body,
+        **usage,
+        provider_request_started_at_utc=started,
+        provider_latency_ms=latency,
+        configured_model=entry.configured_model,
+        requested_model=entry.configured_model,
+        resolved_model=parsed.resolved_model,
+        provider_response_id=parsed.provider_response_id,
+        finish_reason=parsed.finish_reason,
+        http_status=status,
+        error_kind=None,
+        error_message=None,
+        usage_status=usage_status,
+    )
+    result.validate()
+    return result
+
+
+def recover_interrupted_call(
+    entry: ProviderEntryViewV1,
+    context: ProviderCallContextV1,
+    store: RunStore,
+) -> ProviderCallResultV1:
+    """只读既有 intent/response，绝不发送 provider 请求。"""
+
+    entry.validate()
+    context.validate()
+    intent = store.read_call_intent(context.call_key)
+    if not _intent_matches(intent, entry=entry, context=context):
+        raise StorageConflictError("provider intent identity/configuration differs")
+    if _pid_is_alive(intent.get("owner_pid")):
+        raise StorageConflictError(
+            f"provider call intent has an active owner: {context.call_key}"
+        )
+    started = str(intent["provider_request_started_at_utc"])
+    if store.response_path(context.call_key).is_file():
+        result = _recover_response_result(
+            entry=entry,
+            started=started,
+            response=store.read_response(context.call_key),
+        )
+    else:
+        result = _recovered_failure(
+            entry=entry,
+            started=started,
+            latency_ms=None,
+            kind="unknown_transport_outcome",
+            message="provider intent owner ended before a response was persisted",
+            status=None,
+        )
+    store.write_call_terminal(
+        context.call_key,
+        _terminal(store, context, result),
+    )
+    return result
+
+
+def _terminal(
+    store: RunStore,
+    context: ProviderCallContextV1,
+    result: ProviderCallResultV1,
+) -> dict[str, Any]:
+    projected = asdict(result)
+    projected["raw_response_json"] = None
     return {
+        "schema_version": "slim_v2.provider_terminal.v1",
         "call_key": context.call_key,
+        "root_key": list(context.root_key),
+        "planned_ai_unit_id": context.planned_ai_unit_id,
+        "attempt_ordinal": context.attempt_ordinal,
         "ok": result.ok,
         "error_kind": result.error_kind,
         "provider_call_made": result.error_kind != "provider_configuration_invalid",
         "http_status": result.http_status,
         "resolved_model": result.resolved_model,
         "usage_status": result.usage_status,
+        "response_relative_path": (
+            str(store.response_path(context.call_key).relative_to(store.run_dir))
+            if result.raw_response_json is not None
+            else None
+        ),
+        "result": projected,
     }
 
 
@@ -457,4 +720,5 @@ __all__ = [
     "RESPONSE_MAX_BYTES",
     "call_provider_once",
     "project_cost",
+    "recover_interrupted_call",
 ]

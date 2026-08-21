@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+from threading import BoundedSemaphore
+from time import time_ns
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 
-from tokenshare.core.models import ProtocolConfig
+from tokenshare.core.models import ArtifactRef, ProtocolConfig, TaskState, TaskUnit
+from tokenshare.executors.contracts import (
+    EnvironmentRef,
+    ExecutionRequest,
+)
 from tokenshare.local_runtime import (
     NoOpRuntimeHooks,
     ProtocolExecutionScope,
@@ -13,16 +24,55 @@ from tokenshare.local_runtime import (
     ProtocolRunCoordinator,
     ProtocolRunRequest,
     ProtocolRunResult,
+    SequentialWorkerBackend,
+    ThreadWorkerBackend,
     build_runtime_observation,
     project_protocol_run,
 )
 from tokenshare.protocol_engine import ProtocolEngine
+from tokenshare.plugins.factorization.runtime_adapter import (
+    FactorizationExecutionBridge,
+    FactorizationRuntimeAdapter,
+)
+from tokenshare.plugins.factorization.models import FactorSearchRangeInput
+from tokenshare.plugins.factorization.validator import verify_range_result
+from tokenshare.plugins.contracts import OutputContract
+from tokenshare.plugins.lean_proof.checker import (
+    LeanCheckerMode,
+    LeanCheckerRequest,
+    LeanCheckerStatus,
+    check_lean_proof,
+)
+from tokenshare.plugins.lean_proof.environment import LeanEnvironmentManifest
+from tokenshare.plugins.lean_proof.runtime_adapter import (
+    LeanExecutionBridge,
+    LeanRuntimeAdapter,
+)
+from tokenshare.plugins.lean_proof.prompt_builder import (
+    PROOF_CANDIDATE_OUTPUT_NAME,
+)
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType
 
 from .execution import ProviderSubmissionAdapter
-from .schema import UnitTraceV1
-from .storage import RunStore, scan_resume
+from .provider import (
+    ProviderCallContextV1,
+    call_provider_once,
+    recover_interrupted_call,
+)
+from .schema import (
+    ProviderCallResultV1,
+    ProviderEntryViewV1,
+    ProviderRequestControlV1,
+    RootResultV1,
+    UnitTraceV1,
+)
+from .storage import RunStore, StorageConflictError, scan_resume
+
+
+_REPO_ROOT = Path(__file__).parents[4]
+_LEAN_VERSION = "Lean (version 4.8.0, x86_64-w64-windows-gnu, commit df668f00e6c0, Release)"
+_LAKE_VERSION = "Lake version 5.0.0-df668f0 (Lean version 4.8.0)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,8 +268,35 @@ def materialize_protocol_traces(
     protocol_result: ProtocolRunResult,
     submission_adapter: ProviderSubmissionAdapter,
     event_ledger: EventLedger,
+    tail_requests: Mapping[str, Mapping[str, Any]] | None = None,
+    protocol_projection: RootResultV1 | None = None,
 ) -> tuple[UnitTraceV1, ...]:
     """终态后先冻结可重建 trace 的 protocol.json，再幂等物化 trace。"""
+
+    traces = _protocol_traces(
+        protocol_result=protocol_result,
+        submission_adapter=submission_adapter,
+        event_ledger=event_ledger,
+    )
+    store.write_root_protocol_snapshot(
+        *root_key,
+        protocol_result=asdict(protocol_result),
+        traces=traces,
+        tail_requests=tail_requests,
+        protocol_projection=protocol_projection,
+    )
+    for trace in traces:
+        store.write_trace(trace)
+    return traces
+
+
+def _protocol_traces(
+    *,
+    protocol_result: ProtocolRunResult,
+    submission_adapter: ProviderSubmissionAdapter,
+    event_ledger: EventLedger,
+) -> tuple[UnitTraceV1, ...]:
+    """从当前活跃 root 提取普通 protocol traces，但不决定写入顺序。"""
 
     if protocol_result.status not in {"completed", "failed"}:
         raise ValueError("protocol traces require a terminal root")
@@ -252,17 +329,6 @@ def materialize_protocol_traces(
         submission_adapter.build_trace(unit_id, trace_origin="protocol")
         for unit_id in planned
     )
-    store.write_root_protocol(
-        *root_key,
-        {
-            "schema_version": "slim_v2.protocol_material.v1",
-            "root_key": list(root_key),
-            "protocol_result": asdict(protocol_result),
-            "traces": [asdict(trace) for trace in traces],
-        },
-    )
-    for trace in traces:
-        store.write_trace(trace)
     return traces
 
 
@@ -393,7 +459,839 @@ def run_coverage_tail(
     )
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _clock_ms() -> int:
+    return time_ns() // 1_000_000
+
+
+def _root_key(context: Any) -> tuple[str, str, str, int]:
+    inventory = context.inventory
+    return (
+        str(inventory.experiment_id),
+        str(inventory.condition_id),
+        str(inventory.case_id),
+        int(inventory.repeat_id),
+    )
+
+
+def _root_run_id(context: Any) -> str:
+    experiment, condition, case_id, repeat_id = _root_key(context)
+    return (
+        f"{context.run_id}:{experiment}:{condition}:{case_id}:{repeat_id}"
+    )
+
+
+def _call_provider_with_resume(
+    entry: ProviderEntryViewV1,
+    prompt: str,
+    control: ProviderRequestControlV1,
+    context: ProviderCallContextV1,
+    store: RunStore,
+    *,
+    provider_call: Callable[..., ProviderCallResultV1] = call_provider_once,
+) -> ProviderCallResultV1:
+    """复用同 ordinal 的 typed terminal outcome；未知 intent 绝不重调。"""
+
+    if store.call_terminal_path(context.call_key).is_file():
+        try:
+            return store.read_provider_terminal_result(
+                context.call_key,
+                context=context,
+            )
+        except (TypeError, ValueError) as exc:
+            raise StorageConflictError(
+                "provider terminal is not reusable without a second call: "
+                f"{context.call_key}"
+            ) from exc
+    if store.call_intent_path(context.call_key).is_file():
+        return recover_interrupted_call(entry, context, store)
+    result = provider_call(entry, prompt, control, context, store)
+    if not isinstance(result, ProviderCallResultV1):
+        raise TypeError("provider caller must return ProviderCallResultV1")
+    result.validate()
+    try:
+        persisted = store.read_provider_terminal_result(
+            context.call_key,
+            context=context,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise StorageConflictError(
+            "provider caller returned without a reusable typed terminal: "
+            f"{context.call_key}"
+        ) from exc
+    if persisted != result:
+        raise StorageConflictError(
+            f"provider terminal differs from caller result: {context.call_key}"
+        )
+    return persisted
+
+
+def _provider_caller_for_experiment(
+    experiment_id: str,
+) -> Callable[..., ProviderCallResultV1]:
+    """为单个 root 创建共享 provider permit，不改变 worker backend capacity。"""
+
+    try:
+        permit = BoundedSemaphore({"exp1": 10, "exp5": 3}[experiment_id])
+    except KeyError as exc:
+        raise ValueError(f"experiment has no online provider: {experiment_id}") from exc
+
+    def provider_call_with_permit(
+        entry: ProviderEntryViewV1,
+        prompt: str,
+        control: ProviderRequestControlV1,
+        context: ProviderCallContextV1,
+        store: RunStore,
+    ) -> ProviderCallResultV1:
+        with permit:
+            return call_provider_once(entry, prompt, control, context, store)
+
+    def caller(
+        entry: ProviderEntryViewV1,
+        prompt: str,
+        control: ProviderRequestControlV1,
+        context: ProviderCallContextV1,
+        store: RunStore,
+    ) -> ProviderCallResultV1:
+        return _call_provider_with_resume(
+            entry,
+            prompt,
+            control,
+            context,
+            store,
+            provider_call=provider_call_with_permit,
+        )
+
+    return caller
+
+
+def _protocol_config(context: Any, system_dir: Path) -> ProtocolConfig:
+    artifact_dir = system_dir / "artifacts"
+    event_path = system_dir / "events.jsonl"
+    config = ProtocolConfig.default(
+        config_id="slim-v2-" + "-".join(str(item) for item in _root_key(context)),
+        artifact_store_uri=artifact_dir.resolve().as_uri(),
+        event_log_uri=event_path.resolve().as_uri(),
+        metadata={"slim_v2_profile_id": str(context.profile_id)},
+    )
+    return replace(
+        config,
+        max_retries=int(context.max_retries),
+        max_children_per_unit=max(
+            config.max_children_per_unit,
+            len(context.inventory.planned_ai_unit_ids),
+        ),
+        max_total_units=max(
+            config.max_total_units,
+            len(context.inventory.planned_ai_unit_ids) + 2,
+        ),
+    )
+
+
+def _lean_environment() -> LeanEnvironmentManifest:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    tools_root = (
+        Path(local_app_data) / "TokenShare" / "LeanToolchain"
+        if local_app_data
+        else Path.home() / "AppData" / "Local" / "TokenShare" / "LeanToolchain"
+    )
+    elan_bin = tools_root / "elan-home" / "bin"
+    lean = elan_bin / ("lean.exe" if os.name == "nt" else "lean")
+    lake = elan_bin / ("lake.exe" if os.name == "nt" else "lake")
+    project = _REPO_ROOT / "fixtures" / "lean_proof_project"
+    missing = [str(path) for path in (lean, lake) if not path.is_file()]
+    if missing:
+        raise RuntimeError("Lean runtime toolchain is unavailable: " + ", ".join(missing))
+    return LeanEnvironmentManifest.from_project(
+        project_root=project,
+        lean_executable=lean,
+        lake_executable=lake,
+        lean_version=_LEAN_VERSION,
+        lake_version=_LAKE_VERSION,
+        resource_limits={"timeout_seconds": 30, "max_output_bytes": 65536},
+        created_at=_utc_now(),
+    )
+
+
+def _plugin_runtime(
+    *,
+    context: Any,
+    protocol_config: ProtocolConfig,
+    provider_family: str,
+) -> object:
+    common = {
+        "provider_family": provider_family,
+        "seed": 20260820,
+        "protocol_config": protocol_config,
+        "created_at": _utc_now(),
+    }
+    if context.inventory.domain == "factorization":
+        return FactorizationRuntimeAdapter(**common)
+    if context.inventory.domain == "lean":
+        return LeanRuntimeAdapter(
+            **common,
+            environment_manifest=_lean_environment(),
+        )
+    raise ValueError(f"unsupported Slim V2 domain: {context.inventory.domain}")
+
+
+def _provider_entry(context: Any) -> ProviderEntryViewV1:
+    entry_id = str(context.inventory.provider_entry_id)
+    entry = context.provider_entries.get(entry_id)
+    if not isinstance(entry, ProviderEntryViewV1):
+        raise RuntimeError(f"provider entry is unavailable for root: {entry_id}")
+    entry.validate()
+    return entry
+
+
+def _reasoning_mode(entry: ProviderEntryViewV1) -> str:
+    overrides = dict(entry.request_overrides)
+    if entry.provider_family == "deepseek":
+        thinking = overrides.get("thinking")
+        return (
+            "thinking"
+            if isinstance(thinking, Mapping) and thinking.get("type") == "enabled"
+            else "nonthinking"
+        )
+    return "thinking" if overrides.get("enable_thinking") is True else "nonthinking"
+
+
+def _build_root_assembly(context: Any) -> RootAssembly:
+    """只为当前 root 创建一套 plugin/backend/store/ledger 对象。"""
+
+    key = _root_key(context)
+    system_dir = context.run_store.system_root_directory(*key)
+    artifact_dir = system_dir / "artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_store = ArtifactStore(system_dir)
+    event_ledger = EventLedger(system_dir / "events.jsonl")
+    protocol_config = _protocol_config(context, system_dir)
+    experiment_id = str(context.inventory.experiment_id)
+    provider_family = "siliconflow" if experiment_id == "exp5" else "deepseek"
+    plugin_runtime = _plugin_runtime(
+        context=context,
+        protocol_config=protocol_config,
+        provider_family=provider_family,
+    )
+
+    if experiment_id in {"exp1", "exp5"}:
+        entry = _provider_entry(context)
+        submission_adapter = ProviderSubmissionAdapter(
+            entry=entry,
+            artifact_store=artifact_store,
+            run_store=context.run_store,
+            root_key=key,
+            domain=str(context.inventory.domain),
+            caller=_provider_caller_for_experiment(experiment_id),
+        )
+        if isinstance(plugin_runtime, FactorizationRuntimeAdapter):
+            executor = FactorizationExecutionBridge(
+                plugin_runtime=plugin_runtime,
+                range_executor=submission_adapter,
+            )
+        elif isinstance(plugin_runtime, LeanRuntimeAdapter):
+            executor = LeanExecutionBridge(
+                plugin_runtime=plugin_runtime,
+                proof_candidate_executor=submission_adapter,
+            )
+        else:  # pragma: no cover - guarded by _plugin_runtime
+            raise TypeError("unsupported online plugin runtime")
+        worker_count = int(context.inventory.worker_count)
+        backend = (
+            SequentialWorkerBackend(executor=executor, submitted_at=_utc_now)
+            if worker_count == 1
+            else ThreadWorkerBackend(
+                executor=executor,
+                capacity=worker_count,
+                submitted_at=_utc_now,
+            )
+        )
+        return RootAssembly(
+            run_id=_root_run_id(context),
+            root_input=context.root_input,
+            protocol_config=protocol_config,
+            artifact_store=artifact_store,
+            event_ledger=event_ledger,
+            plugin_runtime=plugin_runtime,
+            worker_backend=backend,
+            now=_utc_now,
+            observation_clock=_utc_now,
+            mechanism_policy=ProtocolMechanismPolicy(
+                replacement_attempts_allowed=int(context.max_retries) > 0
+            ),
+            submission_adapter=submission_adapter,
+            continue_after_terminal_child_failure=bool(
+                context.continue_after_terminal_child_failure
+            ),
+        )
+
+    if experiment_id not in {"exp2", "exp3", "exp4"}:
+        raise ValueError(f"unsupported Slim V2 experiment: {experiment_id}")
+    if context.source_run_dir is None:
+        raise RuntimeError(f"{experiment_id} requires an explicit source run dir")
+    from .scenarios import build_scenario
+
+    scenario = build_scenario(
+        inventory=context.inventory,
+        root_input=context.root_input,
+        source_store=RunStore(context.source_run_dir),
+        artifact_store=artifact_store,
+        plugin_runtime=plugin_runtime,
+        protocol_config=protocol_config,
+        submitted_at=_utc_now,
+        challenge_plan=context.challenge_plan,
+    )
+    return RootAssembly(
+        run_id=_root_run_id(context),
+        root_input=context.root_input,
+        protocol_config=protocol_config,
+        artifact_store=artifact_store,
+        event_ledger=event_ledger,
+        plugin_runtime=plugin_runtime,
+        worker_backend=scenario.worker_backend,
+        now=_utc_now,
+        observation_clock=_utc_now,
+        mechanism_policy=scenario.mechanism_policy,
+        submission_adapter=scenario.submission_adapter,
+        hooks=scenario.hooks,
+        logical_scheduler=scenario.logical_scheduler,
+        trace_delay_policy="logical_source_latency_1x",
+        continue_after_terminal_child_failure=bool(
+            context.continue_after_terminal_child_failure
+        ),
+        scenario=scenario,
+    )
+
+
+def _online_resolved_model(adapter: ProviderSubmissionAdapter) -> str | None:
+    for outcome in reversed(adapter.outcomes):
+        if outcome.resolved_model is not None:
+            return outcome.resolved_model
+    return None
+
+
+def _task_unit_from_document(document: Mapping[str, Any]) -> TaskUnit:
+    expected = set(TaskUnit.__dataclass_fields__)
+    if set(document) != expected:
+        raise ValueError("invalid TaskUnit snapshot fields")
+    values = dict(document)
+    values["state"] = TaskState(values["state"])
+    for name in ("input_refs", "canonical_output_refs"):
+        refs = values[name]
+        if not isinstance(refs, Mapping):
+            raise ValueError(f"TaskUnit {name} must be an object")
+        values[name] = {
+            str(key): ArtifactRef.from_dict(value)
+            for key, value in refs.items()
+            if isinstance(value, Mapping)
+        }
+        if len(values[name]) != len(refs):
+            raise ValueError(f"TaskUnit {name} entries must be objects")
+    return TaskUnit(**values)
+
+
+def _planned_from_unit_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    domain: str,
+) -> str | None:
+    if domain == "factorization":
+        payload = snapshot.get("plugin_payload")
+        summary = payload.get("summary") if isinstance(payload, Mapping) else None
+        index = summary.get("child_index") if isinstance(summary, Mapping) else None
+        return f"range_{index}" if isinstance(index, int) and index >= 0 else None
+    metadata = snapshot.get("metadata")
+    logical_key = (
+        metadata.get("child_logical_key")
+        if isinstance(metadata, Mapping)
+        else None
+    )
+    return logical_key if isinstance(logical_key, str) and logical_key else None
+
+
+def _tail_requests_from_assembly(
+    *,
+    assembly: RootAssembly,
+    protocol_result: ProtocolRunResult,
+    domain: str,
+) -> dict[str, ExecutionRequest]:
+    observation = protocol_result.summary.get("runtime_observation")
+    unscheduled = (
+        observation.get("unscheduled_ai_unit_ids")
+        if isinstance(observation, Mapping)
+        else None
+    )
+    if not isinstance(unscheduled, (list, tuple)):
+        raise ValueError("protocol result lacks unscheduled identities")
+    targets = {
+        item for item in unscheduled if isinstance(item, str) and item
+    }
+    if len(targets) != len(unscheduled):
+        raise ValueError("protocol result has invalid unscheduled identities")
+    if not targets:
+        return {}
+    snapshots: dict[str, Mapping[str, Any]] = {}
+    for event in assembly.event_ledger.read_all():
+        if event.event_type != EventType.TASK_UNIT_CREATED:
+            continue
+        snapshot = event.payload.get("task_unit")
+        if not isinstance(snapshot, Mapping):
+            continue
+        planned = _planned_from_unit_snapshot(snapshot, domain=domain)
+        if planned in targets:
+            if planned in snapshots:
+                raise ValueError("duplicate task unit for coverage-tail target")
+            snapshots[planned] = snapshot
+    requests: dict[str, ExecutionRequest] = {}
+    for planned in sorted(targets):
+        snapshot = snapshots.get(planned)
+        if snapshot is None:
+            raise ValueError(f"coverage-tail target lacks a TaskUnit: {planned}")
+        unit = _task_unit_from_document(snapshot)
+        identity = "".join(
+            character if character.isalnum() else "_" for character in planned
+        )
+        created_at = _utc_now()
+        attempt = SimpleNamespace(
+            attempt_id=f"slim_tail_plan:{identity}:0",
+            client_id="slim-v2-coverage-tail",
+            created_at=created_at,
+            started_at=created_at,
+            attempt_ordinal=0,
+        )
+        lease = SimpleNamespace(
+            lease_id=f"slim_tail_lease:{identity}:0",
+            fencing_token=f"slim-tail:{identity}:0",
+            expires_at=created_at,
+        )
+        try:
+            request = assembly.plugin_runtime.build_execution_request(
+                unit,
+                attempt=attempt,
+                lease=lease,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"coverage-tail request cannot be built for {planned}: {exc}"
+            ) from exc
+        if not isinstance(request, ExecutionRequest):
+            raise TypeError("plugin runtime must build an ExecutionRequest")
+        hints = dict(request.soft_hints or {})
+        if hints.get("planned_ai_unit_id") != planned:
+            raise ValueError("coverage-tail request planned identity differs")
+        hints["replacement_slot"] = 0
+        requests[planned] = replace(
+            request,
+            attempt_ordinal=0,
+            soft_hints=hints,
+        )
+    return requests
+
+
+def _execution_request_from_document(
+    document: Mapping[str, Any],
+) -> ExecutionRequest:
+    expected = set(ExecutionRequest.__dataclass_fields__)
+    if set(document) != expected:
+        raise ValueError("invalid ExecutionRequest ordinary fields")
+    values = dict(document)
+    refs = values["input_artifact_refs"]
+    if not isinstance(refs, Mapping):
+        raise ValueError("ExecutionRequest input refs must be an object")
+    values["input_artifact_refs"] = {
+        str(key): ArtifactRef.from_dict(value)
+        for key, value in refs.items()
+        if isinstance(value, Mapping)
+    }
+    if len(values["input_artifact_refs"]) != len(refs):
+        raise ValueError("ExecutionRequest input refs must be ArtifactRef objects")
+    for name in (
+        "execution_instruction_ref",
+        "prompt_package_ref",
+    ):
+        value = values[name]
+        if value is not None:
+            if not isinstance(value, Mapping):
+                raise ValueError(f"ExecutionRequest {name} must be an ArtifactRef")
+            values[name] = ArtifactRef.from_dict(value)
+    environment = values["environment_ref"]
+    contract = values["output_contract"]
+    if not isinstance(environment, Mapping) or not isinstance(contract, Mapping):
+        raise ValueError("ExecutionRequest nested contracts must be objects")
+    values["environment_ref"] = EnvironmentRef(**dict(environment))
+    values["output_contract"] = OutputContract(**dict(contract))
+    return ExecutionRequest(**values)
+
+
+def _protocol_result_from_document(
+    document: Mapping[str, Any],
+) -> ProtocolRunResult:
+    run_id = document.get("run_id")
+    status = document.get("status")
+    summary = document.get("summary")
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or status not in {"completed", "failed"}
+        or not isinstance(summary, Mapping)
+    ):
+        raise ValueError("protocol snapshot result is not terminal/typed")
+    return ProtocolRunResult(
+        run_id=run_id,
+        task_id=(
+            document.get("task_id")
+            if isinstance(document.get("task_id"), str)
+            else None
+        ),
+        root_unit_id=(
+            document.get("root_unit_id")
+            if isinstance(document.get("root_unit_id"), str)
+            else None
+        ),
+        status=status,
+        summary=dict(summary),
+    )
+
+
+def _placeholder_tail(protocol_result: ProtocolRunResult) -> TailSummaryV1 | None:
+    observation = protocol_result.summary.get("runtime_observation")
+    targets = (
+        observation.get("unscheduled_ai_unit_ids")
+        if isinstance(observation, Mapping)
+        else None
+    )
+    if not isinstance(targets, list) or any(
+        not isinstance(item, str) or not item for item in targets
+    ):
+        raise ValueError("protocol result lacks typed tail targets")
+    if not targets:
+        return None
+    return TailSummaryV1(
+        0,
+        0,
+        0,
+        "pending_coverage_tail",
+        list(targets),
+        list(targets),
+        0,
+        len(targets),
+        len(targets),
+        None,
+        None,
+    )
+
+
+def _evaluate_tail_submission(
+    *,
+    domain: str,
+    artifact_store: ArtifactStore,
+    request: ExecutionRequest,
+    submission: Any,
+) -> dict[str, bool]:
+    if submission.result_kind != "succeeded":
+        return {"accepted": False, "reached_domain_check": False}
+    if domain == "factorization":
+        range_ref = request.input_artifact_refs.get("range_input")
+        candidate_ref = submission.candidate_output_refs.get("range_result")
+        if range_ref is None or candidate_ref is None:
+            return {"accepted": False, "reached_domain_check": False}
+        child = FactorSearchRangeInput(
+            **json.loads(artifact_store.read_bytes(range_ref).decode("utf-8"))
+        )
+        candidate = json.loads(
+            artifact_store.read_bytes(candidate_ref).decode("utf-8")
+        )
+        report = verify_range_result(candidate, child_input=child)
+        return {"accepted": bool(report.accepted), "reached_domain_check": True}
+    proof_ref = submission.candidate_output_refs.get(PROOF_CANDIDATE_OUTPUT_NAME)
+    theorem_ref = request.input_artifact_refs.get("lemma_theorem_payload")
+    if theorem_ref is None:
+        theorem_ref = request.input_artifact_refs.get("child_theorem_payload")
+    if proof_ref is None or theorem_ref is None:
+        return {"accepted": False, "reached_domain_check": False}
+    manifest = _lean_environment()
+    report = check_lean_proof(
+        LeanCheckerRequest(
+            request_id=f"tail-checker:{request.request_id}",
+            theorem_payload_ref=theorem_ref,
+            proof_candidate_ref=proof_ref,
+            environment_ref=request.environment_ref,
+            checker_mode=LeanCheckerMode.CHILD_PROOF,
+            timeout_seconds=int(request.limits.get("timeout_seconds", 30)),
+            max_output_bytes=65536,
+            created_at=_utc_now(),
+        ),
+        artifact_store=artifact_store,
+        environment_manifest=manifest,
+    )
+    return {
+        "accepted": report.status == LeanCheckerStatus.ACCEPTED,
+        "reached_domain_check": True,
+    }
+
+
+def _with_tail(result: RootResultV1, tail: TailSummaryV1) -> RootResultV1:
+    values = {
+        name: getattr(tail, name) for name in TailSummaryV1.__dataclass_fields__
+    }
+    projected = replace(result, **values)
+    projected.validate()
+    return projected
+
+
+def execute_root_context(context: Any) -> RootResultV1:
+    """CLI 生产 seam：唯一装配并运行一个 root，再冻结可恢复投影。"""
+
+    assembly = _build_root_assembly(context)
+    protocol_result = run_root_slice(assembly)
+    inventory = context.inventory
+    experiment_id = str(inventory.experiment_id)
+    scenario = assembly.scenario
+    tail_summary: TailSummaryV1 | None = None
+    from .projector import project_root_result
+
+    if isinstance(assembly.submission_adapter, ProviderSubmissionAdapter):
+        adapter = assembly.submission_adapter
+        if len(adapter.attempts) > int(context.protocol_execution_attempt_upper):
+            raise RuntimeError("protocol execution attempt cap exceeded")
+        if len(adapter.outcomes) > int(context.provider_call_upper):
+            raise RuntimeError("provider call cap exceeded")
+        entry = adapter.entry
+        requested_model = str(entry.configured_model)
+        resolved_model = _online_resolved_model(adapter)
+        provider_family = str(entry.provider_family)
+        reasoning_mode = _reasoning_mode(entry)
+        if experiment_id == "exp1":
+            traces = _protocol_traces(
+                protocol_result=protocol_result,
+                submission_adapter=adapter,
+                event_ledger=assembly.event_ledger,
+            )
+            condition_failure = protocol_result.summary.get(
+                "slim_condition_failure"
+            )
+            observation = protocol_result.summary.get("runtime_observation")
+            unscheduled = (
+                observation.get("unscheduled_ai_unit_ids", [])
+                if isinstance(observation, Mapping)
+                else []
+            )
+            target_requests = (
+                _tail_requests_from_assembly(
+                    assembly=assembly,
+                    protocol_result=protocol_result,
+                    domain=str(inventory.domain),
+                )
+                if condition_failure is None and unscheduled
+                else {}
+            )
+            placeholder = (
+                _placeholder_tail(protocol_result)
+                if condition_failure is None
+                else None
+            )
+            protocol_projection = project_root_result(
+                inventory=inventory,
+                assembly=assembly,
+                protocol_result=protocol_result,
+                provider_family=provider_family,
+                requested_model=requested_model,
+                resolved_model=resolved_model,
+                reasoning_mode=reasoning_mode,
+                attempts=adapter.attempts,
+                tail_summary=placeholder,
+            )
+            context.run_store.write_root_protocol_snapshot(
+                *_root_key(context),
+                protocol_result=asdict(protocol_result),
+                traces=traces,
+                tail_requests={
+                    name: request.to_dict()
+                    for name, request in target_requests.items()
+                },
+                protocol_projection=protocol_projection,
+            )
+            for trace in traces:
+                context.run_store.write_trace(trace)
+            if condition_failure is None and unscheduled:
+                tail_summary = run_coverage_tail(
+                    store=context.run_store,
+                    case_id=str(inventory.case_id),
+                    target_requests=target_requests,
+                    submission_adapter=adapter,
+                    evaluate_submission=lambda request, submission: (
+                        _evaluate_tail_submission(
+                            domain=str(inventory.domain),
+                            artifact_store=assembly.artifact_store,
+                            request=request,
+                            submission=submission,
+                        )
+                    ),
+                    clock_ms=_clock_ms,
+                    protocol_result=protocol_result,
+                )
+            if len(adapter.outcomes) > int(context.provider_call_upper):
+                raise RuntimeError("provider call cap exceeded after coverage tail")
+        attempts = adapter.attempts
+    else:
+        adapter = assembly.submission_adapter
+        provider_family = "deepseek"
+        requested_model = str(inventory.configured_model)
+        resolved_model = str(inventory.configured_model)
+        reasoning_mode = "thinking"
+        attempts = list(getattr(adapter, "attempts", ()))
+
+    result = project_root_result(
+        inventory=inventory,
+        assembly=assembly,
+        protocol_result=protocol_result,
+        provider_family=provider_family,
+        requested_model=requested_model,
+        resolved_model=resolved_model,
+        reasoning_mode=reasoning_mode,
+        attempts=attempts,
+        tail_summary=tail_summary,
+        scenario=scenario,
+    )
+    if experiment_id != "exp1":
+        context.run_store.write_root_protocol_snapshot(
+            *_root_key(context),
+            protocol_result=asdict(protocol_result),
+            traces=(),
+            tail_requests={},
+            protocol_projection=result,
+        )
+    return result
+
+
+def resume_exp1_root_context(
+    context: Any,
+    protocol: Mapping[str, Any],
+) -> RootResultV1:
+    """仅凭 typed ordinary facts 恢复 protocol→result 的最后提交窗口。"""
+
+    key = _root_key(context)
+    if key[0] != "exp1":
+        raise ValueError("protocol resume is only valid for Exp1")
+    snapshot = context.run_store.read_root_protocol_snapshot(*key)
+    if dict(protocol) != context.run_store.read_root_protocol(*key):
+        raise ValueError("protocol resume input differs from the ordinary snapshot")
+    for trace in snapshot.traces:
+        context.run_store.write_trace(trace)
+    base = snapshot.protocol_projection
+    if base is None:
+        raise RuntimeError("protocol snapshot lacks a typed base projection")
+    summary = snapshot.protocol_result.get("summary")
+    if isinstance(summary, Mapping) and "slim_condition_failure" in summary:
+        base.validate()
+        return base
+    protocol_result = _protocol_result_from_document(snapshot.protocol_result)
+    observation = protocol_result.summary.get("runtime_observation")
+    targets = (
+        observation.get("unscheduled_ai_unit_ids")
+        if isinstance(observation, Mapping)
+        else None
+    )
+    if not isinstance(targets, list):
+        raise ValueError("protocol snapshot lacks typed tail targets")
+    if not targets:
+        result = base
+    else:
+        requests = {
+            name: _execution_request_from_document(document)
+            for name, document in snapshot.tail_requests.items()
+        }
+        resume = scan_resume(context.run_store.run_dir)
+        pending = [
+            name
+            for name in targets
+            if (str(context.inventory.case_id), 0, name)
+            not in resume.trace_keys
+        ]
+        if pending:
+            entry = _provider_entry(context)
+        else:
+            entry = ProviderEntryViewV1(
+                provider_family="deepseek",
+                entry_id=str(base.provider_entry_id),
+                base_url="https://resume.invalid",
+                endpoint="/not-used",
+                api_key_env="SLIM_V2_RESUME_NOT_USED",
+                configured_model=str(base.configured_model),
+                request_overrides={},
+                supports_json_mode=True,
+            )
+        artifact_store = ArtifactStore(
+            context.run_store.system_root_directory(*key)
+        )
+        adapter = ProviderSubmissionAdapter(
+            entry=entry,
+            artifact_store=artifact_store,
+            run_store=context.run_store,
+            root_key=key,
+            domain=str(context.inventory.domain),
+            caller=_provider_caller_for_experiment("exp1"),
+        )
+        tail = run_coverage_tail(
+            store=context.run_store,
+            case_id=str(context.inventory.case_id),
+            target_requests=requests,
+            submission_adapter=adapter,
+            evaluate_submission=lambda request, submission: (
+                _evaluate_tail_submission(
+                    domain=str(context.inventory.domain),
+                    artifact_store=artifact_store,
+                    request=request,
+                    submission=submission,
+                )
+            ),
+            clock_ms=_clock_ms,
+            protocol_result=protocol_result,
+        )
+        result = _with_tail(base, tail)
+    if (
+        result.experiment_id,
+        result.condition_id,
+        result.case_id,
+        result.repeat_id,
+    ) != key:
+        raise ValueError("resumed RootResultV1 identity differs from CLI context")
+    result.validate()
+    return result
+
+
+def resume_root_context(
+    context: Any,
+    protocol: Mapping[str, Any],
+) -> RootResultV1:
+    """从普通 typed snapshot 恢复最后的 root-result 提交窗口。"""
+
+    key = _root_key(context)
+    if key[0] == "exp1":
+        return resume_exp1_root_context(context, protocol)
+    snapshot = context.run_store.read_root_protocol_snapshot(*key)
+    if dict(protocol) != context.run_store.read_root_protocol(*key):
+        raise ValueError("protocol resume input differs from the ordinary snapshot")
+    projection = snapshot.protocol_projection
+    if projection is None:  # pragma: no cover - storage contract rejects this first
+        raise RuntimeError("protocol snapshot lacks a typed projection")
+    if (
+        projection.experiment_id,
+        projection.condition_id,
+        projection.case_id,
+        projection.repeat_id,
+    ) != key:
+        raise ValueError("resumed RootResultV1 identity differs from CLI context")
+    projection.validate()
+    return projection
+
+
 __all__ = [
-    "RootAssembly", "TailSummaryV1", "materialize_protocol_traces",
+    "RootAssembly", "TailSummaryV1", "execute_root_context",
+    "materialize_protocol_traces", "resume_exp1_root_context",
+    "resume_root_context",
     "run_coverage_tail", "run_root_slice",
 ]
