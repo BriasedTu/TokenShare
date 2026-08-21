@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import datetime
 from math import isfinite
 from typing import Any
@@ -22,8 +22,8 @@ from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
 from tokenshare.plugins.lean_proof.schemas import PROOF_ARTIFACT_OUTPUT_NAME
 from tokenshare.storage.events import EventType
 
-from .runtime import RootAssembly
-from .schema import RootInventoryV1, RootResultV1, WorkerExecutionFactV1
+from .runtime import RootAssembly, TailSummaryV1
+from .schema import AttemptResultV1, RootInventoryV1, RootResultV1, WorkerExecutionFactV1
 
 
 class RootProjectionError(RuntimeError):
@@ -37,14 +37,16 @@ def project_root_result(
     protocol_result: ProtocolRunResult,
     provider_family: str,
     requested_model: str,
-    resolved_model: str,
+    resolved_model: str | None,
     reasoning_mode: str,
+    attempts: Sequence[AttemptResultV1] | None = None,
+    tail_summary: TailSummaryV1 | None = None,
 ) -> RootResultV1:
     """只读 join 当前 result、ledger/store 与插件领域事实。"""
 
     inventory.validate()
-    if inventory.experiment_id != "exp1":
-        raise RootProjectionError("Task 1 projector only supports Exp1 roots")
+    if inventory.experiment_id not in {"exp1", "exp5"}:
+        raise RootProjectionError("answer-path projector only supports Exp1/Exp5 roots")
     if protocol_result.run_id != assembly.run_id:
         raise RootProjectionError("protocol result run_id does not match assembly")
     observation = protocol_result.summary.get("runtime_observation")
@@ -52,6 +54,20 @@ def project_root_result(
         raise RootProjectionError("protocol result is missing runtime_observation")
     if observation.get("run_id") != assembly.run_id:
         raise RootProjectionError("runtime observation run_id does not match assembly")
+    condition_failure = protocol_result.summary.get("slim_condition_failure")
+    if condition_failure is not None:
+        if not isinstance(condition_failure, Mapping):
+            raise RootProjectionError("Slim condition failure must be an object")
+        if (
+            condition_failure.get("failure_stage") != "provider_call"
+            or condition_failure.get("failure_kind")
+            not in {
+                "provider_configuration_invalid",
+                "provider_journal_conflict",
+                "provider_model_mismatch",
+            }
+        ):
+            raise RootProjectionError("Slim condition failure identity is invalid")
 
     events = tuple(
         event
@@ -98,17 +114,23 @@ def project_root_result(
             failure_stage = "domain_root_recheck"
             failure_kind = "incorrect_final"
     else:
-        failure_stage = _natural_rejection_stage(
-            events=events,
-            protocol_result=protocol_result,
-        )
+        if condition_failure is not None:
+            if protocol_result.status != "failed":
+                raise RootProjectionError("condition failure requires a failed protocol root")
+            failure_stage = str(condition_failure["failure_stage"])
+            failure_kind = str(condition_failure["failure_kind"])
+        else:
+            failure_stage = _natural_rejection_stage(
+                events=events,
+                protocol_result=protocol_result,
+            )
+            failure_kind = "no_final"
         required_slot_count, recovered_slot_count = _failed_slot_counts(
             assembly=assembly,
             events=events,
         )
         final_result_present = False
         verified_correct = False
-        failure_kind = "no_final"
 
     root_start_at_ms = _timestamp_ms(
         observation.get("runtime_started_at"),
@@ -128,6 +150,94 @@ def project_root_result(
     ):
         raise RootProjectionError("runtime wall clock contradicts lifecycle boundaries")
 
+    planned_ai_unit_ids = _string_list(
+        observation.get("planned_ai_unit_ids"),
+        "planned_ai_unit_ids",
+    )
+    dispatched_ai_unit_ids = _string_list(
+        observation.get("dispatched_ai_unit_ids"),
+        "dispatched_ai_unit_ids",
+    )
+    completed_ai_unit_ids = _string_list(
+        observation.get("completed_ai_unit_ids"),
+        "completed_ai_unit_ids",
+    )
+    unscheduled_ai_unit_ids = _string_list(
+        observation.get("unscheduled_ai_unit_ids"),
+        "unscheduled_ai_unit_ids",
+    )
+    if inventory.experiment_id == "exp1":
+        if condition_failure is not None and tail_summary is not None:
+            raise RootProjectionError("condition-failed Exp1 root cannot carry a coverage tail")
+        if condition_failure is None and unscheduled_ai_unit_ids and tail_summary is None:
+            raise RootProjectionError(
+                "Exp1 unscheduled AI units require a completed coverage-tail summary"
+            )
+        tail = tail_summary or TailSummaryV1(
+            None, None, 0, "not_needed", [], [], 0, 0, 0, 0, 0.0
+        )
+        if (
+            condition_failure is None
+            and tail.trace_tail_target_ai_unit_ids != unscheduled_ai_unit_ids
+        ):
+            raise RootProjectionError(
+                "Exp1 tail targets must exactly equal protocol unscheduled AI units"
+            )
+        tail_values: dict[str, Any] = {
+            item.name: getattr(tail, item.name) for item in fields(TailSummaryV1)
+        }
+    else:
+        if tail_summary is not None:
+            raise RootProjectionError("Exp5 cannot carry a coverage tail")
+        tail_values = {
+            "trace_tail_started_at_ms": None,
+            "trace_tail_terminal_at_ms": None,
+            "trace_tail_wall_clock_ms": None,
+            "trace_tail_status": None,
+            "trace_tail_target_ai_unit_ids": None,
+            "trace_tail_recorded_ai_unit_ids": None,
+            "trace_tail_success_unit_count": None,
+            "trace_tail_failure_unit_count": None,
+            "trace_tail_provider_attempt_count": None,
+            "trace_tail_total_tokens": None,
+            "trace_tail_cost_estimate_cny": None,
+        }
+
+    canonical_attempt_ids = {
+        attempt_id
+        for event in events
+        if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+        and isinstance((attempt_id := event.payload.get("selected_attempt_id")), str)
+    }
+    verification_status = {
+        attempt_id: status
+        for event in events
+        if event.event_type == EventType.VERIFICATION_RECORDED
+        and isinstance((attempt_id := event.payload.get("attempt_id")), str)
+        and isinstance((status := event.payload.get("status")), str)
+    }
+    projected_attempts = []
+    fact_field = "verifier_result" if inventory.domain == "factorization" else "checker_result"
+    reason_key = f"attempts[].{fact_field}"
+    for attempt in attempts or ():
+        status = verification_status.get(str(attempt.attempt_id))
+        projected = replace(
+            attempt,
+            canonical_accepted=attempt.attempt_id in canonical_attempt_ids,
+            **({fact_field: status} if status is not None else {}),
+        )
+        if status is not None:
+            projected = replace(
+                projected,
+                missing_reason={
+                    key: value
+                    for key, value in projected.missing_reason.items()
+                    if key != reason_key
+                },
+            )
+        projected_attempts.append(projected)
+    for attempt in projected_attempts:
+        attempt.validate(experiment_id=str(inventory.experiment_id))
     values: dict[str, Any] = {
         "experiment_id": inventory.experiment_id,
         "condition_id": inventory.condition_id,
@@ -157,18 +267,7 @@ def project_root_result(
         "root_start_at_ms": root_start_at_ms,
         "root_terminal_at_ms": root_terminal_at_ms,
         "runtime_wall_clock_ms": runtime_wall_clock_ms,
-        # coverage tail 在 Task 3 才执行；Task 1 明确投影为无目标。
-        "trace_tail_started_at_ms": None,
-        "trace_tail_terminal_at_ms": None,
-        "trace_tail_wall_clock_ms": 0,
-        "trace_tail_status": "not_needed",
-        "trace_tail_target_ai_unit_ids": [],
-        "trace_tail_recorded_ai_unit_ids": [],
-        "trace_tail_success_unit_count": 0,
-        "trace_tail_failure_unit_count": 0,
-        "trace_tail_provider_attempt_count": 0,
-        "trace_tail_total_tokens": 0,
-        "trace_tail_cost_estimate_cny": 0,
+        **tail_values,
         "preflight_status": "passed",
         "protocol_started": True,
         "root_status": protocol_result.status,
@@ -176,22 +275,10 @@ def project_root_result(
         "verified_correct": verified_correct,
         "failure_stage": failure_stage,
         "failure_kind": failure_kind,
-        "planned_ai_unit_ids": _string_list(
-            observation.get("planned_ai_unit_ids"),
-            "planned_ai_unit_ids",
-        ),
-        "dispatched_ai_unit_ids": _string_list(
-            observation.get("dispatched_ai_unit_ids"),
-            "dispatched_ai_unit_ids",
-        ),
-        "completed_ai_unit_ids": _string_list(
-            observation.get("completed_ai_unit_ids"),
-            "completed_ai_unit_ids",
-        ),
-        "unscheduled_ai_unit_ids": _string_list(
-            observation.get("unscheduled_ai_unit_ids"),
-            "unscheduled_ai_unit_ids",
-        ),
+        "planned_ai_unit_ids": planned_ai_unit_ids,
+        "dispatched_ai_unit_ids": dispatched_ai_unit_ids,
+        "completed_ai_unit_ids": completed_ai_unit_ids,
+        "unscheduled_ai_unit_ids": unscheduled_ai_unit_ids,
         "in_flight_ai_unit_ids_at_witness": _string_list(
             observation.get("in_flight_ai_unit_ids_at_witness"),
             "in_flight_ai_unit_ids_at_witness",
@@ -205,8 +292,7 @@ def project_root_result(
         ),
         "required_slot_count": required_slot_count,
         "recovered_valid_canonical_slot_count": recovered_slot_count,
-        # attempt/provider materialization 属于 Task 2/3。
-        "attempts": [],
+        "attempts": projected_attempts,
         "fault_target_planned_ai_unit_ids": None,
         "fault_target_count": None,
         "fault_observations": [],
@@ -214,10 +300,16 @@ def project_root_result(
         "worker_death_observations": [],
         "challenge_observations": [],
         "ablation_observations": [],
-        "missing_reason": {},
+        "missing_reason": (
+            {"resolved_model": "model_resolution_not_reached"}
+            if resolved_model is None
+            else {}
+        ),
         "not_applicable_reason": {},
     }
     values["not_applicable_reason"] = _null_reasons(values)
+    for field_name in values["missing_reason"]:
+        values["not_applicable_reason"].pop(field_name, None)
     projected = RootResultV1(**values)
     projected.validate()
     return projected
@@ -602,7 +694,7 @@ def _null_reasons(values: Mapping[str, Any]) -> dict[str, str]:
         elif item.name == "topic_family":
             reasons[item.name] = "not_applicable_to_factorization"
         else:
-            reasons[item.name] = "not_applicable_to_exp1_task1_projection"
+            reasons[item.name] = "not_applicable_to_answer_path_projection"
     return reasons
 
 

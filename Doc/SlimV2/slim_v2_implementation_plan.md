@@ -473,6 +473,15 @@ fake transport下Exp1/5两领域均完成生产路径；每个Exp1 planned unit�
 
 不调用真实provider，不实现selector、预算、response bank、hard deadline child或独立answer service。
 
+**Task 3完成证据与独立review（2026-08-21）**：
+
+- 新增`provider.py/execution.py`并校准`runtime.py/storage.py/projector.py`：DeepSeek与SiliconFlow共用显式`ProviderCallContextV1 + RunStore`的single-attempt caller，send前写intent，response最多读取16 MiB+1且全路径关闭；response/terminal、model/usage与冻结价格均为普通事实，没有内部retry、第二store、selector或transport fallback。Exp1控制固定为`600s/300000`，Exp5固定为`600s/32768`。
+- `ProviderSubmissionAdapter`经公共`ExecutionSubmission`、Factorization/Lean parser与真实bridge/checker跑完整root；`FixedTraceSubmissionAdapter`只消费typed Exp1 trace并实现exact/last-natural-attempt fallback，transport spy保持0。配置、模型身份或journal条件错误sticky后不重复caller/provider/journal；若root已经启动，现有coordinator仍返回terminal failed result，projector必须落`protocol_started=true, final_result_present=false, verified_correct=false`的失败行，保证任何已启动但无结果的题仍进入固定正确率分母。停止后续condition roots留给Task 6编排。
+- Exp1先原子写包含完整protocol-origin trace重建素材的`protocol.json`，再幂等物化protocol traces；coverage tail强制读取terminal `ProtocolRunResult`的typed `unscheduled_ai_unit_ids`，只调用缺trace key的unit。tail attempt时间写入既有typed trace，resume从全部已落coverage-tail traces重建完整target、recorded、success/failure、attempt/token/cost与原始时间边界，不创建checkpoint或第二状态。正文root status、正确性、runtime与protocol bytes不受tail影响。Exp5四个冻结SiliconFlow entry走同一caller，`max_retries=0`、零replacement且不运行tail。
+- 风险驱动fail-first依次捕获缺provider/execution模块、配置错误越过condition边界、tail语义/恢复target不一致、冻结controls缺失、tail timing未持久化及已启动失败root不可投影；所有范围内Critical/Important均由原实现者修复。`test_system_vertical.py`仅把Task 1 Factorization fixture改为第三range终止，使无tail纵链诚实保持`unscheduled=[]`；Task 3的91/8..9 tail fixture独立拥有自身语义。
+- spec reviewer最终独立复跑为`22 passed in 26.61s`，结论`SPEC_COMPLIANT`且`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；implementation-quality reviewer最终独立复跑为`22 passed in 28.88s`，结论`APPROVED`且`Critical/Important/Minor=0/0/0`。shared interface gap=`none`。
+- owner最终fresh focused使用进程级`PYTHONPATH=src`复跑既定两文件命令为`22 passed in 26.63s`；当前conda环境未editable-install本仓库，裸命令会在collection前报`ModuleNotFoundError: tokenshare`，未为此修改共享环境或conftest。scoped compile、禁止依赖扫描与`git diff --check`均通过；provider/network=`0/0`。未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
+
 ### Task 4 Experiment 2–4 系统场景路径
 
 #### 1. 目标结果/可运行切片

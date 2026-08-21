@@ -298,6 +298,13 @@ class RunStore:
             protocol,
         )
 
+    def read_root_protocol(
+        self, experiment_id: str, condition_id: str, case_id: str, repeat_id: int,
+    ) -> dict[str, Any]:
+        return _read_object(
+            self.root_protocol_path(experiment_id, condition_id, case_id, repeat_id)
+        )
+
     def write_trace(self, trace: UnitTraceV1) -> WriteDisposition:
         trace.validate()
         return _write_json(
@@ -319,6 +326,12 @@ class RunStore:
 
     def write_response(self, call_key: str, value: Any) -> WriteDisposition:
         return _write_json(self.response_path(call_key), value)
+
+    def read_relative_response(self, relative_path: str) -> dict[str, Any]:
+        path = self.run_dir / Path(relative_path)
+        if path.parent != self.run_dir / "responses" or path.suffix != ".json":
+            raise ValueError("response relative path must identify a Slim response file")
+        return _read_object(path)
 
     def _write_inventory(self, name: str, rows: Iterable[Any]) -> WriteDisposition:
         canonical = "".join(f"{_canonical_json(row)}\n" for row in rows)

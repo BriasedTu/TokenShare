@@ -258,7 +258,7 @@ def test_factorization_root_runs_once_through_real_system_vertical_and_projects_
 
     assert calls == ["task1_factorization_root"]
     assert protocol_result.status == "completed"
-    assert len(fake.requests) == 2
+    assert len(fake.requests) == 3
     events = ledger.read_all()
     _assert_protocol_chain(
         events,
@@ -286,9 +286,9 @@ def test_factorization_root_runs_once_through_real_system_vertical_and_projects_
     assert root_result.final_result_present is True
     assert root_result.verified_correct is True
     assert root_result.planned_ai_unit_ids == ["range_0", "range_1", "range_2"]
-    assert root_result.dispatched_ai_unit_ids == ["range_0", "range_1"]
-    assert root_result.completed_ai_unit_ids == ["range_0", "range_1"]
-    assert root_result.unscheduled_ai_unit_ids == ["range_2"]
+    assert root_result.dispatched_ai_unit_ids == ["range_0", "range_1", "range_2"]
+    assert root_result.completed_ai_unit_ids == ["range_0", "range_1", "range_2"]
+    assert root_result.unscheduled_ai_unit_ids == []
     assert root_result.runtime_wall_clock_ms == 0
     assert root_result.attempts == []
 
@@ -591,18 +591,17 @@ def _config(domain: str) -> ProtocolConfig:
 def _factorization_case() -> dict[str, object]:
     return {
         "schema_version": "tokenshare.paper_factorization_case.v1",
-        "case_id": "task1_factor_91",
+        "case_id": "task1_factor_169",
         "difficulty": "easy",
-        "target_n": "91",
+        "target_n": "169",
         "candidate_start": "2",
-        "candidate_end": "9",
+        "candidate_end": "13",
         "split_params": {
             "strategy_id": "factorization.candidate_range_partition.v1",
             "requested_child_count": 3,
         },
         "oracle_prime_factors": [
-            {"prime": "7", "exponent": 1},
-            {"prime": "13", "exponent": 1},
+            {"prime": "13", "exponent": 2},
         ],
     }
 
