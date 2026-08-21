@@ -240,7 +240,7 @@ Experiment 2 只对既有 50 个 Factorization hard cases 和两次 trace replay
 - **0%**：不形成 Experiment 3 condition；使用相同 `case_id` 的无故障配对 reference。
 - **worker**：rate-fault、无故障 reference 与 worker-death conditions 均为 `worker_count=10`；worker 数不是 Experiment 3 的变量。
 - **worker death**：同一 50 Factorization + 3 Lean roots；`worker_count=10`，`dead_worker_count∈{1,3}`，kill progress=`25/50/75%`，2 repeats。
-- **规模**：rate-fault 3,090 + worker-death 636 = 3,726 root-runs；17,148 planned first-attempt AI units；54,372 protocol execution-attempt upper bound；Experiment 3 当前真实 provider calls 固定为 0。
+- **规模**：rate-fault 3,090 + worker-death 636 = 3,726 root-runs。当前冻结inventory中rate-fault为13,920、worker-death为2,808个planned first-attempt AI units，合计16,728。protocol execution-attempt upper bound保留worker-death被终止execution的额外headroom，固定按`3×rate_planned + 4×death_planned = 3×13,920 + 4×2,808 = 52,992`逐root派生；不得用陈旧总量硬覆盖或退化为`3×total_planned`。Experiment 3 当前真实 provider calls 固定为 0。
 - **provider/model**：回答来自 Experiment 1 正常协议或 coverage-tail traces；reference、fault、worker-death 与 replacement attempts 均按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 精确匹配。当前 ordinal 存在则精确读取，不存在则读取最后一个已有自然 ordinal；Experiment 3 的 `repeat_id` 不改变来源 trace，扰动身份仍使用当前 ordinal。
 - **grouping**：`fault_type × fault_rate × domain × difficulty/topic × repeat`，或 `dead_worker_count × kill_progress × domain × repeat`；不同 fault 不合并计算 replacement 成功率。
 
@@ -436,7 +436,7 @@ challenge plan 在展开 mode 之前，按 `(case_id, repeat_id)` 生成；`chal
   - Lean 45 个 root-repeat cells：`11/11/11/12`；
   - 总计 195 个 paired challenge plans：`49/49/48/49`。
 - **跨 mode 等同**：一个 paired challenge plan 在 11 个 mode 中复用；因此每个 mode 每 3 repeats 仍是 195 root-runs，每个 challenge family 在每个 mode 中分别有 `49/49/48/49` 个固定分母 roots。
-- **总规模**：`11 modes × 3 repeats × 65 roots = 2,145 root-runs`；`9,702` planned first-attempt AI units。7 个不含 `{R}` 的 mode 允许每 unit 最多 2 attempts，4 个含 `{R}` 的 mode 最多 1 attempt，所以 protocol execution-attempt upper bound 为 `7×3×294×2 + 4×3×294 = 15,876`。Experiment 4 provider calls 仍为 0。
+- **总规模**：`11 modes × 3 repeats × 65 roots = 2,145 root-runs`；当前冻结inventory每个mode/repeat为`293`个planned units，合计`11×3×293=9,669` planned first-attempt AI units。7 个不含 `{R}` 的 mode 允许每 unit 最多 2 attempts，4 个含 `{R}` 的 mode 最多 1 attempt，所以 protocol execution-attempt upper bound 为 `7×3×293×2 + 4×3×293 = 15,822`。Experiment 4 provider calls 仍为 0。
 - **grouping**：最小正文报告按 `mode × challenge_family × domain`；difficulty/topic 与 repeat 保留为分层表。FULL 配对和交互分析按完全相同的 `case_id × repeat_id × challenge_plan_id`。
 
 ### 5.6 两种 BLOCK 与科学有效性

@@ -1,1264 +1,676 @@
 ---
 status: approved_under_user_delegation
 document: slim_v2_implementation_plan
-scope: Slim V2 implementation and offline focused verification
-owner: Stage 2 implementation plan owner
+scope: Slim V2 system assembly and offline focused verification
+owner: Stage 2 blueprint rewrite owner
 created: 2026-08-21
 last_updated: 2026-08-21
 run_scope: representative_only
 ---
 
-# TokenShare Slim V2 Implementation Plan
+# TokenShare Slim V2 实施蓝图
 
-> **Stage 2一致性勘误（2026-08-21，用户已确认）：** 保持四个representative case IDs和当前catalog不变；`lean_v2_simple_induction_direct_nat_01`按公共fixed plan的1个planned AI unit执行。Representative Exp1为19个planned units、真实call hard cap 57；加Exp5的32后总hard cap为89。该修正只更正派生文档常量，不改变数据集、实验变量、runner或shared接口。
+本计划取代旧横向微任务工作分解。实施以六个风险驱动纵向里程碑推进，每个里程碑都交付一条可运行切片；测试只证明高风险业务行为和跨模块合同，不为内部 helper、DTO、配置或覆盖率制造施工步骤。
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` to execute this plan task-by-task. Stage 3 必须为每个 task 使用新的实现子 Agent，严格串行；每个实现完成后再依次使用新的 spec reviewer 与 code-quality reviewer。所有步骤用 checkbox（`- [ ]`）追踪。
+冻结勘误已经纳入本计划：Representative Experiment 1 为 19 planned units、真实调用上限 57，Experiment 5 上限 32，总上限 89。Full Experiment 3 为 rate 13,920、worker death 2,808、合计 16,728 planned units，attempt upper 为 `3×13,920 + 4×2,808 = 52,992`；其 106 个辅助 references 的 planned/upper 固定为 468/1,404。Full Experiment 4 每 mode/repeat 293 units、合计 9,669，attempt upper 为 15,822。其余 case IDs、root/condition 数、153 个 metric IDs、实验变量和 `run_scope` 不变。所有 planned/upper 值在运行时仍必须由逐 root inventory 求和，不用这些摘要常量覆盖实际 profile。
 
-**Goal:** 在不修改 shared code、不调用真实 provider、不运行 representative/full 的前提下，按已批准设计实现同一条可供 representative 与 full 共用的 Slim V2 管线，并完成离线/focused verification。
+## 1. 目标、范围和非目标
 
-**Architecture:** 冻结 profile 产生普通 inventory；唯一 root runner 串行调用现有 `ProtocolRunCoordinator.run_root()`；Experiment 1/5 使用 single-entry bounded caller，Experiment 2–4 使用严格三元键 fixed trace；Slim-local projector/sink 增量落盘；reducer 只读单个普通 run 目录。所有新增 runtime code 位于 `src/tokenshare/experiments/slim_v2/`，shared core/local_runtime/plugin/executor/storage 保持只读。
+目标只有一个：用最少的新代码，让冻结 Experiment 1–5 真实经过现有 TokenShare 系统本体、Factorization/Lean 插件和 checker，增量保存权威指标所需的普通数据，并由单一 reducer 生成结果。
 
-**Tech Stack:** Python 3、pytest、现有 TokenShare public runtime/Factorization/Lean adapters、urllib provider transport shape、JSON/JSONL/CSV、普通文件原子 replace。
+实施范围：
 
----
+- 每个论文 root 在正常执行中精确调用一次 `ProtocolRunCoordinator.run_root()`；
+- Factorization 与 Lean 都通过现有 domain runtime/bridge、worker backend、`ProtocolEngine`、`EventLedger` 和 `ArtifactStore`；
+- Experiment 1/5 使用同一 single-entry bounded provider caller；Experiment 2–4 只读 Experiment 1 trace，provider calls 固定为 0；
+- 每个 root 串行，root 内并发由现有 worker backend 承担；
+- 用普通原子 root/trace 文件和最小 provider terminal journal 支持恢复和防重复付费；
+- reducer 只读一个 run 目录，输出指标权威冻结的 153 个 metric IDs；
+- `representative` 与 `full` 使用完全相同的入口、装配、schema、恢复和 reducer。
 
-## 0. 执行边界与统一工作法
+明确非目标：
 
-### 0.1 权威与禁止项
+- 不复制或改写协议状态机、event ledger、artifact store、worker、recovery、canonical、merge、settlement 或领域 checker；
+- 不建立 Slim task/attempt/retry/root 状态机、通用 workflow framework、service、daemon、HTTP API、数据库 authority 或插件框架；
+- 不引入 budget、receipt、digest/lineage、evidence closure、response-bank authority、publication gate、paper eligibility；
+- 不修改 shared core/local_runtime/plugin/executor，除非后续出现可复现的公共接口缺口并按接力协议取得授权；
+- 不把 Thread 尚未证明解释成 Thread 已损坏；不把 bounded-process facade 当成默认建设项；
+- 不运行真实 provider、representative/full、Lean 专项 suite、LeanAudit、全量 catalog、`lake` 或 `lean` 作为本实施阶段的验证；
+- 不防御设计宪章第 0.1 节排除的人为伪造、恶意篡改、注入、恶意 provider/plugin 或攻击者模型。
 
-实施优先级固定为：指标权威决定实验/字段/公式；接线合同决定公共接口；设计规格决定架构、schema、profiles、恢复和资源语义；复用清单只给定点参考。实现不得重新引入 budget authority、receipt、digest/lineage closure、response-bank authority、publication gate、paper eligibility、selection digest、prepared identity、hard-deadline child gate或旧 runner/pipeline。
+## 2. 最终文件树、运行目录和公开入口
 
-受信本地研究边界继续适用。基于人为伪造、手工篡改、路径/链接/SQL/JSON/prompt/命令注入、恶意 plugin/executor/provider envelope、签名鉴权、权限或 security fuzzing 的审查意见必须标记 `out_of_scope_by_user` 并拒绝实施；Experiment 3/4 的冻结 fault/challenge 不扩张成安全平台。
+最终源码保持为一个薄实验包；已有文件优先校准，只有纵向闭环确实需要时才创建新文件。
 
-冻结source key精确为`case_id × source_repeat_id=0 × planned_ai_unit_id`；下游`repeat_id`、condition、worker、fault、mode和当前ordinal均不进入key。恢复中真实attempt的未知终态枚举精确为`unknown_transport_outcome`，同一ordinal禁止盲目重调。
+```text
+src/tokenshare/experiments/slim_v2/
+├── __init__.py       # 公开版本和少量稳定导出
+├── schema.py         # 冻结 inventory/result/trace/call 普通数据合同
+├── case_source.py    # 当前 catalog 的 UTF-8 读取与显式 ID 选择
+├── profiles.py       # full/representative 冻结 inventory 与逐 root plan 派生
+├── storage.py        # run 目录、原子 root/trace、terminal-call journal、resume 扫描
+├── provider.py       # single-entry bounded call、usage/model、冻结价格投影
+├── execution.py      # provider/fixed answer 到公共 ExecutionSubmission 的薄适配
+├── scenarios.py      # Exp2 scheduler、Exp3 hooks/death、Exp4 policy/challenge
+├── runtime.py        # 每 root 公共对象装配、唯一 run_root 调用、Exp1 tail
+├── projector.py      # 只读公共事实并生成 RootResultV1
+├── reducer.py        # 流式统计内核和 Exp1–5 全部表
+└── cli.py            # plan/run/run-all/reduce/representative 原子入口
 
-### 0.2 每个 task 的固定执行循环
+tests/experiments/slim_v2/
+├── fixtures/                    # 小型 Factorization、Lean fixed-DAG、provider、golden run
+├── test_schema.py               # 已有 schema 合同，Task 2 校准
+├── test_case_source.py          # 已有 catalog/ID 合同
+├── test_profiles.py             # 已有 profile/inventory/派生上限
+├── test_cli_plan.py             # 已有只读 plan
+├── test_system_vertical.py      # Task 1 两领域真实系统纵链
+├── test_answer_paths.py         # Task 3 provider/fixed/tail/Exp5
+├── test_scenarios.py            # Task 4 Exp2–4、Thread/Process
+├── test_reducer_golden.py       # Task 5 153 IDs 与统计 golden
+└── test_cli_e2e.py              # Task 6 全离线原子命令/resume
+```
 
-每个 task 都按以下顺序执行，不跨 task 合并：
+允许在实施中合并重复测试或把 fixture 移到同目录，但不得为测试计数拆文件。若一个候选模块只有一个调用点且不能证明单一职责，优先并入上述拥有者，不新增文件。
 
-1. Stage 3 owner 在 `progress.md` 顶部写当前 task、允许写入文件和预期 failing test；
-2. 新实现子 Agent只接收该 task 的自包含 prompt，并完整加载 `pua:pua`；
-3. 只写本 task 点名测试，运行“先失败命令”并保存真实失败摘要；
-4. 只写本 task 点名实现，运行“通过命令”；
-5. 新 spec reviewer只读核对本 task 对应设计/权威条款；
-6. 新 code-quality reviewer只读核对实现质量、资源生命周期和范围；
-7. owner统一修复范围内发现并 fresh 复跑通过命令；
-8. owner检查 `git diff --check`、本 task diff和工作树，只提交本 task允许文件；
-9. 在本计划 task evidence 表和 `progress.md` 顶部写命令、exit code、pass数、review结论与上一步implementation commit SHA，再创建仅含这两个证据文件的独立evidence commit；不得amend实现commit后留下递归失效SHA。
+最终 run 目录：
 
-任一task发现必须修改shared code，立即暂停相关改动并按relay第7.1节执行三名独立reviewer代理授权法定人数，不用“临时补丁”绕过，也不询问用户。测试默认不得运行Lean专项suite、LeanAudit、全量Lean catalog、`lake`/`lean`回归；Lean接线仅用fake checker、固定lemma-DAG fixture与静态合同。Stage 3不加载真实API secret，不启动真实provider、representative或full。
+```text
+TokenShareData/outputs/slim_v2/<run_id>/
+├── run.json
+├── inventory/
+│   ├── conditions.jsonl
+│   ├── roots.jsonl
+│   ├── exp3_references.jsonl
+│   └── exp4_challenges.jsonl
+├── system/<experiment>/<root_key>/
+│   ├── events.jsonl
+│   └── artifacts/...
+├── roots/<experiment>/<root_key>/
+│   ├── protocol.json             # run_root 返回后的不可变普通投影
+│   └── result.json               # tail/投影完成后的 committed root
+├── traces/exp1/<case_id>/0/<planned_ai_unit_id>.json
+├── calls/<call_key>.intent.json
+├── calls/<call_key>.terminal.json
+├── responses/<call_key>.json
+├── references/exp3/<root_key>.json
+└── metrics/
+    ├── tables/*.jsonl
+    ├── tables/*.csv
+    └── summary.json
+```
 
-### 0.3 允许写入范围
+`system/` 是现有系统本体自己的 event/artifact 存储，不是 Slim journal，reducer 不读取。`protocol.json`必须包含从公共结果/ledger/store投影出的全部 protocol-origin unit 普通attempt与领域语义快照，使resume可以幂等重建缺失trace文件；它不是协议checkpoint或第二状态。Slim 不创建 `state/` 状态机目录、checkpoint 父链、CURRENT/PENDING、receipt 或 database。
 
-- runtime：`src/tokenshare/experiments/slim_v2/`
-- focused tests：`tests/experiments/slim_v2/`
-- Slim 文档/证据：`Doc/SlimV2/slim_v2_implementation_plan.md`
-- 接力状态：`progress.md` 顶部
+最终 CLI：
 
-其余文件只读。profile ID 一次性固化允许按设计规格第 12 节读取当前权威 catalog，并在确需 legacy 选择局部算法时，仅对 reuse inventory 固定 SHA `3489533e79cde05d6ae2a0c9f139785249f60f09` 的点名路径/符号执行最小 `git show`；不得 checkout、runtime import或复制旧 authority字段。
+```text
+python -m tokenshare.experiments.slim_v2.cli plan --profile <representative|full> --run-id <id> [--output-root <dir>]
+python -m tokenshare.experiments.slim_v2.cli run --experiment <exp1|exp2|exp3|exp4|exp5> --profile <p> --run-id <id> [--source-run-dir <dir>] [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.cli run-all --profile <p> --run-id <id> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.cli reduce --run-dir <dir>
+python -m tokenshare.experiments.slim_v2.cli representative --run-id <id> [--output-root <dir>] [--resume]
+```
 
-每个task的`Allowed writes`只列实现/测试allowlist；`Doc/SlimV2/slim_v2_implementation_plan.md`与`progress.md`顶部是所有task唯一的常设证据例外。实现commit只含本task实现/测试allowlist；紧随其后的evidence commit只含这两个证据文件。除此之外不得写入任何文件。
+package-level re-export 只保留`SCHEMA_VERSION`。获支持的 module-qualified Python 调用点只保留`profiles.build_profile/build_inventory/build_plan`、`runtime.run_root_slice/run_coverage_tail`、`provider.call_provider_once`、`storage.select_trace_attempt`、`cli.run_experiment/main`和`reducer.reduce_run`；其余表内名称是模块合同类型或内部装配符号，不扩展成通用公共框架。没有 service 入口、后台 worker service、HTTP server 或第二个 runner。
 
-## 1. 最终文件职责与 task 映射
+Canonical condition ID编码集中冻结如下；ID只用于身份，任何行为必须读取结构化condition字段：
 
-| 文件 | 单一职责 | 创建/主要修改 task |
+| 实验 | condition ID维度 |
+|---|---|
+| Exp1 | domain/stratum；不编码repeat |
+| Exp2 | worker×repeat×position；不编码domain |
+| Exp3 | 先domain+difficulty/topic stratum，再编码fault/rate/repeat或death/progress/repeat |
+| Exp4 | 只编码mode×repeat |
+| Exp5 | model×repeat×stratum |
+
+## 3. 文件职责与公开符号
+
+| 文件 | 单一职责 | 公开符号 | 拥有的 Slim-local 状态 | 明确不负责 |
+|---|---|---|---|---|
+| `__init__.py` | 包版本与稳定导出 | `SCHEMA_VERSION` | 无 | 不导入 CLI，不启动运行 |
+| `schema.py` | 普通root/attempt/trace/provider数据结构和结构校验 | 既有或同类模块合同类型`RootInventoryV1`,`RootResultV1`,`AttemptResultV1`,`UnitTraceV1`,`ProviderEntryViewV1`,`ProviderCallResultV1`,`ProviderCallContextV1` | 无运行状态 | 不拥有profile plan，不推进root/attempt，不判断协议终态；这些类型不要求package-level re-export |
+| `case_source.py` | 读取当前 catalog 并按冻结 ID 取 case | `load_cases`,`select_cases_by_ids` | 当前调用的流式读取状态 | 不运行 legacy selection，不做资格判断 |
+| `profiles.py` | 生成冻结 condition/root/reference/challenge inventory 和 plan | 既有`ProfileV1`,`InventoryV1`,`PlanV1`及其组成类型；`build_profile`,`build_inventory`,`build_plan` | 只读 literal case IDs | 不把类型搬到schema，不读 secret，不创建 runtime/provider，不把 condition ID 当行为来源 |
+| `storage.py` | 普通 run 文件写读、原子键和 resume 扫描 | `RunStore`,`ResumeView`,`SelectedTraceAttemptV1`,`scan_resume`,`select_trace_attempt` | committed root/trace key 与 call intent/terminal 文件 | 不判断协议 status，不替代 ledger，不 repair/compact |
+| `provider.py` | 一次 bounded HTTP 调用和该 attempt 的 usage/model/cost 投影 | `ProviderEntryViewV1`,`call_provider_once`,`project_cost` | 仅当前调用栈；journal由注入的`RunStore`拥有 | 不内部 retry，不另建store，不选择 cohort，不做预算或领域验证 |
+| `execution.py` | 把 online/fixed answer 转成系统 `ExecutionSubmission` | `ProviderSubmissionAdapter`,`FixedTraceSubmissionAdapter` | 当前 execution request 的临时输入 | 不创建协议 attempt，不决定 canonical/recovery |
+| `scenarios.py` | 把冻结 Exp2–4 condition 翻译为既有 scheduler/hooks/policy/backend 参数 | `build_scenario`,`build_exp3_reference`,`build_challenge_plan` | 当前 root 的 fault/challenge observations | 不生成 root/canonical/recovery/death事实，不解析 condition ID |
+| `runtime.py` | 组装一个 root、调用一次 `run_root`，并在 Exp1 terminal 后运行 tail | `RootAssembly`,`TailSummaryV1`,`run_root_slice`,`run_coverage_tail` | 当前 root 对象和 tail target 集合 | 不实现 engine/worker/checker/merge，不跨 roots 保留 plugin 状态 |
+| `projector.py` | join 当前 root 的 result/ledger/store/plugin/hook事实 | `project_root_result` | 仅当前 root 的只读 join 缓冲 | 不制造缺失事实，不把 status 猜成正确性 |
+| `reducer.py` | 从一个 run 目录生成 153-ID 指标表 | `reduce_run`,`metric_ids` | 当前 table/slice 的流式聚合与 bootstrap 样本 | 不读 system events/raw response，不调用 runtime/checker/provider |
+| `cli.py` | 解析原子命令、串行 roots、依赖与 preflight | `run_experiment`,`main` | 当前命令上下文 | 不拥有协议状态，不隐式运行 Exp1，不提供 service |
+
+`schema.py` 和 `profiles.py` 的已提交成果继续使用；Task 2 只删除无法映射到权威字段或最小恢复的通用抽象，不因重写蓝图丢弃 case IDs、condition IDs、153 metric-ID 合同或逐 root plan 派生能力。
+
+## 4. 新模块之间的接口矩阵
+
+| 上游 | 下游 | 输入类型 | 输出类型 | 调用符号 | 持久化副作用 |
+|---|---|---|---|---|---|
+| CLI | profiles | `profile_id,experiment_ids` | `ProfileV1,InventoryV1,PlanV1` | `build_profile/build_inventory/build_plan` | CLI 通过 `RunStore` 写 inventory |
+| profiles + case source | runtime | `RootInventoryV1,catalog case` | `RootAssembly` | `run_root_slice` | 创建当前 root 的 `system/` |
+| runtime | scenarios | `RootInventoryV1,ExecutionRequest` | scheduler/hooks/policy/backend参数 | `build_scenario` | 仅 observation 留在当前 root 内存 |
+| runtime/worker | execution | `ExecutionRequest,answer source` | `ExecutionSubmission` | adapter `execute` | online 路径调用 provider；fixed 路径只读 trace |
+| execution | provider | `ProviderEntryViewV1,prompt,controls,ProviderCallContextV1,RunStore` | `ProviderCallResultV1` | `call_provider_once` | 经注入的RunStore写intent、terminal、response原子文件 |
+| execution | storage | 三元 trace key、当前 ordinal、unit 语义 | `SelectedTraceAttemptV1` | `select_trace_attempt` | 无；严格只读 |
+| runtime | projector | `ProtocolRunResult,ledger,store,plugin,hooks,journals` | `RootResultV1` | `project_root_result` | 无；结果由 RunStore commit |
+| runtime tail | storage/provider | unscheduled IDs、existing trace keys | `TailSummaryV1` | `run_coverage_tail` | 逐 unit trace、call journal；不写 system event |
+| CLI | storage | inventory/root/trace/call对象 | committed keys / `ResumeView` | `RunStore`, `scan_resume` | 同目录 temp + atomic replace |
+| reducer | storage | run目录和普通 JSON/JSONL | observation iterator | `RunStore.iter_*` | 只写 `metrics/` 输出 |
+
+接口规则：传递 typed 普通对象，不传 global mutable registry；所有跨文件持久化都经 `RunStore`；只有 provider call journal 和 Exp1 coverage tail 是 Slim-local 非协议事实。`scenarios.py` 返回配置和 observation collector，不返回预填的运行结论。
+
+## 5. 与现有 TokenShare 程序的接线矩阵
+
+| 现有公共位置/符号 | Slim 调用点 | 输入 | 系统返回/真值 | Slim 边界 |
+|---|---|---|---|---|
+| `src/tokenshare/local_runtime/contracts.py` `ProtocolRunRequest`,`ProtocolRunResult` | `runtime.run_root_slice` | case、plugin runtime、worker、policy、hooks、scheduler | 一个 root 的公开请求/结果 | condition 标签只留 Slim inventory；不扩展 request |
+| `src/tokenshare/local_runtime/coordinator.py` `ProtocolRunCoordinator.__init__`,`run_root` | `runtime.run_root_slice` | root 独占 engine/store/ledger 和 request | 完整 root 生命周期 | 正常路径每论文 root 恰好一次 `run_root` |
+| `src/tokenshare/protocol_engine.py` `ProtocolEngine` | root 装配 | `ProtocolConfig,EventLedger,ArtifactStore` | task/unit/attempt/retry/recovery/canonical/merge/settlement 真值 | Slim 只配置、调用、读取、投影 |
+| `src/tokenshare/storage/events.py` `EventLedger` | root 装配/projector | 当前 root events | append-only 协议事件 | 不复制 ledger，不把 ref/digest写进结果 |
+| `src/tokenshare/storage/artifacts.py` `ArtifactStore` | root 装配/projector | submission/final artifact | 系统 artifact bytes | 只为取回本次 run 事实使用 ref |
+| `src/tokenshare/local_runtime/workers.py` `SequentialWorkerBackend`,`ThreadWorkerBackend`,`ProcessWorkerBackend` | `runtime/scenarios` | execution adapter、capacity、termination policy | worker execution/death/liveness事实 | 不另写 worker loop；death才强制 Process |
+| `src/tokenshare/local_runtime/logical_scheduler.py` `LogicalSourceLatencyScheduler` | Exp2–4 scenario | source latency、capacity | 逻辑时钟和 makespan | 不用外层除法伪造并发 |
+| `src/tokenshare/local_runtime/contracts.py` `ProtocolMechanismPolicy`,`RuntimeHooks`,`WorkerTerminationPolicy` | Exp3/4 scenario | 冻结 fault/death/mode/challenge | 公共 hook/requeue/merge接缝 | observations只记录实际动作，不反填结果 |
+| `src/tokenshare/plugins/factorization/runtime_adapter.py` `FactorizationRuntimeAdapter`,`FactorizationExecutionBridge` | root assembly | catalog case、answer adapter | split/parser/verifier/final product/merge真值 | Slim 不复制 range 计划、verifier 或 final product判断 |
+| `src/tokenshare/plugins/lean_proof/fixed_plan.py` `LeanFixedDecompositionPlan` | Lean root assembly | catalog fixed DAG | planned lemma DAG | AI/Slim 不决定拆分 |
+| `src/tokenshare/plugins/lean_proof/runtime_adapter.py` `LeanRuntimeAdapter`,`LeanExecutionBridge` | root assembly | fixed plan、answer adapter、checker | child checker、canonical、merge/root recheck真值 | Slim 不自报 proof acceptance |
+| `src/tokenshare/executors/contracts.py` `ExecutionSubmission` | `execution` adapters | provider/fixed answer与parser输出 | worker/backend消费的系统 submission | 只做薄转换，不创建协议 attempt/retry |
+| `src/tokenshare/executors/ai_api_transport.py` `build_deepseek_chat_body`,`build_siliconflow_chat_body`,`parse_deepseek_response`,`parse_siliconflow_response` | `provider.call_provider_once` | entry/prompt/controls或bounded raw JSON | provider-specific request body/parsed envelope | 复用builder/parser；旧UrlLib transport因无界read不直接复用，16 MiB bounded read由Slim实现 |
+| `src/tokenshare/plugins/factorization/validator.py` `parse_factorization_ai_output` | provider/fixed submission adapter与tail | model content + unit语义 | Factorization parsed candidate | Slim不复制parser或从文本自报正确 |
+| `src/tokenshare/plugins/lean_proof/prompt_builder.py` `parse_lean_proof_candidate_ai_output`；`src/tokenshare/plugins/lean_proof/checker.py` `check_lean_proof` | provider/fixed submission adapter与tail | model content、lemma request与固定Lean环境 | candidate/checker report | 正常root由Lean bridge拥有协议接线；tail只调用同一parse/check规则，不创建canonical |
+
+已取得的公共接口实证作为 Task 1 起点而非替代 Gate：在 fake/local、无 provider、无 Lean/lake 下，Factorization 完整 protocol 链、Lean fixed-DAG checker/canonical/merge/root recheck和通用 coordinator 生命周期共 `4 passed in 10.86s`。Sequential 两领域 PoC 没有发现 shared 接口缺口，因此首选实现是薄 root assembly、fake submission 和只读 projector。
+
+集中状态真值矩阵：
+
+| 事实 | 唯一 owner | Slim 可以做 | Slim 禁止做 |
+|---|---|---|---|
+| root/task/attempt/retry/recovery/canonical/merge/settlement | `ProtocolEngine + EventLedger` | 配置、调用、读取、投影 | 生成第二套状态或更正 ledger |
+| Factorization verifier/final product | Factorization runtime/plugin | 读取 accepted/final并独立确定性复核 | 从模型文本自报成功 |
+| Lean child/root checker与merge acceptance | Lean runtime/checker | 读取 checker report/merge result | 用 protocol completed替代 accepted |
+| worker execution/death/liveness | 现有 worker backend/runtime hooks | 配置冻结条件并采集 facts | 从 condition 名称生成 death/recovery |
+| provider网络终态 | Slim最小 call journal | 记录intent/terminal/unknown，避免重复付费 | 创建协议attempt/retry或替代ledger |
+| resume完成键 | 普通 committed root/trace文件 | 扫描并跳过已经落盘的工作 | 宣称协议状态或修改root status |
+| Exp1 coverage tail | Slim-local唯一例外 | terminal后取得未调度unit trace | 写协议attempt/canonical/merge或改正文runtime |
+
+## 6. Experiment 1–5 完整控制流
+
+所有实验先由 `build_inventory()` 预注册 root，再由同一 `run_experiment()` 串行处理。每个论文 root 的系统路径都是：
+
+```text
+CLI/profile/case
+  -> RootAssembly
+  -> ProtocolRunCoordinator.run_root(request) exactly once
+  -> domain execution bridge
+  -> existing worker backend
+  -> ProtocolEngine + EventLedger + ArtifactStore
+  -> domain verifier/checker
+  -> canonical/merge/root recheck
+  -> read-only projector
+  -> atomic ordinary root result
+```
+
+### Experiment 1
+
+1. CLI解析唯一 DeepSeek entry并在condition开始前验证model/secret；root开始前不发请求。
+2. worker执行 AI unit 时，`ProviderSubmissionAdapter` 才调用 `call_provider_once()`；caller一次请求无内部retry，协议`max_retries=2`决定是否产生下一自然ordinal。
+3. 每个调用先写intent，返回后写response与terminal，再生成`ExecutionSubmission`交给现有runtime；parser/verifier/checker/canonical/merge均走既有边界。
+4. `run_root()` terminal 后先原子保存不可变`protocol.json`；该文件内含重建全部protocol-origin traces所需的普通attempt和领域语义快照，再幂等物化各trace文件。
+5. `run_coverage_tail()`只处理`unscheduled_ai_unit_ids - committed_trace_keys`，沿同一provider/parser/checker路径取得trace；最多三个自然attempt，Factorization verifier或Lean checker首次接受即停止。Tail attempt的`canonical_accepted`固定为null/false并带`not_applicable`，不得作为tail success条件。
+6. tail完成后写`result.json`。tail不提交到已终止协议，不改变root status、correctness或runtime；下一个root在tail terminal后才开始。
+
+外部调用时点只有步骤2和tail的实际目标。Full硬上限为5,910；Representative为57。恢复命中terminal call或committed trace时不重复调用。
+
+### Experiment 2
+
+1. atomic命令必须显式提供Exp1 source run；`run-all`也把当前Exp1目录作为显式内部参数传入。
+2. 每case完整重建Exp1相同split、unit、prompt和依赖，只改变`worker_count∈{1,3,7,10,30,50}`。
+3. `FixedTraceSubmissionAdapter`按`case_id × source_repeat_id=0 × planned_ai_unit_id`选择exact ordinal，缺失时只回退同trace最后自然ordinal，并核对Factorization range。
+4. `LogicalSourceLatencyScheduler`与现有worker backend实际推进逻辑时间、并发、利用率和early stop；结果经相同`run_root`和projector落盘。
+
+本实验从不构造provider caller；任何transport入口被调用都立即停止condition。provider calls精确为0，且不会隐式启动Experiment 1。
+
+### Experiment 3
+
+1. source lookup、logical scheduler和`run_root`与Experiment 2相同；Factorization/Lean普通语义字段都必须匹配。
+2. rate-fault由Slim hook只在ordinal 0实施五种冻结动作；target、扰动和reference严格读取指标权威第4节。
+3. replacement/requeue、verification rejection、canonical和root结果由现有engine/plugin产生；Slim只join observations。
+4. worker death条件使用现有`ProcessWorkerBackend + WorkerTerminationPolicy`；PID/exit/progress/liveness和recovery事实来自backend/events。
+5. 每个论文root和106个辅助reference分别落盘，reference不进入论文root分母；reference frozen planned/upper为468/1,404，并与其他上限一起从逐root inventory复算。
+
+本实验不构造provider caller，无transport fallback，provider calls精确为0。Full current inventory为rate 13,920、death 2,808、planned 16,728、upper 52,992；Representative为42、16、58、190，均由逐root求和校验。
+
+### Experiment 4
+
+1. 在mode展开前按`case_id × repeat_id`生成challenge plan；同一plan传给全部11 modes。
+2. injector签名不接收mode、disabled set或policy；只在权威指定边界对已选择fixed answer执行实际动作。
+3. `ProtocolMechanismPolicy`在一个root内同时应用FULL、单机制或双机制配置；组合mode不能离线拼接。
+4. `run_root`和既有engine/plugin决定verification、requeue、canonical、merge、root checker与最终状态；Slim observation不能从mode名推导。
+5. preflight block、plan mismatch和missed opportunity按authority使相关cell为null；协议启动后的自然失败进入固定分母。
+
+本实验不构造provider caller，无transport fallback，provider calls精确为0。Full每mode/repeat 293 units、planned 9,669、upper 15,822；Representative planned 209、upper 342，全部由结构化`disabled_mechanisms`计算，禁止解析`condition_id`子串。
+
+### Experiment 5
+
+1. 每model condition显式解析四个冻结SiliconFlow entry之一，按`ABCD/BDAC/CADB`顺序运行。
+2. worker执行unit时才调用与Experiment 1相同的bounded caller和submission adapter；`max_retries=0,replacement_attempts_allowed=false`。
+3. 现有Factorization/Lean parser、checker、canonical、merge/root recheck决定结果；configured/requested/resolved model写入普通attempt/root记录。
+4. root结果原子落盘，不运行coverage tail。
+
+外部调用只发生在实际调度的ordinal 0 unit；Full上限4,992，Representative上限32。全Full真实provider hard cap为10,902，Representative总cap为89。
+
+## 7. Run目录和数据生命周期
+
+writer/reader分工：
+
+| 数据 | writer | reader | 原子键/完成判定 |
+|---|---|---|---|
+| inventory | CLI + profiles | runner/reducer | run创建时一次写完；root key集合冻结 |
+| system events/artifacts | existing engine/store | projector | 系统自己的task/event/artifact身份 |
+| root protocol投影 | runtime + projector | tail/resume/final projector | root key；`run_root`返回后原子文件存在 |
+| Exp1 unit trace | runtime/tail + storage | Exp2–4 fixed adapter/reducer诊断 | `case_id × source_repeat_id=0 × planned_ai_unit_id` |
+| provider call journal | provider + storage | journal-aware adapter/resume/projector | root key × unit × natural ordinal；terminal文件存在 |
+| committed root result | runtime + storage | resume/reducer | `experiment_id × condition_id × case_id × repeat_id` |
+| Exp3 reference | runtime + storage | reducer | `case_id × repeat_id`，与论文root分开 |
+| metrics | reducer | 人/论文后处理 | table/slice/metric ID |
+
+最小 journal 只有三类：root的不可变protocol投影与最终结果、Exp1 trace、provider call intent/terminal。它们记录“本地工作是否已经持久化”，不记录协议task/attempt状态机。
+
+写入顺序：
+
+1. caller接收`ProviderCallContextV1(call_key,root_key,planned_ai_unit_id,attempt_ordinal)`和注入的`RunStore`，provider send前由该store原子写intent；caller不创建第二个store；
+2. 收到或捕获terminal后先由同一store写response（如有），再写terminal；
+3. `run_root`返回后写含完整protocol-origin trace重建素材的`protocol.json`；
+4. Exp1先由protocol投影幂等物化全部protocol-origin traces，再补真正unscheduled的tail traces，最后写`result.json`；其他实验直接写`result.json`；
+5. 每个文件使用同目录temporary file、UTF-8 flush/close后replace；冲突主键不覆盖。
+
+Resume只扫描：
+
+- committed `result.json`：跳过整个root；
+- Exp1 `protocol.json`但final result缺失：不重跑`run_root`；先从protocol投影幂等重建缺失的protocol-origin traces，再只对真正unscheduled且缺key的unit运行tail，最后提交result；
+- committed trace key：不重复取得回答；
+- terminal call：复用结果，不再次发请求；
+- intent存在、terminal缺失：先检查当前进程；response存在时从已存response完成terminal；确认无活跃owner且无response时写`unknown_transport_outcome`，同一ordinal不重调。协议若仍允许replacement，只能由engine请求下一自然ordinal；
+- 已开始但没有protocol投影的死亡root：不调用第二次`run_root`，写固定身份的`infrastructure_invalid`结果并继续未开始root。若要重做该样本，使用新run ID。
+
+因此正常执行的每个论文root精确调用一次`run_root`，崩溃恢复也不会把同一root悄悄变成第二次系统运行。跳过文件只是本地调度决定，不是Slim宣布协议终态。
+
+## 8. 依赖图与六个纵向实施阶段
+
+```mermaid
+flowchart LR
+    T1["Task 1 现有系统本体纵向闭环"] --> T2["Task 2 profile/schema/普通输出"]
+    T2 --> T3["Task 3 Exp1/5回答路径"]
+    T3 --> T4["Task 4 Exp2-4系统场景"]
+    T4 --> T5["Task 5 统一reducer"]
+    T5 --> T6["Task 6 CLI/resume/readiness"]
+```
+
+逻辑上，golden fixture准备、文档核对和只读公共接口审计可与当前阶段内部实现并行；实际写入继续遵守 `one focus at a time`，不得同时打开第二条代码写路径。三个审查里程碑固定为：Task 1本体闭环、Task 4全部实验场景闭环、Task 6最终representative readiness。其余Task不要求逐微步骤双review或双commit。
+
+当前实例按`slim_v2_stage_relay_protocol.md` §5.2执行replan-aware启动，并按relay §5.1让六个大型Task分别由六名连续、全新的顶层owner串行完成；不得由一个Stage 3总监督owner连续实现六项。当前relay只读输入的SHA256为`B7F6785957B0FD0EC5D35A4AE18A81715476A4DD6EFEDB1A78B8BD8B41FE0777`。
+
+| 重规划前成果 | 新计划映射 | 启动裁决 |
 |---|---|---|
-| `src/tokenshare/experiments/slim_v2/__init__.py` | 包版本与公开入口，不运行实验 | 1 |
-| `schema.py` | V1 config/inventory/root/attempt/trace/provider普通合同与验证 | 1 |
-| `case_source.py` | UTF-8 JSONL逐行加载、显式ID选择 | 2 |
-| `profiles.py` | full/representative有序ID、condition/root/challenge inventory和规模/调用/磁盘计划 | 2–3, 17 |
-| `sink.py` | run layout、原子文件、attempt journal、resume、日志轮转 | 4 |
-| `pricing.py` | `slim_v2.pricing.2026-08-20`纯成本投影 | 5 |
-| `provider.py` | local secret投影、single-entry body/16MiB bounded read/envelope/terminal journal | 6 |
-| `execution.py` | provider/fixed trace结果到公共submission的两领域薄bridge | 7, 11, 16 |
-| `runtime_adapter.py` | 每root独占公共对象装配、一次`run_root`、backend验收分支 | 8–9, 16 |
-| `projector.py` | 当前root event/store/plugin/hook事实到`RootResultV1` | 8, 13–16 |
-| `trace_source.py` | Exp1唯一trace写入及Exp2–4 exact/fallback lookup | 10 |
-| `coverage_tail.py` | Exp1 terminal后逐root补齐unscheduled units | 11 |
-| `scenarios.py` | Exp2 scheduler、Exp3 fault/death/扰动、Exp4 challenge/mode | 12–15 |
-| `reducer.py` | 单run流式分区、纯统计、Exp1–5表与CSV/JSON | 18–22 |
-| `cli.py` | 原子命令、唯一roots串行循环、run-all依赖、representative别名 | 3, 23 |
+| 旧Task 1 `schema.py/test_schema.py`，implementation `aaabca41`、evidence `4fb647b4` | 新Task 2可复用输入 | 必须先经新Task 1真实纵链校准；不等于新Task 2完成 |
+| 旧Task 2 `case_source.py/profiles.py`与测试，implementation `13a25193`、evidence `794362fa` | 新Task 2可复用输入 | 保留提交，不reset/revert/cherry-pick复制 |
+| 旧Task 3 dirty `profiles.py/test_profiles.py` | 新Task 2待审查草稿 | 已知focused通过但旧review未闭合，`not approved/not complete` |
+| 旧Task 3 untracked `cli.py/test_cli_plan.py` | 新Task 2的plan草稿与新Task 6的CLI起点 | 原样保留，按新纵链取用，不按旧编号判完成 |
 
-## 2. Vertical slice 与硬要求追踪
+fresh Stage 3 Task 1/6 owner启动后先执行`Rebaseline existing implementation against approved six-task blueprint`，逐文件核对上述映射和当前diff；rebaseline只是开工审计，不新增第七个Task，也不能替代新Task 1。任何删除或大改必须由本规格和真实纵链事实证明，不得为了clean工作树删除成果。
 
-| 设计规格 slice/硬要求 | 计划 task | 通过证据 |
-|---|---|---|
-| 17.1 profile+plan、full IDs一次固化、condition规模、磁盘双估算 | 2–3 | profile/plan静态测试 |
-| 17.2 ordinary sink+resume、跨generation首次root start | 4, 23 | crash-window/resume测试 |
-| 17.3 pricing、reasoning不双算 | 5 | 价格边界测试 |
-| 17.4 provider one-call、16MiB bounded network read | 6 | fake transport + close/journal测试 |
-| 17.5 Factorization vertical root、Thread→bounded-process分支 | 7–9 | k>1/资源/字段测试 |
-| 17.6 Exp1 trace+tail | 10–11 | trace唯一性/tail隔离/resume测试 |
-| 17.7 Exp2 fixed replay | 12 | exact/fallback/0-call/1-10-50调度测试 |
-| 17.8 Exp3 | 13–14 | 五fault/扰动/reference/death测试 |
-| 17.9 Exp4 | 15 | 11 modes/四challenge/pair/quadruple测试 |
-| 17.10 Lean bridge | 16 | fake checker/固定fixture/并发合同测试 |
-| 17.11 Exp5 fake transport | 17 | 四entry/in-flight3/零重试测试 |
-| 17.12 reducer | 18–22 | 153 metric IDs、CI、固定分母、流式分区 |
-| 17.13 atomic CLI、representative 89-call preflight | 23 | CLI integration/preflight/resume测试 |
-| schema/metric追踪与资源/secret absence | 1, 6, 18, 23 | field-path集合、metric集合、secret扫描 |
+### Task 1 现有系统本体纵向闭环
 
-## 3. 串行 implementation tasks
+#### 1. 目标结果/可运行切片
 
-### Task 1: 冻结普通 schema 合同
+用fake answer分别运行一个Factorization root和一个Lean fixed-DAG root，真实经过`run_root → domain bridge → existing worker → engine/ledger/store → verifier/checker → canonical/merge/root recheck`，然后只读投影普通root result。这是后续所有工作第一道Gate。
 
-**目标：** 建立所有后续组件共享的最小V1普通数据对象和字段级验证；不装配runtime、不读catalog。
+#### 2. 创建/修改文件
 
-**Files:**
+创建`runtime.py`,`projector.py`,`test_system_vertical.py`；test fixture内提供最小fake submission adapter。仅为`SCHEMA_VERSION`需要时最小修改`__init__.py`，不创建生产provider/fixed adapter，不修改shared文件。
 
-- Create: `src/tokenshare/experiments/slim_v2/__init__.py`
-- Create: `src/tokenshare/experiments/slim_v2/schema.py`
-- Create: `tests/experiments/slim_v2/test_schema.py`
-- Create: `tests/experiments/slim_v2/fixtures/authority_contract.v1.json`
+#### 3. 导出的类、函数、CLI
 
-**Tests / exact names:**
+`RootAssembly`,`run_root_slice`,`project_root_result`；fake adapter只是测试fixture内部符号，本Task不扩展CLI或package-level re-export。
 
-- `test_root_result_normalized_leaf_paths_equal_authority_contract`
-- `test_full_schema_leaf_paths_equal_authority_plus_operational_contract`
-- `test_attempt_and_trace_schema_keep_actual_source_and_simulated_fields_distinct`
-- `test_nullable_fields_require_missing_or_not_applicable_reason`
-- `test_exp2_to_exp4_actual_provider_fields_are_null_and_provider_call_is_false`
-- `test_schema_contains_no_forbidden_authority_fields`
+#### 4. 输入/输出类型
 
-**Dependencies:** none。
+输入：一个catalog case、显式`ProtocolConfig`、测试fixture提供的fake `ExecutionSubmission` adapter、worker backend。输出：公共`ProtocolRunResult`和已有`RootResultV1`的最小普通投影。
 
-**Allowed writes:** 仅上述四个文件。
+#### 5. 上游/下游及精确公共符号
 
-- [x] **Step 1: 写字段集合失败测试。** fixture分别显式保存`metric_authority_leaf_paths`、`slim_operational_leaf_paths`、153个正式metric IDs和必填/可空规则。前者逐项来自指标权威第8节；后者只含设计规格额外冻结的运行字段，例如`trace_tail_success_unit_count/trace_tail_failure_unit_count`、`attempts[].raw_response_relative_path`与`attempts[].call_state`。测试要求root的metric projection与authority集合精确相等、完整schema与两集合冻结并集精确相等，不能用实现反向生成fixture或只比数量。
-- [x] **Step 2: 运行先失败命令。**
+上游使用`ProtocolRunRequest`,`ProtocolRunCoordinator.run_root`,`ProtocolEngine`,`EventLedger`,`ArtifactStore`,`SequentialWorkerBackend`,`ExecutionSubmission`；领域使用`FactorizationRuntimeAdapter/FactorizationExecutionBridge`和`LeanFixedDecompositionPlan/LeanRuntimeAdapter/LeanExecutionBridge`。下游仅为Task 2普通输出。
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.py -q`
+#### 6. 关键控制流/实现逻辑
 
-  Expected: FAIL，首个失败为无法导入 `tokenshare.experiments.slim_v2.schema` 或缺少 `RootResultV1`；不得是fixture JSON/UTF-8错误。
+每root创建独占store/ledger/engine/plugin/bridge/backend/coordinator；显式构造request；计数器断言`run_root`恰好一次；从result、同一ledger/store和plugin读取领域事实；Factorization检查final product，Lean检查child checker、merge acceptance和root recheck。
 
-- [x] **Step 3: 最小实现。** 在`schema.py`定义并验证`SlimRunConfigV1,RootInventoryV1,AttemptResultV1,UnitTraceV1,RootResultV1,ProviderEntryViewV1,ProviderRequestControlV1,ProviderCallResultV1`；字段名、嵌套数组、时间单位、null reason与`call_state`严格按设计规格第7–9节。`__init__.py`只暴露schema版本。
-- [x] **Step 4: 运行通过命令。**
+#### 7. 状态真值owner与失败作用域变化
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.py -q`
+所有协议事实仍由engine/ledger，领域事实仍由plugin/checker拥有。Slim projector只读。任一领域不能跑通即阻断Task 2；自然candidate rejection是可投影结果，公共接口或事实缺失才是Gate失败。
 
-  Expected: PASS，6 tests passed。
+#### 8. 风险驱动验证场景与命令
 
-**完成证据：** failing/pass输出、normalized leaf set差集为空、禁止字段扫描为空、task commit SHA。
+验证两领域纵链、`run_root`一次、真实canonical/merge/root recheck、无shared修改、无provider/Lean二进制。复用已知4-pass审计作为基线，再运行：
 
-**Progress更新点：** 记录Task 1为完成、schema version和测试pass数；下一focus写Task 2。
+```powershell
+conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_system_vertical.py -q
+```
 
-### Task 2: 固化case读取与full/representative有序ID
+#### 9. 完成标准
 
-**目标：** 用当前catalog与获准一次性选择规则把full/representative全部有序case IDs作为Slim-local只读常量固化；runtime不再读取旧selection/profile。
+两领域均产生可解释普通root结果；Sequential路径无shared接口缺口；里程碑review范围内Critical/Important关闭。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 2/6 owner，确认其heartbeat active后结束；不得自行继续Task 2。
 
-**Files:**
+#### 10. 明确非目标
 
-- Create: `src/tokenshare/experiments/slim_v2/case_source.py`
-- Create: `src/tokenshare/experiments/slim_v2/profiles.py`
-- Create: `tests/experiments/slim_v2/test_case_source.py`
-- Create: `tests/experiments/slim_v2/test_profiles.py`
+不创建生产`execution.py`、provider/fixed adapter、trace、resume、scenario、reducer或CLI；不证明Thread；不复制engine/ledger/storage/worker/verifier/checker/merge。
 
-**Tests / exact names:**
+### Task 2 冻结profile、最小schema与普通输出
 
-- `test_load_cases_streams_utf8_jsonl_and_rejects_duplicate_case_id`
-- `test_select_cases_by_ids_preserves_frozen_order_and_reports_missing_ids`
-- `test_full_case_ids_are_literal_unique_and_exist_in_current_catalogs`
-- `test_full_case_ids_match_all_authority_strata_and_counts`
-- `test_full_literal_ids_produce_exact_one_thousand_nine_hundred_seventy_planned_units`
-- `test_exp3_and_exp4_case_id_tuples_match_frozen_selection_rules_exactly`
-- `test_representative_case_ids_and_strata_are_exact`
-- `test_runtime_profiles_do_not_read_legacy_selection_files`
+#### 1. 目标结果/可运行切片
 
-**Dependencies:** Task 1。
+保留已完成的schema原始字段合同、case IDs、profile、canonical condition IDs和plan派生成果；以Task 1真实纵链校准字段，只留下原子root/trace、completed-key扫描和最小provider terminal journal，能够把Task 1两root写入最终run布局并resume跳过。
 
-**Allowed writes:** 仅上述四个文件。
+#### 2. 创建/修改文件
 
-- [x] **Step 1: 写失败测试。** 测试从`benchmarks/paper/factorization_catalog.v2.jsonl`与`benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl`只读核对`profiles.py`字面tuple；独立重算本task冻结规则并要求tuple逐项相等，不调用production选择helper。明确断言Exp1 300+135且planned units=1,970、Exp2 hard 50、Exp3/4 shared 50+3或50+15、Exp5 42+12的ID唯一性/分层/顺序，设计规格第13节四个representative IDs，以及代表性Lean unit counts=`1/2`、Exp1 total units=19。
-- [x] **Step 2: 运行先失败命令。**
+修改`schema.py`,`case_source.py`,`profiles.py`,`cli.py`及已有四个测试文件；创建`storage.py`，按风险需要把输出合同并入`test_schema.py`或`test_profiles.py`，不为storage helper另设测试数量目标。
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_case_source.py tests/experiments/slim_v2/test_profiles.py -q`
+#### 3. 导出的类、函数、CLI
 
-  Expected: FAIL，缺`load_cases/select_cases_by_ids`或frozen ID constants。
+保留`build_profile/build_inventory/build_plan`；新增`RunStore`,`ResumeView`,`scan_resume`,`select_trace_attempt`；保留只读`plan`命令。
 
-- [x] **Step 3: 一次性生成并人工审查字面ID。** 本task不读取任何archive JSON，完全使用两个当前权威catalog和以下冻结规则：Factorization先按`sha256("slim_v2.full.v1|seed=20260820|domain=factorization|difficulty="+difficulty+"|case_id="+case_id)`升序、再按`catalog_ordinal,case_id`破同分；easy/medium各取前100，hard先按给定顺序放`factor_v2_hard_138,factor_v2_hard_145`，再接排名中其余case并取100。Exp2为Exp1 hard前50；Exp3/4 Factorization分别取Exp1 easy/medium/hard前`17/17/16`。Lean每个`paper_difficulty×topic_family`同样用上述字符串把domain替换为`lean`排序；simple/pure_logic先放`lean_v2_simple_pure_logic_direct_prop_01`，simple/induction先放`lean_v2_simple_induction_direct_nat_01`，再接排名其余case；每格取15形成Exp1。Exp3 Lean逐topic取simple格第1题；Exp4每difficulty按`pure_logic/function_set/induction=2/2/1`取各格前N；Exp5为Exp1 Factorization hard前42及Lean hard三个topic各前4。生成后把所有tuple作为只读字面常量写进`profiles.py`；runtime不得包含选择算法，也不得打开`paper_suite_scale_300_50_54.v1`、`exp5_parent_quarter_selection.v4`或其他旧selection/profile。
-- [x] **Step 4: 最小实现。** `case_source.py`提供逐行`load_cases(path)`与`select_cases_by_ids(iterable, ordered_ids)`；`profiles.py`只先提供字面ID/stratum常量和representative challenge rows，不展开conditions。
-- [x] **Step 5: 运行通过命令。**
+#### 4. 输入/输出类型
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_case_source.py tests/experiments/slim_v2/test_profiles.py -q`
+输入：`representative|full`、catalog、run ID、root/trace/call对象。输出：冻结inventory/plan、原子JSON/JSONL、committed key集合。
 
-  Expected: PASS，8 tests passed；全部tuple精确、planned unit count闭合、无legacy runtime read。
+#### 5. 上游/下游及精确公共符号
 
-**完成证据：** 两个当前catalog核对通过、冻结规则在test侧独立重算且与literal tuples逐项相等、所有ID差集/重复集合为空、task implementation commit SHA。
+上游为Task 1 `RootResultV1`和当前catalog；不新增shared依赖。下游为Task 3 caller/trace和Task 5 reducer。
 
-**Progress更新点：** 记录full ID已一次性固化及各实验ID count；下一focus写Task 3。
+#### 6. 关键控制流/实现逻辑
 
-### Task 3: 展开profile inventory、规模上限与无provider `plan`
+对现有schema做纵链事实校准：保留153个metric IDs的可计算性，并按指标权威第8节逐路径校准最小原始字段合同；删除不能映射到authority、Task 1公共事实或最小journal的generic framework/第二状态机字段。condition ID只作稳定身份，行为读取结构化字段。写inventory后逐root原子commit；resume扫描文件存在性，不执行repair/compaction。
 
-**目标：** 生成canonical conditions/roots/references/challenges，并计算所有attempt/provider/disk上限；实现只读`plan`命令。
+#### 7. 状态真值owner与失败作用域变化
 
-**Files:**
+`RunStore`只拥有文件是否committed；协议状态仍由engine/ledger。重复相同key+相同内容可跳过，冲突内容停止run；schema/catalog全局错误停止run；单root自然失败仍写结果。
 
-- Modify: `src/tokenshare/experiments/slim_v2/profiles.py`
-- Create: `src/tokenshare/experiments/slim_v2/cli.py`
-- Modify: `tests/experiments/slim_v2/test_profiles.py`
-- Create: `tests/experiments/slim_v2/test_cli_plan.py`
+#### 8. 风险驱动验证场景与命令
 
-**Tests / exact names:**
+覆盖UTF-8/catalog、schema跨模块合同、canonical condition ID维度、逐root派生常量、原子冲突、completed-key扫描和unknown terminal事实。当前profile/case/CLI plan基线为`16 passed in 1.05s`；校准后运行：
 
-- `test_full_condition_and_root_counts_match_canonical_inventory`
-- `test_full_attempt_and_provider_call_hard_caps_are_derived_from_inventory`
-- `test_full_hard_upper_includes_four_hundred_twenty_six_point_seventeen_gib_online_term`
-- `test_exp3_reference_inventory_is_separate_from_paper_denominator`
-- `test_exp4_full_challenge_quotas_and_mode_expansion_are_exact`
-- `test_representative_inventory_and_provider_call_hard_cap_are_exact`
-- `test_plan_prints_estimate_and_hard_upper_bytes_without_loading_secret_or_provider`
-- `test_plan_reports_exp2_and_exp3_reference_ceilings_from_frozen_units`
+```powershell
+conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.py tests/experiments/slim_v2/test_case_source.py tests/experiments/slim_v2/test_profiles.py tests/experiments/slim_v2/test_cli_plan.py -q
+```
 
-**Dependencies:** Task 2。
+#### 9. 完成标准
 
-**Allowed writes:** 仅上述四个文件。
+153个metric IDs集合不变，指标权威第8节原始字段路径合同逐项闭合；Full/Representative全部冻结数值与逐root公式一致；陈旧Exp3/4 inventory常量不再出现在active正文；Task 1结果能写、读、skip。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 3/6 owner并完成heartbeat交棒，不得自行继续Task 3。
 
-- [ ] **Step 1: 写失败测试。** Full精确断言论文roots 7,554、加references executions 7,660、Exp3 planned 17,148/attempt upper 54,372、Exp4 9,702/15,876、真实call hard cap 10,902；representative断言Exp1 4、Exp2 12、Exp3 8+2 refs、Exp4 44、Exp5 4，Exp1 planned units 19及真实call hard cap 89。89是从冻结inventory派生的preflight硬上限，实际早停可更低。
-- [ ] **Step 2: 运行先失败命令。**
+#### 10. 明确非目标
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_profiles.py tests/experiments/slim_v2/test_cli_plan.py -q`
+不实现通用状态机、checkpoint generation authority、日志框架、固定句柄魔数、通用资源治理、provider或场景。
 
-  Expected: FAIL，缺`build_profile/build_inventory/build_plan`或`cli plan`。
+### Task 3 Experiment 1/5 回答路径
 
-- [ ] **Step 3: 最小实现profile。** condition ID按设计规格第7.4节固定字段顺序编码；显式保存所有`max_retries,continue_after_terminal_child_failure,worker_count,source_repeat_id`，其中全部实验`continue_after_terminal_child_failure=false`，不借public默认值。Exp1 entry/model=`deepseek_v4_pro_exp1_baseline/deepseek-v4-pro`、thinking high、timeout600、max_tokens300000、worker10、max_retries2；Exp2 workers=`1,3,7,10,30,50`、repeats0/1、max_retries2；Exp3 worker10、max_retries2；Exp4 worker10、max_retries1；Exp5 worker10、max_retries0。Exp3 references写独立inventory；Exp4 plan在mode前生成且满足full quota与representative四行。
-- [ ] **Step 4: 最小实现plan。** 只从profile/catalog算root、planned/simulated/protocol/provider ceilings；按第14.3节同时输出p95 estimate和`B=16MiB`硬上界、integer bytes/GiB、每root余量；禁止解析secret、构造caller或检查价格/余额。
-- [ ] **Step 5: 运行通过命令。**
+#### 1. 目标结果/可运行切片
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_case_source.py tests/experiments/slim_v2/test_profiles.py tests/experiments/slim_v2/test_cli_plan.py -q`
+用fake transport让Exp1和Exp5通过同一生产caller/ExecutionSubmission路径跑完整root；Exp1在protocol terminal后补coverage tail并产生可供Exp2–4读取的唯一trace；Exp5覆盖四endpoint且不运行tail。
 
-  Expected: PASS，本task 8 tests及Task 2 case-source/profile既有tests全部通过。
+#### 2. 创建/修改文件
 
-**完成证据：** full/representative规模表、89与10,902上限、磁盘estimate/hard-upper输出、secret/provider spy零调用、task commit SHA。
+创建`provider.py`,`execution.py`；修改`runtime.py`,`storage.py`,`projector.py`；创建`test_answer_paths.py`和小型provider fixtures。
 
-**Progress更新点：** 记录inventory恒等式与`plan`输出；下一focus写Task 4。
+#### 3. 导出的类、函数、CLI
 
-### Task 4: 普通原子sink、attempt journal与resume
+`ProviderEntryViewV1`,`ProviderCallContextV1`,`call_provider_once`,`project_cost`,`ProviderSubmissionAdapter`,`FixedTraceSubmissionAdapter`,`select_trace_attempt`,`run_coverage_tail`。这些是module-qualified调用点/合同，CLI只在内部接线，本Task不增加package-level re-export或宣称完整命令。
 
-**目标：** 实现普通文件布局、原子canonical写、完成主键扫描、generation与日志上限；不接runtime。
+#### 4. 输入/输出类型
 
-**Files:**
+输入：单entry、prompt/request controls、`ProviderCallContextV1`、注入的`RunStore`、`ExecutionRequest`、三元trace key。输出：`ProviderCallResultV1`,`ExecutionSubmission`,`UnitTraceV1`,`TailSummaryV1`。
 
-- Create: `src/tokenshare/experiments/slim_v2/sink.py`
-- Create: `tests/experiments/slim_v2/test_sink_resume.py`
+#### 5. 上游/下游及精确公共符号
 
-**Tests / exact names:**
+精确复用Chapter 5列出的四个body builder/envelope parser、两领域parser/checker和`ExecutionSubmission`；连接Task 1两领域bridge、Task 2 `RunStore`；下游为Task 4 fixed source。
 
-- `test_atomic_json_replace_never_exposes_partial_canonical_file`
-- `test_existing_same_key_same_payload_is_idempotent_but_conflict_stops`
-- `test_result_file_wins_when_state_lags_after_crash`
-- `test_terminal_attempt_is_reused_and_in_flight_becomes_unknown_without_same_ordinal_retry`
-- `test_first_root_start_survives_new_generation_and_runtime_uses_final_terminal`
-- `test_log_rotation_is_bounded_to_five_files_and_redacts_raw_prompt_and_secret`
-- `test_all_handles_and_temp_files_close_after_each_write`
-- `test_application_file_handle_limit_is_one_hundred_twenty_eight`
+#### 6. 关键控制流/实现逻辑
 
-**Dependencies:** Task 1。
+caller签名显式接收call context与`RunStore`，在send前经该store写intent，最多读取16MiB+1并在所有路径关闭response，写response/terminal且无内部retry；它不创建或拥有第二个store。价格按authority 1.4纯投影。fixed adapter只有trace选择，不包含transport。Exp1先原子commit含完整protocol-origin trace素材的`protocol.json`，再幂等物化protocol traces，tail只补真正未调度且缺key的unit；Exp5四entry走同caller、零replacement。
 
-**Allowed writes:** 仅上述两个文件。
+#### 7. 状态真值owner与失败作用域变化
 
-- [ ] **Step 1: 写故障注入测试。** 在intent、response、result、state commit四个窗口注入异常；用fake process liveness证明unknown transport不盲调；无递归删除断言。
-- [ ] **Step 2: 运行先失败命令。**
+provider网络终态仅由minimal journal记录；协议attempt/retry仍由engine。tail是唯一terminal后Slim-local工作，不改正文事实。transport/envelope/parse/checker失败作为真实attempt结果；model mismatch或journal冲突停止condition。
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_sink_resume.py -q`
+#### 8. 风险驱动验证场景与命令
 
-  Expected: FAIL，缺`RunLayout/AtomicJsonSink/AttemptJournal/ResumeIndex`。
+覆盖single entry、16MiB+1、response close、terminal journal/unknown、无内部retry、secret不落盘、fixed trace零调用、tail不污染正文和四endpoint模型身份：
 
-- [ ] **Step 3: 最小实现。** 同目录unique temp→UTF-8 write→flush/fsync→close→replace；canonical冲突停止；result存在即terminal；首次`root_start_at_ms`跨generation只读；unknown temp仅移动到`state/abandoned_tmp`；Slim app级文件句柄上限128；日志32MiB×5，message≤4KiB。
-- [ ] **Step 4: 运行通过命令。**
+```powershell
+conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_answer_paths.py tests/experiments/slim_v2/test_system_vertical.py -q
+```
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_sink_resume.py -q`
+#### 9. 完成标准
 
-  Expected: PASS，8 tests passed，测试结束无open handle/background process。
+fake transport下Exp1/5两领域均完成生产路径；每个Exp1 planned unit至多一个trace key；tail前后root status/runtime相同；fixed selection没有可达transport fallback。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 4/6 owner并完成heartbeat交棒，不得自行继续Task 4。
 
-**完成证据：** 四crash窗口输出、conflict错误、generation timing断言、handle/temp/log上界、task commit SHA。
+#### 10. 明确非目标
 
-**Progress更新点：** 记录普通主键和crash语义；下一focus写Task 5。
+不调用真实provider，不实现selector、预算、response bank、hard deadline child或独立answer service。
 
-### Task 5: 冻结pricing纯函数
+### Task 4 Experiment 2–4 系统场景路径
 
-**目标：** 只根据raw usage/model/request UTC投影固定CNY成本；价格不参与运行准入。
+#### 1. 目标结果/可运行切片
 
-**Files:**
+用Exp1 fake traces完整运行Exp2六worker、Exp3五fault/worker death/reference和Exp4 11-mode challenge，全部真实经过现有system/plugin/checker，provider calls为0。
 
-- Create: `src/tokenshare/experiments/slim_v2/pricing.py`
-- Create: `tests/experiments/slim_v2/test_pricing.py`
+#### 2. 创建/修改文件
 
-**Tests / exact names:**
+创建`scenarios.py`,`test_scenarios.py`；按需修改`runtime.py`,`execution.py`,`projector.py`，不创建额外scenario framework。
 
-- `test_deepseek_peak_half_open_boundaries_use_attempt_request_start`
-- `test_deepseek_off_peak_cache_split_cost_matches_authority`
-- `test_siliconflow_four_endpoint_prices_match_authority`
-- `test_qwen_prompt_tokens_all_use_input_price_without_free_cache_assumption`
-- `test_reasoning_tokens_are_completion_subset_and_never_double_charged`
-- `test_missing_required_usage_returns_null_reason_without_blocking_run`
-- `test_exp3_simulated_cost_keeps_source_tier_and_unperturbed_prompt_cache`
-- `test_inconsistent_prompt_cache_split_returns_null_usage_cost_reason`
-- `test_inconsistent_total_prompt_completion_returns_null_usage_cost_reason`
+#### 3. 导出的类、函数、CLI
 
-**Dependencies:** Task 1。
+`build_scenario`,`build_exp3_reference`,`build_challenge_plan`及最小hook/collector类；没有新的公开CLI。
 
-**Allowed writes:** 仅上述两个文件。
+#### 4. 输入/输出类型
 
-- [ ] **Step 1: 写数值失败测试。** 覆盖09:00/12:00/14:00/18:00 Asia/Shanghai半开边界、四SiliconFlow endpoint、cache缺失、reasoning诊断与Exp3模拟completion替换；另断言`prompt_tokens=cache_hit+cache_miss`和`total_tokens=prompt+completion`，任一不一致时受影响usage/cost为null并写固定reason，且不阻止root。
-- [ ] **Step 2: 运行先失败命令。**
+输入：结构化`RootInventoryV1`、fixed trace source、planned units。输出：现有scheduler/policy/hooks/backend参数和真实observations，最终仍是`RootResultV1`。
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_pricing.py -q`
+#### 5. 上游/下游及精确公共符号
 
-  Expected: FAIL，缺`project_actual_cost/project_simulated_cost`。
+使用`LogicalSourceLatencyScheduler`,`RuntimeHooks`,`ProtocolMechanismPolicy`,`ProcessWorkerBackend`,`WorkerTerminationPolicy`以及engine recovery/requeue；普通并发先使用`ThreadWorkerBackend`做证据测试。
 
-- [ ] **Step 3: 最小实现。** 版本常量固定为`slim_v2.pricing.2026-08-20`。CNY/1M：DeepSeek off-peak hit/miss/output=`0.15/4.50/13.50`、peak=`0.30/9.00/27.00`；GLM=`2.00/8.00/28.00`、Qwen input/output=`0.50/2.00`且无独立hit、MiniMax=`0.21/2.10/8.40`、SiliconFlow DeepSeek=`0.20/2.00/8.00`。峰段为Asia/Shanghai `[09:00,12:00)`与`[14:00,18:00)`；只计完整completion一次；缺输入返回`cost=None,usage_status,missing_reason`，不抛准入错误、不联网。
-- [ ] **Step 4: 运行通过命令。**
+#### 6. 关键控制流/实现逻辑
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_pricing.py -q`
+先实测Thread在Factorization k>1和Lean fake fixed-DAG下的unit/attempt/canonical/checker事实完整性；通过即使用Thread。若Thread出现明确失败证据，先验证现有`ProcessWorkerBackend`能否直接闭合普通场景；只有Thread与现有Process普通场景都不能闭合时，才提出Slim-local bounded-process facade作为条件性补救并按接力规则审议。worker death直接使用Process。Exp3/4判断全部读取结构化字段，禁止解析condition ID。
 
-  Expected: PASS，9 tests passed。
+#### 7. 状态真值owner与失败作用域变化
 
-**完成证据：** 边界数值表、reasoning不双算断言、network/budget spy零调用、task commit SHA。
+Slim只配置fault/challenge/mode并记录实际hook动作；recovery、requeue、death、canonical、root status由existing engine/backend/plugin拥有。source错配或transport attempt停止condition；实验性失败保留root行；Thread验收失败只触发backend选择证据，不表示shared系统失败。
 
-**Progress更新点：** 记录pricing版本与数值测试；下一focus写Task 6。
+#### 8. 风险驱动验证场景与命令
 
-### Task 6: single-entry bounded provider one-call
+覆盖Thread事实完整性、Process真实death、Exp2 logical capacity/early stop、Exp3 ordinal0与replacement、Exp4真实组合消融/mode-blind、全部零transport：
 
-**目标：** 用fake transport闭合Exp1/5将实际使用的一次调用能力、16MiB网络读取上限、journal、model/usage和secret边界；不发真实请求。
+```powershell
+conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios.py tests/experiments/slim_v2/test_answer_paths.py -q
+```
 
-**Files:**
+#### 9. 完成标准
 
-- Create: `src/tokenshare/experiments/slim_v2/provider.py`
-- Create: `tests/experiments/slim_v2/test_provider.py`
-- Create: `tests/experiments/slim_v2/fixtures/provider_envelopes.json`
+Exp2–4代表性root均一次`run_root`且0 provider calls；Thread选择有证据；death使用真实Process facts；Exp4六个双机制mode在单次root中真实同时生效；第二个里程碑review关闭范围内Critical/Important。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 5/6 owner并完成heartbeat交棒，不得自行继续Task 5。
 
-**Tests / exact names:**
+#### 10. 明确非目标
 
-- `test_load_single_entry_view_ignores_selector_pricing_digest_and_moves_plain_key_to_env`
-- `test_call_once_deepseek_builds_frozen_body_and_persists_intent_response_terminal`
-- `test_call_once_siliconflow_extracts_raw_usage_reasoning_latency_and_model`
-- `test_call_once_never_retries_transport_http_envelope_or_parser_failure`
-- `test_bounded_read_closes_response_at_sixteen_mib_plus_one_and_records_terminal_error`
-- `test_http_response_closes_exactly_once_on_success_http_error_and_envelope_error`
-- `test_null_or_non_string_content_is_provider_envelope_invalid`
-- `test_resolved_model_missing_or_mismatch_is_explicit_condition_stop_result`
-- `test_provider_outputs_and_errors_contain_no_api_key_or_authorization_header`
+不预建bounded-process facade，不生成Slim canonical/recovery/worker/root状态，不增加fault/challenge，不运行真实Lean二进制或provider。
 
-**Dependencies:** Tasks 1, 4。
+### Task 5 统一 reducer
 
-**Allowed writes:** 仅上述三个文件。
+#### 1. 目标结果/可运行切片
 
-- [ ] **Step 1: 写fake transport失败测试。** fake response逐块提供16MiB+1、记录`close()`、计数send次数；成功、HTTP error、envelope/parser error与超限四类terminal路径均断言response `close()`恰好一次；fake clock固定request UTC与`perf_counter`；secret sentinel扫描所有journal/raw/error。
-- [ ] **Step 2: 运行先失败命令。**
+一个`reduce_run()`从golden run目录生成Experiment 1–5全部表和153个metric IDs，固定分母、配对、四端、bootstrap、null传播与tail隔离全部闭合。
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_provider.py -q`
+#### 2. 创建/修改文件
 
-  Expected: FAIL，缺`load_provider_entry_view/BoundedUrlLibTransport/call_once`。
+创建`reducer.py`,`test_reducer_golden.py`及少量golden run fixtures；不为每个实验建立独立reducer模块。
 
-- [ ] **Step 3: 最小实现。** 复用当前public body builders/envelope parsers和`AIAPIProviderEntry`形状；Slim-local urllib读取`response_max_bytes+1`，其中`response_max_bytes=16 MiB`；从取得response起用单一`try/finally`覆盖读取、持久化与解析，所有terminal路径恰好close一次；一次调用无内部retry；intent在send前原子写，response先于terminal；错误有界4KiB且不含header/secret。
-- [ ] **Step 4: 运行通过命令。**
+#### 3. 导出的类、函数、CLI
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_provider.py -q`
+`reduce_run`,`metric_ids`和少量纯统计函数；`reduce` CLI在Task 6接通。
 
-  Expected: PASS，9 tests passed，fake send count每case精确为0或1，response close count精确为1。
+#### 4. 输入/输出类型
 
-**完成证据：** 16MiB+1 close、一次调用计数、terminal journal、model identity、secret扫描、task commit SHA。
+输入：一个run目录的inventory、committed root results、Exp3 references。输出：`metrics/tables/*.jsonl`,`*.csv`,`summary.json`。
 
-**Progress更新点：** 记录provider只经fake验证且真实call=0；下一focus写Task 7。
+#### 5. 上游/下游及精确公共符号
 
-### Task 7: provider/fixed结果到公共submission的薄execution bridge
+上游只读Task 2 `RunStore.iter_*`；公式只以metrics authority为准。下游为Task 6 CLI与论文分析，不依赖runtime/plugin/provider。
 
-**目标：** 把caller结果或预构造fixed selection转换为Factorization/Lean公共submission，保留raw/parse/failure；不运行root。
+#### 6. 关键控制流/实现逻辑
 
-**Files:**
+流式join inventory和results，按table/slice处理；rate重算固定分母；pair/quadruple保持case/repeat/arms不可拆；bootstrap固定10,000和seed 20260820；raw/system目录不可读；成功后原子写最终表。
 
-- Create: `src/tokenshare/experiments/slim_v2/execution.py`
-- Create: `tests/experiments/slim_v2/test_execution.py`
+#### 7. 状态真值owner与失败作用域变化
 
-**Tests / exact names:**
+reducer只计算，不更改任何root/attempt。缺result仍留固定分母并输出null/reason；不适用为null而非0；单表公式错误阻断reduce，不回写run。
 
-- `test_factorization_provider_result_parses_and_builds_execution_submission`
-- `test_lean_provider_result_normalizes_proof_submission_with_fake_checker_boundary`
-- `test_parse_failure_keeps_raw_response_and_does_not_call_provider_again`
-- `test_provider_failure_projects_explicit_result_kind_and_usage_status`
-- `test_fixed_submission_never_exposes_transport_entrypoint`
+#### 8. 风险驱动验证场景与命令
 
-**Dependencies:** Tasks 1, 6；fixed selection使用测试内对象，Task 10再接真实trace source。
+用表驱动golden fixture统一覆盖153 IDs、固定分母、tail隔离、独立pair eligibility、六组quadruple、type-7 quantile、sample variance、bootstrap阈值和null传播：
 
-**Allowed writes:** 仅上述两个文件。
+```powershell
+conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_golden.py -q
+```
 
-- [ ] **Step 1: 写两领域失败测试。** 使用最小公共`ExecutionRequest` fixture，spy断言provider结果只解析一次，fixed path无法调用transport。
-- [ ] **Step 2: 运行先失败命令。**
+#### 9. 完成标准
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_execution.py -q`
+metric ID集合精确153/153；所有公式方向与authority一致；Exp2–4无actual provider consumption；reducer不导入或调用runtime/checker/provider且不加载raw/system全目录。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 6/6 owner并完成heartbeat交棒，不得自行继续Task 6。
 
-  Expected: FAIL，缺`ProviderExecutionBridge/FixedSelectionExecutionBridge`。
+#### 10. 明确非目标
 
-- [ ] **Step 3: 最小实现。** provider bridge调用领域parser并构造系统`ExecutionSubmission`；Lean再走公开normalize边界；raw refs/parse failures/usage/model/result kind完整；bridge不做重试、价格、领域正确性或scenario选择。fixed bridge只消费显式selection对象。
-- [ ] **Step 4: 运行通过命令。**
+不建立formula graph、metric registry、publication eligibility、在线报告service或每实验独立框架。
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_execution.py -q`
+### Task 6 CLI、resume与representative readiness
 
-  Expected: PASS，5 tests passed。
+#### 1. 目标结果/可运行切片
 
-**完成证据：** 两领域submission字段快照、parser/provider失败路径、fixed transport spy零调用、task commit SHA。
+接通全部原子CLI、run-all、resume、preflight和全离线E2E；通过后立即进入真实representative下一阶段，不继续扩建设施。
 
-**Progress更新点：** 记录execution bridge边界；下一focus写Task 8。
+#### 2. 创建/修改文件
 
-### Task 8: Factorization单root垂直接线与基础projector
+修改`cli.py`,`runtime.py`,`storage.py`,`projector.py`；创建`test_cli_e2e.py`，必要时复用全部前序fixtures。
 
-**目标：** 用fake provider完成`case → 每root独占对象 → 一次run_root → RootResultV1`，验证真实Factorization plugin/runtime但不调用网络。
+#### 3. 导出的类、函数、CLI
 
-**Files:**
+`run_experiment`,`main`以及第2章冻结的`plan/run/run-all/reduce/representative`命令。
 
-- Create: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Create: `src/tokenshare/experiments/slim_v2/projector.py`
-- Create: `tests/experiments/slim_v2/test_runtime_adapter.py`
-- Create: `tests/experiments/slim_v2/test_projector_schema.py`
+#### 4. 输入/输出类型
 
-**Tests / exact names:**
+输入：profile、experiment、run ID、显式source目录、resume标志。输出：完整run目录、exit code、metrics文件和清晰failure scope。
 
-- `test_factorization_single_root_calls_public_coordinator_once_and_checks_final_product`
-- `test_each_root_owns_distinct_store_ledger_engine_plugin_backend_and_coordinator`
-- `test_root_lifecycle_start_precedes_dispatch_and_runtime_equals_terminal_minus_start`
-- `test_projector_joins_current_task_events_store_submission_verification_and_canonical`
-- `test_protocol_completed_does_not_replace_independent_verified_correct`
-- `test_infrastructure_exception_still_projects_one_fixed_denominator_row`
-- `test_projected_leaf_paths_match_schema_contract`
-- `test_projector_propagates_inconsistent_usage_as_null_with_fixed_reason_without_blocking_root`
-- `test_valid_deepseek_usage_projects_and_persists_pricing_version_tier_and_cost`
+#### 5. 上游/下游及精确公共符号
 
-**Dependencies:** Tasks 1, 4, 5, 7。
+组合Tasks 1–5公开符号；最终系统调用仍只有`ProtocolRunCoordinator.run_root`，Exp2–4 source只能显式传入。
 
-**Allowed writes:** 仅上述四个文件。
+#### 6. 关键控制流/实现逻辑
 
-- [ ] **Step 1: 写fake-provider root失败测试。** 使用一个小Factorization case、fake submission和真实public coordinator/plugin；spy要求`run_root`调用一次、两个roots对象identity不同；有效DeepSeek usage在一次真实projector路径中必须调用Task 5 pricing纯函数，并把`pricing_version,pricing_tier,cost_estimate_cny`同时写入attempt与root资源投影。
-- [ ] **Step 2: 运行先失败命令。**
+preflight在secret/runtime前校验inventory、依赖、source closure、entry/model、磁盘和调用上限；roots串行；每root前检查下一root所需空间；resume扫描committed root/trace/terminal call；run-all按`exp1→exp2→exp3→exp4→exp5→reduce`并显式传source；representative调用相同内部路径。
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_projector_schema.py -q`
+#### 7. 状态真值owner与失败作用域变化
 
-  Expected: FAIL，缺`run_factorization_root/project_root_result`。
+CLI只拥有调度与退出码。单root自然失败继续；condition identity/source/model接线错停止condition并为剩余预注册roots写infra-invalid；catalog/run store/disk等全局错误安全停止run；resume跳过不是协议终态声明。
 
-- [ ] **Step 3: 最小runtime装配。** 严格按设计规格4.1创建root独占ArtifactStore/EventLedger/ProtocolEngine/adapter/bridge/backend/coordinator/request；显式设置retries、timing policy、whole_root和continue flag；调用一次run_root。
-- [ ] **Step 4: 最小projector。** 只读当前task events/store/plugin/journals；独立乘积检查；按最早失败边界分类；有效actual usage调用Task 5 pricing并持久化version/tier/cost到attempt/root，usage关系不一致时把受影响usage/cost投影为null+固定reason但不改变root实验结果；忽略ledger binding和防伪refs语义；异常也生成固定身份row。
-- [ ] **Step 5: 运行通过命令。**
+#### 8. 风险驱动验证场景与命令
 
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_projector_schema.py tests/experiments/slim_v2/test_pricing.py -q`
-
-  Expected: PASS，本task 9 tests与pricing纯函数合同全部通过。
-
-**完成证据：** coordinator call count=1、对象不跨root、lifecycle恒等式、field set闭合、task commit SHA。
-
-**Progress更新点：** 记录首条Factorization离线垂直路径；下一focus写Task 9A。
-
-### Task 9A: Thread backend验收与领域决定冻结
-
-**目标：** 只用Factorization真实k>1与Lean fake/固定fixture判断每个领域的Thread backend是否保持事实完整，并把representative/full共用的领域决定冻结；本task不实现process facade。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Modify: `tests/experiments/slim_v2/test_runtime_adapter.py`
-- Create: `tests/experiments/slim_v2/fixtures/lean_fake_case.json`
-
-**Tests / exact names:**
-
-- `test_factorization_thread_backend_k_gt_one_preserves_unit_attempt_and_canonical_facts`
-- `test_lean_thread_backend_fixed_dag_fake_checker_has_no_state_loss_or_cross_unit_mix`
-- `test_backend_decision_is_frozen_per_domain_for_representative_and_full`
-- `test_thread_acceptance_failure_records_domain_fallback_reason_without_shared_changes`
-
-**Dependencies:** Task 8。
-
-**Allowed writes:** 仅上述三个文件；shared runtime/plugin/executor只读。
-
-- [ ] **Step 1: 写Thread验收失败测试。** 分别运行Factorization k=3/10与Lean fixed-DAG fake-checker k=3/10，断言unit/attempt/canonical/checker身份；确定性fixture产生事实丢失时只记录该领域fallback reason，不构造process backend。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: FAIL，缺领域Thread acceptance与冻结decision；不得调用Lean二进制。
-
-- [ ] **Step 3: 最小实现。** 每领域执行同一focused acceptance合同；通过则冻结`thread`，失败则冻结`bounded_process_required`及确定性原因。同领域representative/full读取同一decision；worker-death固定process，不进入本分支。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: PASS，本task 4 tests与Task 8 runtime/projector合同全部通过，Lean subprocess spy=0。
-
-**完成证据：** 两领域Thread验收事实、冻结decision/fallback reason、rep/full identity、task implementation commit SHA。
-
-**Progress更新点：** 写明每领域Thread验收结论；下一focus写Task 9B。
-
-### Task 9B: Slim-local bounded-process facade与统一资源生命周期
-
-**目标：** 只为Task 9A判定需要fallback的领域实现bounded-process facade，并验收physical pool、queue、permit、buffer、句柄和结束清理；shared保持只读。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Modify: `src/tokenshare/experiments/slim_v2/execution.py`
-- Create: `tests/experiments/slim_v2/test_resource_bounds.py`
-
-**Tests / exact names:**
-
-- `test_thread_failure_selects_bounded_process_facade_without_shared_changes`
-- `test_exp2_logical_capacity_fifty_uses_at_most_ten_physical_processes_and_queue_fifty`
-- `test_parent_shared_provider_permits_bound_deepseek_ten_and_siliconflow_three`
-- `test_backend_finally_closes_manager_queue_semaphore_threads_processes_and_permits`
-- `test_response_and_fixed_trace_buffers_respect_one_hundred_sixty_forty_eight_and_one_hundred_twenty_eight_mib_bounds`
-- `test_application_file_handles_never_exceed_one_hundred_twenty_eight`
-- `test_fixed_trace_content_read_semaphore_is_capped_at_eight`
-
-**Dependencies:** Task 9A。
-
-**Allowed writes:** 仅上述三个文件；shared runtime/plugin/executor只读。
-
-- [ ] **Step 1: 写资源失败测试。** 注入Task 9A的fallback decision；spy记录physical processes、queue depth、parent共享permit、response/fixed buffers、open handles以及finally后的live children/borrowed permits。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_resource_bounds.py tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_execution.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: FAIL，缺bounded-process facade与资源生命周期实现；既有runtime/execution/projector合同仍必须被收集。
-
-- [ ] **Step 3: 最小实现fallback。** 仅在decision为`bounded_process_required`时包装现有process prepare/export接缝；physical pool≤10、queue≤50；Exp2 logical capacity仍取condition。真实provider permit由parent创建并跨进程共享，DeepSeek≤10、SiliconFlow≤3且`finally`释放；fixed trace read semaphore=8；16MiB单响应与并发上限共同约束Exp1约160MiB、Exp5约48MiB、fixed trace约128MiB；app句柄≤128。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_resource_bounds.py tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_execution.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: PASS，本task 7 tests及全部被修改模块既有合同通过；结束时`active_children=0`且borrowed permits=0。
-
-**完成证据：** k=50/physical≤10/queue≤50、permit≤10/3、buffer/handle上界、生命周期清理、task implementation commit SHA。两种backend均不能闭合时按relay第7.1节执行代理授权法定人数，不预改shared。
-
-**Progress更新点：** 记录最终领域backend和资源证据；下一focus写Task 10。
-
-### Task 10: Exp1唯一UnitTrace与Exp2–4严格fixed lookup
-
-**目标：** 实现三元键trace原子commit、普通语义核对、exact ordinal/last fallback和零transport source selection。
-
-**Files:**
-
-- Create: `src/tokenshare/experiments/slim_v2/trace_source.py`
-- Create: `tests/experiments/slim_v2/test_trace_source.py`
-
-**Tests / exact names:**
-
-- `test_unit_trace_key_is_case_source_repeat_zero_and_planned_unit`
-- `test_protocol_and_coverage_tail_cannot_commit_same_planned_unit_twice`
-- `test_trace_requires_at_least_one_monotonic_natural_attempt`
-- `test_exact_ordinal_is_selected_when_present`
-- `test_missing_ordinal_uses_last_natural_attempt_and_preserves_current_ordinal`
-- `test_factorization_range_and_lean_node_dependency_fields_must_match`
-- `test_duplicate_missing_empty_or_wrong_model_trace_stops_without_transport_fallback`
-- `test_reconstructed_prompt_and_dependencies_equal_exp1_plan_output`
-
-**Dependencies:** Tasks 1, 4, 7。
-
-**Allowed writes:** 仅上述两个文件。
-
-- [ ] **Step 1: 写失败测试。** 构造protocol/tail、ordinals 0/1/2、source失败result、Factorization/Lean语义错和transport spy；逐字比较当前plan重建prompt/dependency输入。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_trace_source.py -q`
-
-  Expected: FAIL，缺`UnitTraceStore/FixedTraceSource.select_attempt`。
-
-- [ ] **Step 3: 最小实现。** 每planned unit一条原子JSON；source key不含condition/worker/fault/mode/current ordinal；exact优先，缺失取max ordinal；返回source ordinal/origin/result/raw/usage/latency/cost/model并保持当前ordinal供Exp3扰动；任何非法source都不创建caller。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_trace_source.py -q`
-
-  Expected: PASS，8 tests passed，transport spy=0。
-
-**完成证据：** key/ordinary semantics/exact/fallback snapshots、duplicate错误、prompt/dependency equality、task commit SHA。
-
-**Progress更新点：** 记录source lookup合同；下一focus写Task 11。
-
-### Task 11: Exp1逐root coverage tail与崩溃恢复
-
-**目标：** 在正常root terminal后、下一root start前只补unscheduled且无protocol trace的planned units，资源与正文隔离。
-
-**Files:**
-
-- Create: `src/tokenshare/experiments/slim_v2/coverage_tail.py`
-- Modify: `src/tokenshare/experiments/slim_v2/execution.py`
-- Modify: `src/tokenshare/experiments/slim_v2/projector.py`
-- Create: `tests/experiments/slim_v2/test_coverage_tail.py`
-
-**Tests / exact names:**
-
-- `test_tail_targets_are_sorted_unscheduled_minus_protocol_trace_ids`
-- `test_tail_never_submits_to_terminal_protocol_or_changes_root_result_and_runtime`
-- `test_tail_uses_same_request_prompt_dependencies_provider_and_controls`
-- `test_tail_stops_on_first_accepted_or_after_three_natural_attempts`
-- `test_tail_failure_record_still_closes_trace_key_and_counts_failure_unit`
-- `test_tail_summary_counts_targets_recorded_success_failure_attempt_tokens_and_cost`
-- `test_protocol_and_tail_trace_union_equals_planned_units_exactly_once`
-- `test_resume_skips_protocol_and_committed_tail_units_and_only_fills_missing_key`
-- `test_next_root_start_occurs_after_tail_terminal`
-- `test_tail_commit_failure_duplicate_or_illegal_target_stops_before_next_root_start`
-- `test_no_tail_target_uses_exact_not_needed_null_zero_contract_without_caller`
-
-**Dependencies:** Tasks 8, 10；provider使用Task 6 fake transport。
-
-**Allowed writes:** 仅上述四个文件。
-
-- [ ] **Step 1: 写fake tail失败测试。** fixture包含accepted ordinal0、accepted ordinal2、三次失败、pre-dispatch失败与中断后已commit trace；clock断言root terminal/tail/next root顺序；分别注入sink commit failure、duplicate key与非法target并断言下一root callback从未执行。无target时逐字段断言started/terminal为null、wall=0、status=`not_needed`、success/failure/attempt/token/cost均为0且caller count=0。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_coverage_tail.py -q`
-
-  Expected: FAIL，缺`run_coverage_tail`和tail projection。
-
-- [ ] **Step 3: 最小实现。** 输入冻结plan、runtime unscheduled IDs、protocol trace keys、同caller/parser/verifier/checker；每target最多3自然attempts；checker仅决定继续，不创建protocol attempt/canonical/merge；先写trace再更新tail state；summary守恒式固定。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_coverage_tail.py tests/experiments/slim_v2/test_execution.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: PASS，本task 11 tests及被修改execution/projector既有合同全部通过；所有provider calls来自fake transport，失败注入后next-root count=0。
-
-**完成证据：** target集合、summary守恒、protocol runtime不变、跨root时序、resume调用计数、task commit SHA。
-
-**Progress更新点：** 记录Exp1 protocol/tail闭合；下一focus写Task 12。
-
-### Task 12: Experiment 2 fixed replay logical worker扩展
-
-**目标：** 让同一Exp1 plan/trace/source latency在1/3/7/10/30/50容量下真实推进逻辑调度，Exp2当次provider calls恒0。
-
-**Files:**
-
-- Create: `src/tokenshare/experiments/slim_v2/scenarios.py`
-- Modify: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Create: `tests/experiments/slim_v2/test_scenarios_exp2.py`
-
-**Tests / exact names:**
-
-- `test_exp2_inherits_exp1_split_units_prompt_and_dependencies_exactly`
-- `test_exp2_worker_one_three_seven_ten_thirty_fifty_use_logical_scheduler_capacity`
-- `test_exp2_one_ten_fifty_makespan_peak_utilization_and_early_stop_match_discrete_events`
-- `test_exp2_repeat_id_never_changes_source_repeat_zero_lookup`
-- `test_exp2_max_retries_two_uses_exact_then_last_attempt_fallback`
-- `test_exp2_actual_provider_fields_are_null_and_transport_count_is_zero`
-- `test_exp2_paired_worker_one_to_ten_and_fifty_identity_is_complete`
-
-**Dependencies:** Tasks 9B, 10。
-
-**Allowed writes:** 仅上述三个文件。
-
-- [ ] **Step 1: 写逻辑事件失败测试。** 用固定latencies手算w1/w10/w50 completion order/makespan/worker intervals/utilization；早停fixture保留unscheduled；repeat0/1命中同source。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp2.py -q`
-
-  Expected: FAIL，缺`build_exp2_scenario/run_exp2_root`。
-
-- [ ] **Step 3: 最小实现。** whole_root、`logical_source_latency_1x`、公共LogicalSourceLatencyScheduler；worker只改capacity；从profile显式取max_retries=2；记录runtime observation与source consumption；任何transport attempt停止condition。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp2.py tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_resource_bounds.py -q`
-
-  Expected: PASS，本task 7 tests及被修改runtime/resource既有合同全部通过，provider/transport count=0。
-
-**完成证据：** 六worker容量、手算makespan、pair identity、source repeat、零调用、task commit SHA。
-
-**Progress更新点：** 记录Exp2路径闭合；下一focus写Task 13。
-
-### Task 13: Experiment 3五fault、确定性扰动与辅助reference
-
-**目标：** 实现rate-fault target/ordinal0动作、source与simulated资源、同case/repeat辅助reference；worker death留给Task 14。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/scenarios.py`
-- Modify: `src/tokenshare/experiments/slim_v2/projector.py`
-- Create: `tests/experiments/slim_v2/test_scenarios_exp3.py`
-
-**Tests / exact names:**
-
-- `test_fault_target_count_is_ceil_positive_at_least_one_and_uniform_over_sorted_planned_ids`
-- `test_each_of_five_faults_injects_only_ordinal_zero_and_replacement_is_clean`
-- `test_false_positive_reaches_real_domain_verification_and_false_negative_forces_rejected_path`
-- `test_no_return_late_submission_and_executor_error_preserve_simulated_consumption`
-- `test_perturbation_identity_uses_only_case_unit_repeat_and_current_ordinal`
-- `test_perturbation_matches_frozen_token_network_latency_formula_and_seed`
-- `test_reasoning_is_completion_subset_and_simulated_cost_keeps_source_tier`
-- `test_one_auxiliary_reference_per_case_repeat_is_reused_across_fault_type_and_rate`
-- `test_exp3_provider_call_count_is_zero_and_resource_semantics_are_simulated_trace_attributed`
-
-**Dependencies:** Tasks 5, 10, 12。
-
-**Allowed writes:** 仅上述三个文件。
-
-- [ ] **Step 1: 写五fault/扰动失败测试。** rates覆盖1%与100%，ordinal0/1，exact/fallback后仍用current ordinal扰动；固定随机输出作golden；真实领域verification用Factorization与Lean fake checker边界。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp3.py -q`
-
-  Expected: FAIL，缺`select_fault_targets/build_rate_fault_hooks/perturb_attempt/build_exp3_reference`。
-
-- [ ] **Step 3: 最小实现。** `false_positive`把ordinal0变为schema-valid领域错误并送真实verification；`false_negative`把原正确ordinal0强制送rejected；`no_return`消费模拟资源后不提交并等lease expiry；`late_submission`在deadline+1ms提交；`executor_error`消费模拟资源后返回明确错误；replacement不重复注入。target为`ceil(rate×planned-first-attempt N)`且正rate至少1，按排序列表均匀选。扰动身份只含`case_id/planned_ai_unit_id/experiment_repeat_id/attempt_ordinal`，seed=`20260820`、version=`slim_v2.exp3_perturbation.v1`；`δ_token,δ_network∈[-0.1,0.1]`，`simulated_generated=max(0,round(completion×(1+δ_token)))`，`simulated_total=max(1,prompt+simulated_generated)`，`δ_latency=0.8δ_token+0.2δ_network`，`simulated_latency=max(1,round(source_latency×(1+δ_latency)))`。reference key=`case_id×repeat_id`且不进paper inventory；logical scheduler消费simulated latency；source与simulated并存。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp3.py tests/experiments/slim_v2/test_scenarios_exp2.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: PASS，本task 9 tests及被修改scenarios/projector既有合同全部通过，provider/transport count=0。
-
-**完成证据：** target golden、五fault observations、扰动golden、reference复用、resource semantics、task commit SHA。
-
-**Progress更新点：** 记录Exp3 rate-fault/reference闭合；下一focus写Task 14。
-
-### Task 14: Experiment 3真实Process worker death与恢复关联
-
-**目标：** 用公共Process backend/termination policy执行dead=1/3、progress=25/50/75，投影PID/exit/progress和original→replacement链。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/scenarios.py`
-- Modify: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Modify: `src/tokenshare/experiments/slim_v2/projector.py`
-- Create: `tests/experiments/slim_v2/test_scenarios_exp3_worker_death.py`
-
-**Tests / exact names:**
-
-- `test_worker_death_always_uses_process_backend_and_frozen_termination_policy`
-- `test_dead_one_three_and_progress_twenty_five_fifty_seventy_five_are_observed_from_real_process_facts`
-- `test_recovery_event_and_new_attempt_form_original_to_replacement_chain`
-- `test_recovery_decision_without_new_attempt_is_not_counted_started_or_reassigned`
-- `test_death_original_and_replacement_attempts_use_simulated_latency_and_tokens`
-- `test_discarded_death_tokens_join_original_attempt_to_noncanonical_simulated_usage`
-- `test_processes_and_sidecars_are_closed_after_root_failure_or_success`
-
-**Dependencies:** Tasks 9B, 13。
-
-**Allowed writes:** 仅上述四个文件。
-
-- [ ] **Step 1: 写Process失败测试。** 使用短小picklable fake execution与真实子进程，不调用Lean/provider；覆盖成功replacement、未启动replacement、root unrecovered与exception cleanup。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp3_worker_death.py -q`
-
-  Expected: FAIL，缺worker-death scenario/projector joins；不得因multiprocessing残留挂起。
-
-- [ ] **Step 3: 最小实现。** 精确构造WorkerTerminationPolicy；只从WorkerExecutionFact与recovery/attempt events投影；max_retries=2；worker death仍用Exp3扰动和logical scheduler；`finally`终止/join全部process/manager/queue。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp3_worker_death.py tests/experiments/slim_v2/test_scenarios_exp3.py tests/experiments/slim_v2/test_scenarios_exp2.py tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_resource_bounds.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: PASS，本task 7 tests及被修改scenarios/runtime/projector全部既有合同通过，结束后无live child/sidecar。
-
-**完成证据：** PID/exit/progress事实、replacement chain、discarded token join、资源清理、task commit SHA。
-
-**Progress更新点：** 记录Exp3 worker-death闭合；下一focus写Task 15。
-
-### Task 15: Experiment 4 mode-blind challenge与11-mode真实消融
-
-**目标：** 冻结full/representative challenge分配、mode-blind注入、11个独立policy展开及实际observation；不计算最终metrics。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/scenarios.py`
-- Modify: `src/tokenshare/experiments/slim_v2/projector.py`
-- Create: `tests/experiments/slim_v2/test_scenarios_exp4.py`
-
-**Tests / exact names:**
-
-- `test_full_challenge_assignment_rotation_and_quotas_are_exact`
-- `test_representative_four_challenge_plans_are_exact`
-- `test_challenge_plan_is_created_before_mode_and_identical_across_eleven_modes`
-- `test_injector_signature_and_behavior_cannot_observe_mode_policy_or_disabled_set`
-- `test_invalid_parser_no_return_and_child_delay_inject_at_frozen_boundaries`
-- `test_eleven_modes_map_to_exact_mechanism_booleans_with_slot_integrity_true_and_retry_one`
-- `test_six_double_modes_run_both_disabled_mechanisms_in_one_root_not_offline_join`
-- `test_observations_come_from_hook_event_checker_facts_not_mode_name`
-- `test_preflight_block_plan_mismatch_and_missed_opportunity_mark_cell_invalid`
-- `test_exp4_provider_calls_are_zero_and_fault_fields_are_null`
-
-**Dependencies:** Tasks 10, 12–13。
-
-**Allowed writes:** 仅上述三个文件。
-
-- [ ] **Step 1: 写challenge/policy失败测试。** full quota、代表四行、11 mode matrix与六个四端集合逐项硬编码；用同一plan对象跨mode；构造target未到边界与到达未注入两种不同结果。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp4.py -q`
-
-  Expected: FAIL，缺`build_exp4_challenge_plans/build_mechanism_policy/ModeBlindChallengeInjector`。
-
-- [ ] **Step 3: 最小实现。** 分domain稳定排序与quota跳过算法；family固定为`INVALID_PARSED_CANDIDATE,PARSER_REQUIRED_CANONICAL_JSON,RECOVERABLE_NO_RETURN,REQUIRED_CHILD_DELAY`，Factorization循环从INVALID开始、Lean从CHILD_DELAY开始，full quotas Factorization=`38/38/37/37`、Lean=`11/11/11/12`。前三类目标为稳定首个planned unit；CHILD_DELAY的Factorization目标为所有含真实divisor ranges，prime取稳定最后required range，Lean取稳定最后required terminal slot。invalid在parser后verification前把Factorization target改成`target_n+1`或Lean proof换成引用不存在标识符；canonical JSON在parser前保持候选字段语义不变；两个no-return在source usage后。representative四plan固定为`factor_v2_hard_138×0/INVALID`、`factor_v2_hard_145×0/PARSER`、`lean_v2_simple_induction_direct_nat_01×0/CHILD_DELAY`、`lean_v2_simple_pure_logic_direct_prop_01×0/NO_RETURN`。injector构造/调用参数不含mode。mode固定为`FULL,NO_VERIFICATION,NO_PARSER_POLICY,NO_REQUEUE,NO_MERGE_GATE,NO_VERIFICATION__NO_PARSER_POLICY,NO_VERIFICATION__NO_REQUEUE,NO_VERIFICATION__NO_MERGE_GATE,NO_PARSER_POLICY__NO_REQUEUE,NO_PARSER_POLICY__NO_MERGE_GATE,NO_REQUEUE__NO_MERGE_GATE`；每mode只映射对应policy布尔，slot integrity恒true。observations由collector join公共事实，不预填预期结果。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_scenarios_exp4.py tests/experiments/slim_v2/test_scenarios_exp3_worker_death.py tests/experiments/slim_v2/test_scenarios_exp3.py tests/experiments/slim_v2/test_scenarios_exp2.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: PASS，本task 10 tests及被修改scenarios/projector全部既有合同通过，provider/transport count=0。
-
-**完成证据：** quota/rotation、injector signature、11 modes、四端identity、validity分类、task commit SHA。
-
-**Progress更新点：** 记录Exp4 scenario闭合；下一focus写Task 16。
-
-### Task 16: Lean fixed-DAG bridge与root recheck投影
-
-**目标：** 用固定lemma-DAG和fake checker闭合Lean provider/fixed execution、依赖readiness、child checker与root checker；不执行Lean二进制。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/execution.py`
-- Modify: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Modify: `src/tokenshare/experiments/slim_v2/projector.py`
-- Create: `tests/experiments/slim_v2/test_lean_bridge.py`
-
-**Tests / exact names:**
-
-- `test_lean_fixed_dag_preserves_planned_unit_node_dependency_prompt_and_readiness`
-- `test_lean_provider_and_fixed_bridges_normalize_candidate_before_checker`
-- `test_child_checker_acceptance_is_required_for_canonical_proof`
-- `test_root_verified_correct_requires_merge_accepted_and_root_checker_accepted`
-- `test_protocol_completed_with_root_checker_rejection_is_not_verified_correct`
-- `test_lean_k_gt_one_fake_checker_keeps_request_checker_and_canonical_identity_aligned`
-- `test_lean_fixture_uses_no_lean_lake_or_catalog_subprocess`
-
-**Dependencies:** Tasks 8, 9B, 10, 15。
-
-**Allowed writes:** 仅上述四个文件；复用Task 9A固定fixture。
-
-- [ ] **Step 1: 写fake checker失败测试。** checker按request ID返回accepted/rejected/environment-error；root merge report独立变化；subprocess spy禁止`lean/lake`。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_lean_bridge.py -q`
-
-  Expected: FAIL，缺Lean root装配/projector规则；不得出现Lean toolchain调用。
-
-- [ ] **Step 3: 最小实现。** root独占LeanRuntimeAdapter；正式构造点保留`check_lean_proof`注入，但测试传fake；provider/fixed bridge走公开parser/normalize；projector分别保存child/root checker并只按双accepted判正确。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_lean_bridge.py tests/experiments/slim_v2/test_execution.py tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_resource_bounds.py tests/experiments/slim_v2/test_projector_schema.py -q`
-
-  Expected: PASS，本task 7 tests及被修改execution/runtime/projector全部既有合同通过，subprocess spy=0。
-
-**完成证据：** DAG/依赖/prompt identity、checker分类、root correctness、k>1对齐、无Lean命令、task commit SHA。
-
-**Progress更新点：** 记录Lean轻量接线闭合；下一focus写Task 17。
-
-### Task 17: Experiment 5四endpoint fake transport与零重试
-
-**目标：** 用同一runner/provider/bridge表达四个SiliconFlow entry、ABCD/BDAC/CADB顺序、in-flight=3、零replacement和first-attempt字段。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/profiles.py`
-- Modify: `src/tokenshare/experiments/slim_v2/provider.py`
-- Modify: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Create: `tests/experiments/slim_v2/test_exp5.py`
-
-**Tests / exact names:**
-
-- `test_exp5_four_entry_model_reasoning_and_request_controls_are_exact`
-- `test_exp5_repeat_model_order_is_abcd_bdac_cadb`
-- `test_exp5_worker_ten_uses_global_provider_in_flight_three`
-- `test_exp5_retry_zero_and_replacement_disabled_allow_one_attempt_per_unit`
-- `test_exp5_first_attempt_transport_parse_checker_taxonomy_is_mutually_exclusive`
-- `test_exp5_model_mismatch_stops_condition_and_writes_remaining_inventory_rows_invalid`
-- `test_exp5_fake_path_uses_same_bounded_caller_bridge_sink_and_schema_as_full`
-- `test_exp5_four_entry_valid_usage_persists_flat_pricing_version_tier_and_cost`
-
-**Dependencies:** Tasks 5, 6, 9B, 16。
-
-**Allowed writes:** 仅上述四个文件。
-
-- [ ] **Step 1: 写四entry失败测试。** fake envelopes覆盖thinking/nonthinking、usage/cache/model mismatch和失败taxonomy；四个valid usage逐entry断言Task 5价格数值、`pricing_version=slim_v2.pricing.2026-08-20`、`pricing_tier=flat`及attempt/root持久化；并发barrier证明最多3；未调度unit保留planned。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_exp5.py -q`
-
-  Expected: FAIL，缺Exp5 condition装配/first-attempt projection。
-
-- [ ] **Step 3: 最小实现。** 四个entry/model固定为`glm_5_2_exp5_v3/zai-org/GLM-5.2`、`qwen3_14b_exp5_v3/Qwen/Qwen3-14B`、`minimax_m2_5_exp5_v3/MiniMaxAI/MiniMax-M2.5`、`deepseek_v3_pro_exp5_v3/Pro/deepseek-ai/DeepSeek-V3`；前三者thinking budget32768，第四个nonthinking。timeout600/max_tokens32768；`max_retries=0`且replacement false；共享semaphore=3；所有valid actual usage复用Task 8已接好的pricing projector并写flat version/tier/cost；model mismatch剩余root写infrastructure-invalid，不换entry。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_exp5.py tests/experiments/slim_v2/test_profiles.py tests/experiments/slim_v2/test_provider.py tests/experiments/slim_v2/test_pricing.py tests/experiments/slim_v2/test_runtime_adapter.py tests/experiments/slim_v2/test_projector_schema.py tests/experiments/slim_v2/test_resource_bounds.py -q`
-
-  Expected: PASS，本task 8 tests及profiles/provider/pricing/runtime/projector/resource全部既有合同通过，全部来自fake transport。
-
-**完成证据：** 四entry snapshot、逐entry pricing version/tier/cost、repeat order、peak in-flight=3、attempt≤1、taxonomy/model fail-stop、task implementation commit SHA。
-
-**Progress更新点：** 记录Exp5 fake闭合且真实call=0；下一focus写Task 18。
-
-### Task 18: reducer流式分区与统一统计内核
-
-**目标：** 建立只读单run目录的inventory/result join、分区、null传播、case-cluster bootstrap与统计纯函数；不实现实验专属表。
-
-**Files:**
-
-- Create: `src/tokenshare/experiments/slim_v2/reducer.py`
-- Create: `tests/experiments/slim_v2/test_reducer_statistics.py`
-- Create: `tests/experiments/slim_v2/test_reducer_streaming.py`
-
-**Tests / exact names:**
-
-- `test_inventory_is_fixed_denominator_and_missing_result_is_null_infrastructure_invalid`
-- `test_ratio_zero_denominator_and_missing_sum_inputs_return_null_with_reason`
-- `test_hyndman_fan_type_seven_quantiles_and_sample_variance_n_minus_one`
-- `test_case_cluster_bootstrap_preserves_strata_repeats_pairs_and_quadruples`
-- `test_bootstrap_uses_ten_thousand_seed_20260820_and_percentile_bounds`
-- `test_interval_is_null_below_five_clusters_or_below_9500_valid_replicates`
-- `test_streaming_partitions_never_load_raw_responses_system_events_or_whole_run`
-- `test_partition_memory_target_is_256_mib_and_work_files_are_rebuildable`
-- `test_reducer_workers_default_one_and_are_capped_at_four`
-- `test_reducer_has_no_runtime_plugin_checker_provider_or_legacy_imports`
-
-**Dependencies:** Tasks 1, 4。
-
-**Allowed writes:** 仅上述三个文件。
-
-- [ ] **Step 1: 写统计golden失败测试。** 小fixture手算rate、median/q25/q75/IQR、sample variance/stddev、paired/quadruple cluster抽样；文件spy拒绝读取responses/system；large synthetic iterator检查bounded state。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_statistics.py tests/experiments/slim_v2/test_reducer_streaming.py -q`
-
-  Expected: FAIL，缺`stream_partitions/reduce_rate/distribution_summary/bootstrap_case_clusters`。
-
-- [ ] **Step 3: 最小实现。** 先流式join inventory/root/reference/challenge为小observation并写`metrics/.work`；一次只载入一个table/slice partition，目标≤256 MiB；reducer workers默认1且只允许1–4；bootstrap抽case并携带strata/全部repeats/arms；成功正式输出原子写，work可重建；不得调用runtime/provider。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_statistics.py tests/experiments/slim_v2/test_reducer_streaming.py -q`
-
-  Expected: PASS，10 tests passed，I/O spy与memory bound通过。
-
-**完成证据：** 统计golden、bootstrap metadata、null reasons、stream/memory/I/O边界、task commit SHA。
-
-**Progress更新点：** 记录统计内核与分区合同；下一focus写Task 19A。
-
-### Task 19A: Reducer Experiment 1正文与coverage-tail隔离
-
-**目标：** 只计算Experiment 1全部必须metric IDs、分布/CI和tail诊断，证明tail不进入正文runtime/token/cost。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/reducer.py`
-- Create: `tests/experiments/slim_v2/test_reducer_exp1.py`
-
-**Tests / exact names:**
-
-- `test_exp1_protocol_only_totals_exclude_coverage_tail_and_sum_root_runtime`
-- `test_exp1_tail_diagnostics_are_separate_and_failure_does_not_change_root_correctness`
-- `test_exp1_root_distributions_and_rate_bootstrap_follow_authority`
-- `test_exp1_exact_totals_do_not_receive_confidence_intervals`
-
-**Dependencies:** Tasks 11, 18。
-
-**Allowed writes:** 仅上述两个文件。
-
-- [ ] **Step 1: 写Exp1 golden失败测试。** run目录同时含protocol/tail、missing usage和自然root失败；逐metric断言value/numerator/denominator/null reason/CI字段与tail隔离。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp1.py -q`
-
-  Expected: FAIL，缺`reduce_exp1`或正式Exp1 metric rows。
-
-- [ ] **Step 3: 最小实现。** 正文只选`trace_origin=protocol`，batch wall求root runtime之和；tail仅产生独立诊断；固定分母与null/CI规则逐ID执行。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp1.py tests/experiments/slim_v2/test_reducer_statistics.py tests/experiments/slim_v2/test_reducer_streaming.py -q`
-
-  Expected: PASS，本task 4 tests及reducer统计/流式既有合同全部通过。
-
-**完成证据：** Exp1 metric snapshot、tail隔离、CI/无CI字段、task implementation commit SHA。
-
-**Progress更新点：** 记录Exp1 reducer闭合；下一focus写Task 19B。
-
-### Task 19B: Reducer Experiment 5首次输出与三repeat资源
-
-**目标：** 只计算Experiment 5全部必须metric IDs、first-attempt互斥taxonomy、实际调用覆盖和三repeat wall-clock统计。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/reducer.py`
-- Create: `tests/experiments/slim_v2/test_reducer_exp5.py`
-
-**Tests / exact names:**
-
-- `test_exp5_first_attempt_nonpass_taxonomy_and_checkable_denominators_are_exact`
-- `test_exp5_actual_call_coverage_tokens_cost_and_three_repeat_wall_clock_are_exact`
-- `test_exp5_root_token_cost_distributions_and_model_wall_sample_stddev_are_exact`
-- `test_exp5_exact_totals_do_not_receive_confidence_intervals`
-
-**Dependencies:** Tasks 17, 18, 19A。
-
-**Allowed writes:** 仅上述两个文件。
-
-- [ ] **Step 1: 写Exp5 golden失败测试。** run目录覆盖transport/parse/checker互斥失败、planned-but-unscheduled早停、usage缺失和三repeat；逐metric断言value/numerator/denominator/null reason/CI字段。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp5.py -q`
-
-  Expected: FAIL，缺`reduce_exp5`或正式Exp5 metric rows。
-
-- [ ] **Step 3: 最小实现。** 只按actual ordinal0 provider calls和冻结互斥优先级分类；model wall只对三个完整批次算sample stddev，不为median加CI；usage缺失按root/null规则传播。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp5.py tests/experiments/slim_v2/test_reducer_exp1.py tests/experiments/slim_v2/test_reducer_statistics.py tests/experiments/slim_v2/test_reducer_streaming.py -q`
-
-  Expected: PASS，本task 4 tests及全部既有reducer合同通过。
-
-**完成证据：** Exp5 metric snapshot、taxonomy、三repeat/CI规则、task implementation commit SHA。
-
-**Progress更新点：** 记录Exp5 reducer闭合；下一focus写Task 20。
-
-### Task 20: Reducer Experiment 2配对扩展性
-
-**目标：** 计算Exp2固定分母、logical timing、source资源、worker并发利用率和每项独立pair eligibility。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/reducer.py`
-- Create: `tests/experiments/slim_v2/test_reducer_exp2.py`
-
-**Tests / exact names:**
-
-- `test_exp2_counts_trace_resources_and_worker_observations_by_worker_repeat_position`
-- `test_exp2_speedup_and_efficiency_require_correct_complete_positive_time_pair`
-- `test_exp2_token_and_cost_multiplier_use_their_own_resource_pair_denominators`
-- `test_exp2_repeat_min_max_and_relative_difference_use_max_minus_min_over_mean`
-- `test_exp2_pair_distributions_ci_and_exact_inventory_counts_are_separated`
-- `test_exp2_never_reports_actual_provider_consumption`
-
-**Dependencies:** Tasks 12, 18, 19B。
-
-**Allowed writes:** 仅上述两个文件。
-
-- [ ] **Step 1: 写配对golden失败测试。** 同case/repeat包含w1/w10/w50、错误root、零时间、缺token、缺cost，确保speed/token/cost各自planned/eligible/ineligible与reason不同。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp2.py -q`
-
-  Expected: FAIL，缺`reduce_exp2`或pair metric rows。
-
-- [ ] **Step 3: 最小实现。** grouping/公式严格按authority 3.2–3.3；repeat汇总只描述，不给两个值CI；counts保持精确；actual usage不出现为当次消费。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp2.py tests/experiments/slim_v2/test_reducer_exp5.py tests/experiments/slim_v2/test_reducer_exp1.py tests/experiments/slim_v2/test_reducer_statistics.py tests/experiments/slim_v2/test_reducer_streaming.py -q`
-
-  Expected: PASS，本task 6 tests及全部既有reducer合同通过。
-
-**完成证据：** pair eligibility snapshots、relative difference golden、零actual usage、task commit SHA。
-
-**Progress更新点：** 记录Exp2 reducer闭合；下一focus写Task 21。
-
-### Task 21: Reducer Experiment 3恢复与模拟资源
-
-**目标：** 计算五fault/death核心计数、candidate/slot rates、fault/reference overhead pairs、discarded资源与kill-progress统计。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/reducer.py`
-- Create: `tests/experiments/slim_v2/test_reducer_exp3.py`
-
-**Tests / exact names:**
-
-- `test_exp3_five_core_counts_and_fixed_root_denominator_are_exact`
-- `test_exp3_wrong_candidate_interception_and_escape_share_candidate_denominator`
-- `test_exp3_replacement_success_reassignment_and_slot_completeness_follow_observations`
-- `test_exp3_fault_and_death_overheads_use_same_case_repeat_reference_and_independent_pair_counts`
-- `test_exp3_discarded_tokens_include_fault_and_worker_death_original_attempts`
-- `test_exp3_kill_progress_signed_mean_variance_ci_and_exact_signed_max_are_exact`
-- `test_exp3_outputs_resource_semantics_simulated_trace_attributed_and_no_actual_calls`
-
-**Dependencies:** Tasks 13–14, 18, 20。
-
-**Allowed writes:** 仅上述两个文件。
-
-- [ ] **Step 1: 写恢复golden失败测试。** 包含injected未dispatch、recovery decision无attempt、successful replacement、unrecovered root、fault/death不同缺失资源与多个death observations。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp3.py -q`
-
-  Expected: FAIL，缺`reduce_exp3`或核心metric rows。
-
-- [ ] **Step 3: 最小实现。** fault type/death condition保持分开；candidate按case cluster；三overhead各自pair eligibility；discarded death tokens按original attempt join；signed mean重采样case，signed max精确无CI；metadata明确simulated。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp3.py tests/experiments/slim_v2/test_reducer_exp2.py tests/experiments/slim_v2/test_reducer_exp5.py tests/experiments/slim_v2/test_reducer_exp1.py tests/experiments/slim_v2/test_reducer_statistics.py tests/experiments/slim_v2/test_reducer_streaming.py -q`
-
-  Expected: PASS，本task 7 tests及全部既有reducer合同通过。
-
-**完成证据：** 五核心count、pair/reason、discarded资源、kill统计、resource metadata、task commit SHA。
-
-**Progress更新点：** 记录Exp3 reducer闭合；下一focus写Task 22。
-
-### Task 22: Reducer Experiment 4有效性、pair与双机制interaction
-
-**目标：** 计算Exp4全部运行/挑战/机制/资源/pair/quadruple指标，严格执行科学cell null规则与三个repeat输出。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/reducer.py`
-- Create: `tests/experiments/slim_v2/test_reducer_exp4.py`
-
-**Tests / exact names:**
-
-- `test_exp4_protocol_start_challenge_opportunity_injection_and_plan_mismatch_are_exact`
-- `test_exp4_invalid_cell_nulls_performance_pair_and_interaction_metrics_with_reason`
-- `test_exp4_transition_counts_losses_and_each_delta_use_independent_pair_eligibility`
-- `test_exp4_challenge_specific_candidate_parser_requeue_and_merge_metrics_use_actual_observations`
-- `test_exp4_six_matched_quadruples_compute_success_completion_and_slot_interaction_penalties`
-- `test_exp4_pair_and_interaction_repeat_zero_one_two_median_min_max_names_are_exact`
-- `test_exp4_five_delta_metric_ids_have_no_median_or_ms_suffix`
-- `test_exp4_counts_and_coverage_checks_remain_exact_without_confidence_intervals`
-
-**Dependencies:** Tasks 15, 18, 21。
-
-**Allowed writes:** 仅上述两个文件。
-
-- [ ] **Step 1: 写四端golden失败测试。** 每个mechanism pair构造FULL/NO_i/NO_j/NO_ij三repeat；另构造preflight block、plan mismatch、missed opportunity、target未到边界和不适用mode。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp4.py -q`
-
-  Expected: FAIL，缺`reduce_exp4`或pair/quadruple rows。
-
-- [ ] **Step 3: 最小实现。** cell valid gate按四条件；专项指标只读actual observations；每delta独立pair counts；四端不可拆case cluster；interaction符号按authority；不适用写null+reason；正式delta ID无额外后缀。
-- [ ] **Step 4: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_exp4.py tests/experiments/slim_v2/test_reducer_exp3.py tests/experiments/slim_v2/test_reducer_exp2.py tests/experiments/slim_v2/test_reducer_exp5.py tests/experiments/slim_v2/test_reducer_exp1.py tests/experiments/slim_v2/test_reducer_statistics.py tests/experiments/slim_v2/test_reducer_streaming.py -q`
-
-  Expected: PASS，本task 8 tests及全部既有reducer合同通过。
-
-**完成证据：** validity/null snapshots、四格transition、六quadruple interaction、repeat字段与exact IDs、task commit SHA。
-
-**Progress更新点：** 记录Exp4 reducer闭合；下一focus写Task 23。
-
-### Task 23: 原子CLI、唯一串行runner、representative 89-call preflight与全离线验收
-
-**目标：** 把已验证组件接成设计规格第7.1节全部原子命令和同管线representative；仍只用fake provider/fixtures，不启动真实representative。
-
-**Files:**
-
-- Modify: `src/tokenshare/experiments/slim_v2/cli.py`
-- Modify: `src/tokenshare/experiments/slim_v2/runtime_adapter.py`
-- Modify: `src/tokenshare/experiments/slim_v2/projector.py`
-- Modify: `src/tokenshare/experiments/slim_v2/sink.py`
-- Create: `tests/experiments/slim_v2/test_cli_integration.py`
-- Create: `tests/experiments/slim_v2/test_representative_preflight.py`
-
-**Tests / exact names:**
-
-- `test_atomic_exp1_exp5_and_exp2_exp3_exp4_with_explicit_source_commands_parse`
-- `test_atomic_exp2_to_exp4_missing_source_fails_before_runtime_or_provider_creation`
-- `test_atomic_exp2_to_exp4_incomplete_wrong_profile_or_trace_closure_source_fails_before_runtime`
-- `test_run_all_orders_exp1_exp2_exp3_exp4_exp5_reduce_and_passes_explicit_source`
-- `test_representative_is_exact_alias_for_run_all_representative_profile`
-- `test_output_root_default_and_explicit_parent_keep_run_id_as_leaf`
-- `test_representative_and_run_all_preflight_finish_before_secret_runtime_or_root_start`
-- `test_root_loop_is_serial_and_exp1_tail_finishes_before_next_root_start`
-- `test_resume_skips_committed_root_trace_and_terminal_attempt_without_duplicate_fake_call`
-- `test_existing_run_without_resume_refuses_overwrite_and_failed_root_is_not_auto_retried`
-- `test_run_checks_estimate_before_start_and_minimum_free_space_before_each_root_then_resumes`
-- `test_condition_fail_stop_writes_remaining_preregistered_rows_infrastructure_invalid`
-- `test_reduce_uses_only_run_dir_and_writes_all_required_jsonl_csv_summary_outputs`
-- `test_representative_preflight_inventory_is_four_twelve_eight_plus_two_forty_four_four`
-- `test_representative_preflight_real_provider_call_hard_cap_is_eighty_nine_and_exp2_to_exp4_zero`
-- `test_full_and_representative_share_cli_runner_adapter_provider_schema_resume_and_reducer_types`
-- `test_run_dir_contains_no_secret_forbidden_authority_or_legacy_runtime_dependency`
-
-**Dependencies:** 全部前序tasks 1–22，包括9A/9B与19A/19B。
-
-**Allowed writes:** 仅上述六个文件。
-
-- [ ] **Step 1: 写CLI integration失败测试。** dependency spies记录构造/调用顺序；fake provider计算call ceilings但不联网；一次人为中断发生在terminal attempt后、result前；atomic Exp2–4分别提供未完成source、错误profile和缺三元trace closure的source，断言在backend/runtime/provider构造前失败且不写论文结果行；静态import scan检查shared只读和legacy禁止依赖。
-- [ ] **Step 2: 运行先失败命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_cli_integration.py tests/experiments/slim_v2/test_representative_preflight.py -q`
-
-  Expected: FAIL，缺完整subcommands/serial loop/representative preflight；不得尝试读取local secret或联网。
-
-- [ ] **Step 3: 最小CLI。** 实现`plan`、五个`run --experiment`、`run-all`、`reduce`、`representative`与`--resume`；默认父目录固定为`TokenShareData/outputs/slim_v2`，显式`--output-root`只替换父目录且`run_id`始终为末级，CLI显式值优先。Exp2–4 source必显式且在任何backend/runtime/provider构造前验证source run terminal、profile相同、所需case和三元trace closure完整；run-all只按依赖传当前Exp1。`representative`严格调用与`run-all --profile representative`相同的内部`preflight_profile()`后继续同一runner，不新增preflight命令或公开flag。开始前要求free space大于运行estimate，每个新root前要求至少`max(512 MiB,4×B)`，不足时安全停并保留state供同run resume；每root`try/finally`关闭资源；单root自然失败继续，接线condition错误写剩余rows后停condition。
-
-  Exact command surface:
-
-  ```text
-  python -m tokenshare.experiments.slim_v2.cli plan --profile <representative|full> --run-id <id> [--output-root <dir>]
-  python -m tokenshare.experiments.slim_v2.cli run --experiment exp1 --profile <p> --run-id <id> [--output-root <dir>] [--resume]
-  python -m tokenshare.experiments.slim_v2.cli run --experiment exp2|exp3|exp4 --profile <p> --run-id <id> --source-run-dir <dir> [--output-root <dir>] [--resume]
-  python -m tokenshare.experiments.slim_v2.cli run --experiment exp5 --profile <p> --run-id <id> [--output-root <dir>] [--resume]
-  python -m tokenshare.experiments.slim_v2.cli run-all --profile <p> --run-id <id> [--output-root <dir>] [--resume]
-  python -m tokenshare.experiments.slim_v2.cli reduce --run-dir <dir>
-  python -m tokenshare.experiments.slim_v2.cli representative --run-id <id> [--output-root <dir>] [--resume]
-  ```
-- [ ] **Step 4: Representative preflight。** `representative`与`run-all`内部第一阶段调用同一个纯`preflight_profile()`，只展开并验证精确inventory/source keys/schema/entry/model/磁盘/调用上限：Exp1 4 roots/19 units、Exp2 12、Exp3 8+2 refs、Exp4 44、Exp5 4；Exp1 hard cap57、Exp5 hard cap32、总89；Exp2–4 caller/transport构造数为0。focused test直接调用纯函数并通过CLI dependency spies证明preflight在secret/runtime/root前完成；不增加公开preflight命令/flag，不读取secret、不调用provider、不运行root。
-- [ ] **Step 5: 运行通过命令。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_cli_integration.py tests/experiments/slim_v2/test_representative_preflight.py -q`
-
-  Expected: PASS，17 tests passed，network/secret/runtime-before-preflight spy=0。
-
-- [ ] **Step 6: 运行全Slim focused suite。**
-
-  Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2 -q`
-
-  Expected: PASS；不得收集任何Lean专项suite、LeanAudit/catalog/lake/lean测试；不得调用真实provider。
-
-**完成证据：** 原子命令matrix、output-root优先级、source preflight、run-all order、serial timeline、resume fake-call count、89-call preflight、全suite pass数与时长、secret/legacy/forbidden scan、task implementation commit SHA。
-
-**Progress更新点：** 记录Stage 3全部tasks完成、全focused suite证据、未解决问题和Stage 4下一步；不得在Stage 3启动真实representative。
-
-## 4. Stage 3 fresh verification与完成门槛
-
-Task 23通过后，Stage 3 owner必须在新shell中依次运行并读取完整退出码：
+覆盖原子命令、source显式/零fallback、roots串行、resume/unknown、防重复fake调用、89-call representative preflight、secret/磁盘preflight、全离线两领域E2E：
 
 ```powershell
 conda run -n tokenshare python -m pytest tests/experiments/slim_v2 -q
-conda run -n tokenshare python -m pytest tests/test_init_verification_profiles.py -q
-git diff --check
-git status --short --branch
 ```
 
-随后执行严格UTF-8、Markdown和静态范围检查：
+#### 9. 完成标准
 
-1. 严格UTF-8读取`Doc/SlimV2/`当前权威、设计和计划；
-2. 代码围栏成对、Markdown表格列数一致、无未决占位标记；
-3. source/tests import scan不存在旧paper/formal runner、budget/receipt/evidence/response-bank/publication依赖；
-4. source/tests命令字符串不存在Lean专项suite、LeanAudit、全量catalog、`lake`或`lean`回归；
-5. `schema.py` leaf paths与fixture集合相等，`reducer.py`正式metric ID集合与153-ID fixture相等；
-6. full/representative规模、provider caps、Exp2–4零调用、16MiB read、process/queue/permit/handle/log/disk边界均有通过测试；
-7. 仓库只包含本计划允许写入文件，没有secret、`local/`输出、TokenShareData结果或测试临时文件。
+Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Exp5 4；论文roots 72、executions 74；provider cap 89；Exp2–4 0 calls；所有root一次run_root或按第7章诚实记录中断；第三里程碑review关闭范围内Critical/Important。当前owner满足relay的Stage 3总完成标准后，按relay §5.1创建Stage 4 owner并完成heartbeat交棒；不得自行启动真实representative。
 
-完成状态只能在以下全部成立时写入：全部25 tasks（含9A/9B与19A/19B）有failing/pass证据、implementation commit与紧随的evidence commit；每task spec/quality review已闭合；final cross-component reviewer范围内Critical=0、Important=0；shared interface gap仍为none；没有真实provider/representative/full/Lean专项命令；`progress.md`顶部与本计划evidence同步。若确需最小Lean single-case smoke，必须先在progress写轻量方法无法定位的具体证据与≤10分钟上限；没有该前置记录就不得运行。
+#### 10. 明确非目标
 
-## 5. 实施证据记录格式
+不在本Task调用真实provider、运行真实representative/full、增加UI/service、补充低风险覆盖或继续建设通用基础设施。
 
-Stage 3对每个task追加一行，不覆盖计划语义：
+## 9. 状态真值、失败作用域、恢复与资源边界
 
-| Task | failing command/result | passing command/result | spec review | quality review | commit |
-|---|---|---|---|---|---|
-| Task 1 | 原命令先被既有src-layout阻断：`No module named tokenshare`；仅设置进程内`PYTHONPATH=src`后得到计划允许RED：`No module named tokenshare.experiments.slim_v2`。修正轮另真实得到`6 failed`、`2 failed, 4 passed`、`1 failed, 5 passed`，分别覆盖nullable/递归/条件规则、资源族与verified/final、自然ordinal上限。 | owner fresh：`PYTHONPATH=src`、禁bytecode/cache运行Task 1命令，`6 passed in 0.17s`；authority leaves=`168/168`、metric records=`153/153`、operational leaves=`5/5`、规则=`173/173`；UTF-8、禁止import、尾随空白、cache、`git diff --check`均通过。 | 最终`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`，`Spec compliant`。生命周期未启动字段冲突按relay §7.1三票一致选择A，固定reason细节按两票多数，状态=`approved_under_user_delegation_by_quorum`。 | 最终`0 Critical / 0 Important / 0 Minor`，`APPROVED`；首次唯一Important（Exp1自然attempt必须连续且最多3次）经第四轮RED/GREEN关闭。 | implementation `aaabca417f76c00db6011f8bf0bb04617fffa4f2` |
-| Task 2 | 设置进程内`PYTHONPATH=src`运行计划命令，`8 failed in 0.26s`，首败=`No module named tokenshare.experiments.slim_v2.case_source`。首次GREEN为`7 passed, 1 failed`并暴露Lean正式case过滤缺口，修正为只选`preflight_status=passed`与`task14_checker_backed_pool`。 | owner fresh：Task 2命令`8 passed in 0.20s`；catalog为Factorization `500`行/SHA256 `9ce2b31a…7774`、Lean `165`行/SHA256 `5a134f24…2cdc`；tuple逐项、唯一/存在/分层、Exp1 units=`1400+570=1970`、representative units=`19`、UTF-8/literal-only/cache/diff均通过。 | `0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`，`Spec compliant`；独立重算所有hash/pin/slice后首个mismatch与差集均为空。 | `0 Critical / 0 Important / 0 Minor`，`APPROVED`。 | implementation `13a25193465736c0fecda5d304d9de5be3c2ecbc` |
+状态真值集中遵守第5章矩阵，每个Task的状态条款只是应用，不另建owner。失败作用域：
 
-Stage 3只在某task真实完成后追加该task的具体一行；不得预填空值、预计pass数或虚构SHA。
+| 失败 | 捕获者 | 作用域 | 落盘/后续 |
+|---|---|---|---|
+| provider timeout/HTTP/envelope、parse/checker rejection、retry用尽 | execution/runtime | 当前root的实验结果 | 写attempt/root，继续下一root |
+| Exp3 fault/death未恢复、Exp4 protocol-start后stuck/incorrect/root checker rejection | existing engine/plugin + projector | 当前root实验结果 | 固定分母保留，继续 |
+| source缺键/重复/语义错、Exp2–4 transport attempt | fixed adapter/CLI | 当前condition | 当前及剩余root写infra-invalid后停止condition |
+| provider resolved model错、secret/entry配置错 | preflight/provider | 当前model condition；共享配置错可升级run | 不换model，不隐式fallback |
+| schema/catalog/inventory不闭合、run store不可写 | CLI/storage | 整次run | 安全停止，保留已committed文件 |
+| 磁盘不足 | CLI preflight | 整次run | 当前root未开始则停止；释放空间后resume |
+| intent无terminal且进程已死 | resume/provider journal | 当前ordinal未知 | 写unknown，不重调同ordinal |
+| Thread事实不完整 | Task 4验收 | 当前backend选择 | 记录证据并先测现有Process普通场景；两者都不能闭合才审议条件性facade |
 
-该表只记录开发证据，不是runtime gate、receipt、digest或publication state。Stage 3不得以预计结果、子Agent口头摘要或陈旧基线代替真实命令输出。
+资源边界：
 
-## 6. Stage 2只读审查与裁决记录
+- roots并发恒为1；root内逻辑worker最大50，实际执行由现有backend capacity控制；
+- Experiment 1有效provider in-flight不超过10，Experiment 5不超过3；provider caller没有额外线程池；
+- worker death使用Process且每root结束后由backend生命周期关闭；普通路径优先Thread；
+- 单HTTP response最大16MiB，读取`limit+1`即关闭；raw写独立文件，不复制进root/log；
+- projector只保留当前root的events和必要join；root commit后释放plugin/store/ledger/backend引用；
+- reducer只载入当前table/slice的root级观察和bootstrap标量，不读raw/system目录；
+- 文件按次打开关闭，不设置与冻结实验无关的通用句柄治理框架；
+- `plan`按当前inventory逐root计算provider/protocol/simulated attempt上限，并用Representative raw-response p95与16MiB response hard limit分别给出estimate/hard scenario；磁盘preflight依据下一root所需原子写空间计算，不复制陈旧总量；
+- secret只存在于当前进程env和HTTP调用栈，不进入run目录、event/artifact metadata、error或命令输出；
+- Representative与Full只替换profile数据，所有资源控制、runner、resume、provider和reducer路径完全相同。
 
-审查基于SHA256 `1DF24BA5E365A17DA1BFB8802CA9D76B3689BF4CCEA8B1CF5BC782757B20F0CC` 的1144行草稿快照，两名reviewer均只读且未修改文件：
+## 10. 风险驱动验证矩阵
 
-- task/test decomposition：`1 Critical / 6 Important / 2 Minor / 0 out_of_scope_by_user`；
-- spec coverage：`1 Critical / 3 Important / 1 Minor / 0 out_of_scope_by_user`；
-- 去重后原草稿为`1 Critical / 9 Important / 3 Minor`；共同Critical是Task 2读取reuse allowlist未点名的两个archive JSON，确定性阻断full ID固化；
-- owner随后静态核对发现representative Lean planned-unit冲突；两名reviewer短复核均判定新增Critical且命中relay第7节，无保持`20/60/92`不变的Slim-local解法。用户随后明确授权保持四个case IDs和当前catalog不变的最小一致性勘误。
+全局验证规则：核心业务行为、复杂边界和已知缺陷在有意义时先取得可解释的失败证据；机械字段、配置、literal inventory、原型和生成数据不强制TDD。不得为内部实现、覆盖率或预设测试数量拆测试；优先用参数化与golden fixture合并重复场景。
 
-统一裁决与修订如下；所有项均为范围内问题，`out_of_scope_by_user=0`：
+| 高风险 | 最小证据 | 所属Task | 不做什么 |
+|---|---|---|---|
+| 绕过系统本体 | Factorization + Lean fake各一条真实run_root纵链 | 1 | 不mock coordinator/engine后宣称闭环 |
+| 文件格式/跨模块合同 | 153 metric IDs可计算性、authority §8原始字段路径合同、root/trace/call键、atomic conflict | 2 | 不逐DTO/helper制造RED |
+| provider付费边界 | single entry、一次call、16MiB+1 close、terminal/unknown | 3 | 不调用真实provider，不做内部retry |
+| fixed trace零调用 | exact/fallback/语义核对/transport spy=0 | 3–4 | 不提供fallback transport |
+| tail污染正文 | protocol/tail timing、status、token/cost隔离 | 3 | 不创建tail协议attempt |
+| Thread/Process | Thread两领域事实完整；death真实Process | 4 | 不预建process facade |
+| Exp3恢复语义 | 五fault、ordinal0、replacement、death、reference | 4 | 不由Slim生成recovery/canonical |
+| Exp4真实消融 | mode-blind plan、11 modes、六四端组合 | 4 | 不离线拼接双机制结果 |
+| reducer统计 | 153 IDs、fixed denominator、pairs/quadruples/bootstrap/null | 5 | 不拆五套统计框架 |
+| CLI与恢复 | 显式source、roots串行、unknown、防重复、89 cap、离线E2E | 6 | 不隐式运行Exp1或更换source |
 
-| severity | finding | owner裁决与计划落点 |
+review只在三个里程碑触发：
+
+1. Task 1：本体闭环review，确认没有伪系统；
+2. Task 4：全部实验场景闭环review，确认0-call、状态owner和Thread/Process；
+3. Task 6：representative readiness review，确认数据、reducer、resume和资源边界。
+
+每次里程碑至少一名spec reviewer和一名implementation-quality reviewer；只修复范围内Critical/Important。设计宪章排除的威胁标记`out_of_scope_by_user`并拒绝实施。无需每个内部步骤双review、双commit或证据commit；是否提交由当前用户授权和工作流决定，验证证据写入本计划与`progress.md`顶部即可。
+
+## 11. 最终验收标准
+
+实施完成必须同时满足：
+
+- 六个Task按顺序完成，三个里程碑review的范围内Critical/Important为0；
+- Task 1两领域真实系统纵链通过，shared interface gap保持`none`或按接力协议另行获批；
+- 最终源码只包含第2章文件树及确有证据必要的条件性补救，不存在第二个runner、service或状态机；
+- 所有论文root正常路径各一次`run_root`，Factorization/Lean真值来自现有plugin/checker；
+- Experiment 2–4 provider calls精确为0，source显式、无transport fallback；
+- Experiment 1 tail不修改正文runtime/status/attempt，Exp5不运行tail；
+- schema与metrics authority保持153/153，reducer固定分母、pair/quadruple/bootstrap/null传播正确；
+- Representative冻结为72论文roots、74 executions、provider hard cap 89；Full为7,554论文roots、7,660 executions、provider hard cap 10,902；Exp3/4 corrected upper均由逐root inventory公式得出；
+- resume跳过committed root/trace/terminal call，不重复同ordinal付费；unknown transport诚实记录；
+- `plan`、source/secret/model/disk preflight和全离线E2E通过；Representative与Full共享同一路径；
+- 未运行真实provider、representative/full、Lean专项suite、LeanAudit、全量catalog、`lake`或`lean`；
+- UTF-8、Markdown结构、旧常量、禁止依赖、公开接口符号和`git diff --check` focused verification通过；
+- `progress.md`顶部记录旧横向计划暂停、Task 3参数勘误、Task 1公共接口实证、六Task当前状态和下一步。
+
+### 本轮蓝图审查闭合
+
+| 只读reviewer | 最终结论 | 复核重点 |
 |---|---|---|
-| Critical | Task 2读取两个未列入reuse allowlist的archive JSON | 接受；Task 2完全移除archive JSON读取，只用当前两个catalog和本计划冻结的精确hash/pin/slice规则，一次性写literal tuples |
-| Critical | representative induction实际1 unit，与设计的2/20/60/92冲突 | 用户已确认保持case/catalog，修正文档派生值为`1/19/57/89`；设计规格13.1/13.5/13.6、Task 2/3/23已同步 |
-| Important | task实现allowlist与plan/progress证据写入冲突，SHA无法自包含 | 接受；第0.2/0.3节冻结implementation commit后独立evidence commit，plan/progress为唯一常设证据例外 |
-| Important | authority leaf set与额外operational fields边界不唯一 | 接受；Task 1 fixture拆成authority与operational集合，分别断言metric projection与完整schema冻结并集 |
-| Important | Exp3/4 Lean及各实验full ID子集未精确冻结 | 接受；Task 2给出完整hash、pin和逐实验slice规则，并要求test独立重算后逐tuple相等 |
-| Important | 修改既有模块的task未运行既有合同回归 | 接受；9B、11–17、19B–22的passing command显式加入所改模块全部既有Slim测试，Task 23再跑全suite |
-| Important | tail持久化/重复/非法target失败未证明阻止下一root | 接受；Task 11新增三类失败注入和next-root count=0断言 |
-| Important | CLI遗漏`--output-root`且preflight入口不明确 | 接受；Task 23冻结所有run/plan/representative的父目录override，并把preflight定义为representative/run-all同一内部第一阶段，不新增命令 |
-| Important | provider usage cache/total内部关系未验收 | 接受；Task 5验证两条等式，Task 8验证null+固定reason传播且不阻止root |
-| Important | HTTP response成功/HTTP/envelope路径未证明close | 接受；Task 6要求四类terminal路径`close()`恰好一次并用单一`try/finally`覆盖 |
-| Important | atomic Exp2–4未验incomplete/wrong-profile/trace closure source在runtime前拒绝 | 接受；Task 23新增三类source preflight与backend/runtime/provider构造数0断言 |
-| Minor | Task 9 focus过大 | 接受；拆为9A Thread decision与9B bounded-process/resource lifecycle |
-| Minor | Task 19合并两个独立实验reducer | 接受；拆为19A Exp1与19B Exp5，各自独立测试/命令/evidence |
-| Minor | Exp1无tail target的精确字段无测试 | 接受；Task 11新增null/zero/not_needed逐字段合同和caller=0 |
+| spec coverage | `PASS; Critical=0, Important=0, Minor=0` | 11章/6Task/60模板项、153 metric IDs、冻结数值、状态真值、§5.1/§5.2接力 |
+| blueprint usability | `PASS; Critical=0, Important=0` | 纵链可装配性、tail/caller/resume/backend/API owner、无第二状态机/runner/service |
 
-第一次修订后的双路复核结果为：spec coverage=`0 Critical / 1 Important / 1 Minor`，task/test decomposition=`0 Critical / 2 Important / 3 Minor`，`out_of_scope_by_user=0`。新增范围内项也已统一闭合：设计规格exact CLI补齐`--output-root`；Task 8/17增加Exp1/5 valid usage到pricing version/tier/cost的正向持久化测试；设计规格残留的旧unit数量常量改为19；Task 2 evidence改为当前catalog规则独立重算与literal tuple相等；Task 3 passing command纳入`test_case_source.py`。
-
-两名原reviewer对最终修订前快照完成限定短复核：spec coverage与task/test decomposition均为`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`，结论均为PASS。所有初审与复审范围内发现已统一修复，shared interface gap仍为`none`；本计划据此设为`approved_under_user_delegation`。本表只是Stage 2文档审查裁决，不是runtime approval gate。
+两路review都把relay SHA256 `B7F6785957B0FD0EC5D35A4AE18A81715476A4DD6EFEDB1A78B8BD8B41FE0777`作为输入，并确认六个Task必须由六名连续fresh顶层owner逐棒完成，而不是交给同一个Stage 3总owner。本蓝图状态恢复为`approved_under_user_delegation`；这只表示实施蓝图可执行，不是runtime、representative或论文结果批准。

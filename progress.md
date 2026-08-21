@@ -4,7 +4,24 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 Stage 3：Task 2完成，Task 3实施中
+## Slim V2 当前 focus：六Task蓝图重写与 replan-aware Stage 3 接力
+
+- **旧横向计划已暂停**：原实施计划的横向微任务结构不再具有执行权威；旧Stage 3线程`01a020fa-cb5d-7391-b701-72ae8569bdba`已暂停并标记`superseded_by_six_task_replan`，不得恢复旧计划、不得标记completed。旧Stage3 heartbeat为PAUSED，必须保持禁用/删除，不能与fresh Stage 3同时active。
+- **当前文档状态**：`slim_v2_implementation_plan.md`已重写为11个主体章节和6个风险驱动纵向Task；`slim_v2_design_spec.md`已同步总体架构、最小journal、Thread/Process条件分支、风险验证和六Task顺序。spec coverage最终`0 Critical/0 Important/0 Minor; PASS`，blueprint usability最终`0 Critical/0 Important; PASS`，两份文档状态为`approved_under_user_delegation`；该批准只覆盖蓝图，不表示新Task 1或runtime已完成。
+- **旧Task→新Task映射**：旧Task 1 schema提交`aaabca417f76c00db6011f8bf0bb04617fffa4f2`及证据`4fb647b4`，映射为新Task 2“可复用但必须经真实纵链校准”的部分成果；旧Task 2 case/profile提交`13a25193465736c0fecda5d304d9de5be3c2ecbc`及证据`794362fa5fa996e9008bd0a17c00a482fc0ca2cc`，映射为新Task 2部分成果；旧Task 3未提交的profile/plan/CLI草稿分别映射为新Task 2与新Task 6的待审查输入。旧编号、提交或测试通过均不能自动证明新Task完成。
+- **新Task 1尚未实现**：fresh Stage 3第一道Gate必须用fake answer分别运行一个Factorization root和一个Lean fixed-DAG root，精确经过`ProtocolRunCoordinator.run_root → domain execution bridge → existing worker backend → ProtocolEngine/EventLedger/ArtifactStore → verifier/checker → canonical/merge/root recheck`，再只读投影普通root result。不得因Git历史中已有旧Task 1/2而跳过。
+- **公共接口实证**：独立只读审计确认`ProtocolRunRequest/Result`、`ProtocolRunCoordinator.__init__/run_root`、`ProtocolEngine`、`EventLedger`、`ArtifactStore`、Sequential/Thread/Process backends、Factorization/Lean adapters/bridges/fixed plan和`ExecutionSubmission`均存在。fake/local、无provider、无Lean/lake的focused验证为`4 passed in 10.86s`；Sequential两领域PoC没有shared接口缺口。Thread `worker_count>1`事实完整性尚待新Task 4验证，不能提前宣称损坏或预建process facade。
+- **Task 3参数A/A/A勘误已传播**：Full Exp3 rate/death/planned/upper=`13,920/2,808/16,728/52,992`；Full Exp4每mode/repeat/planned/upper=`293/9,669/15,822`；Representative Exp3=`42/16/58/190`，Exp4=`209/342`。不变项为论文roots 7,554、加106 references后executions 7,660、full provider cap 10,902、references planned/upper 468/1,404、representative Exp1 units/cap 19/57、Exp5 cap32、总cap89、roots/executions 72/74、153 metrics及实验语义。planned/upper继续要求逐root inventory派生。
+- **canonical condition IDs**：Exp1不编码repeat；Exp2不编码domain；Exp3先domain+stratum再fault/death维度；Exp4只编码mode×repeat；Exp5编码model×repeat×stratum。行为只读结构化字段，禁止解析`condition_id`子串。
+- **旧Task 3遗留状态**：`profiles.py`,`test_profiles.py`修改和未跟踪`cli.py`,`test_cli_plan.py`曾得到`16 passed in 1.05s`，但未提交、未完成最终spec/quality review，状态明确为`not approved / not complete`。必须保留并由fresh Stage 3 rebaseline，禁止覆盖、reset、revert、stash或为工作树clean删除。
+- **当前脏文件保护**：保留`AGENTS.md`、design spec、metrics authority、implementation plan、stage relay protocol、`profiles.py`,`test_profiles.py`及未跟踪`cli.py`,`test_cli_plan.py`的既有修改。当前Stage 2只写获准文档；checkpoint只提交文档，不混入src/tests。
+- **Stage 3启动规则**：文档review、focused verification与仅文档checkpoint完成后，按接力协议§5.2创建恰好一个fresh顶层`Stage 3 Task 1/6` owner，使用同一saved project/local environment、同branch和当前working tree。其第一步是`Rebaseline existing implementation against approved six-task blueprint`，这只是开工审计，不是第七个Task；随后立即执行新Task 1。六个大型Task再严格按relay §5.1由六名连续全新owner逐棒完成，每棒只负责一项且独立heartbeat/checkpoint，不设一个总监督owner。禁止回退HEAD、把旧编号当新编号、覆盖dirty草稿或同时运行两个Stage 3 owner。当前只读relay SHA256=`B7F6785957B0FD0EC5D35A4AE18A81715476A4DD6EFEDB1A78B8BD8B41FE0777`。
+- **当前边界**：branch=`codex/slim-v2-baseline`，本轮启动HEAD=`794362fa5fa996e9008bd0a17c00a482fc0ca2cc`；`run_scope=representative_only`，provider/network=0，不运行representative/full、Lean专项suite、LeanAudit、全量catalog、`lake`或`lean`，shared代码只读，不push/merge/PR。
+- **六Task蓝图focused证据**：最终实施计划SHA256=`94AD8EE968681C32309B6BFA74C0FA48F76EED050E1DCE1A43C830D730022739`，设计规格SHA256=`D2A1BF8717A1621C8B341EBD320BF168825EA206BD0607ED7689DC44AEB31039`，relay SHA256仍为`B7F6785957B0FD0EC5D35A4AE18A81715476A4DD6EFEDB1A78B8BD8B41FE0777`。严格UTF-8、11章/6Task/每Task 10项模板、153 metric IDs且spec missing=0、旧常量/旧WBS/固定RED命中0、condition IDs、Markdown fences/tables、公共接口符号和单owner禁令均通过；`git diff --check` exit 0（仅CRLF提示）；显式`PYTHONPATH=src`的case/profile/CLI plan focused测试为`16 passed in 0.69s`。未运行provider、representative/full、Lean/lake。
+
+## Slim V2 旧Stage 3 provenance：已暂停并由六Task重规划取代
+
+> 本节只保留旧编号、提交和测试provenance；其中“当前focus/允许写入/下一focus”等命令性表述均已失效，不得恢复执行或覆盖上方当前状态。
 
 - **Task 1完成证据**：implementation commit=`aaabca417f76c00db6011f8bf0bb04617fffa4f2`；owner fresh focused=`6 passed in 0.17s`；authority leaves=`168/168`、metric records=`153/153`、operational leaves=`5/5`、required/nullable规则=`173/173`；UTF-8、禁止import、尾随空白、cache与`git diff --check`均通过。
 - **Task 1评审**：spec最终`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`；quality最终`0 Critical / 0 Important / 0 Minor`并`APPROVED`。生命周期未启动时四个边界字段的诚实null表示经relay §7.1三票一致选择方案A，固定reason细节按两票多数，状态=`approved_under_user_delegation_by_quorum`。
@@ -15,7 +32,9 @@
 - **Task 3 fail-first命令**：`conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_profiles.py tests/experiments/slim_v2/test_cli_plan.py -q`；允许失败为缺`build_profile/build_inventory/build_plan`或`cli plan`。
 - **运行边界**：Stage 3 provider/network spy累计保持0；不运行representative/full、Lean专项suite、LeanAudit、全量catalog或`lake`/`lean`；shared code保持只读。
 
-## Slim V2 Stage 2：实施计划已获委托审批并完成本地checkpoint
+## Slim V2 旧横向Stage 2 provenance：原批准结论已暂停
+
+> 本节记录旧横向计划的历史审查，不再证明当前六Task蓝图已批准；当前审批状态和下一步以上方current focus为准。
 
 - **实施计划已收口**：`Doc/SlimV2/slim_v2_implementation_plan.md`状态为`approved_under_user_delegation`，按设计规格第17节拆为25个严格串行task；每个task均冻结目标文件、测试文件/测试名、先失败命令与预期、最小实现、通过命令与预期、依赖、允许写入、完成证据和progress更新点。Stage 3只按该计划实现与运行离线/focused verification，不启动真实representative provider。
 - **代表性inventory一致性勘误已获用户确认并闭合**：保持四个case IDs和当前catalog不变；`lean_v2_simple_induction_direct_nat_01`按公共fixed plan的1个planned AI unit执行，派生常量同步为Exp1 units `19`、Exp1 hard cap `57`、总hard cap `89`。设计规格的精确CLI `--output-root`及Slice 6派生常量也已同步；未改变数据集、实验变量、runner或shared接口。

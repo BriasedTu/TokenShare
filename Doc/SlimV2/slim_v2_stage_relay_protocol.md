@@ -10,23 +10,23 @@ scope: Serial fresh-task handoff for Slim V2 design, planning, implementation, a
 
 ## 1. 为什么使用新任务接力
 
-Slim V2 跨越设计、实施计划、代码实现和真实运行。让一个 Agent 从头工作到尾会持续累积对话、命令输出和调试历史，容易造成上下文膨胀与目标漂移。因此，每个大阶段由一个新的顶层 Codex 任务负责；阶段内部才使用临时子 Agent 做只读审查或边界明确的实现任务。
+Slim V2 跨越设计、实施计划、代码实现和真实运行。让一个 Agent 从头工作到尾会持续累积对话、命令输出和调试历史，容易造成上下文膨胀与目标漂移。因此，Stage 1、Stage 2、Stage 4及以后每个大阶段由一个新的顶层 Codex 任务负责；Stage 3 的六个大型 implementation task 则进一步各由一个全新的顶层 Codex 任务负责，任何一个 Stage 3 owner 都不得监督或实施两个大型 task。每个顶层任务内部才使用临时子 Agent 做只读审查或边界明确的实现工作。
 
 两类协作必须区分：
 
-| 类型 | 用途 | 上下文 | 是否负责下一阶段 |
+| 类型 | 用途 | 上下文 | 是否负责下一接力单元 |
 |---|---|---|---|
-| 顶层新任务 | 设计、计划、实施监督、representative 监督等阶段接力 | 新任务从空白对话开始，只读取明确文档和交接摘要 | 是；当前阶段 owner 只能创建一个下一阶段顶层任务 |
-| 当前任务的子 Agent | 专项审查、单个 implementation task、故障定位 | 只接收该子任务所需的最小上下文 | 否；子 Agent 不得创建下一阶段顶层任务或递归扩张团队 |
+| 顶层新任务 | 设计、计划、Stage 3单个大型task、representative监督等接力单元 | 新任务从空白对话开始，只读取明确文档和交接摘要 | 是；当前owner只能创建一个下一接力单元顶层任务 |
+| 当前任务的子 Agent | 专项审查、单个 implementation task、故障定位 | 只接收该子任务所需的最小上下文 | 否；子 Agent 不得创建下一接力单元顶层任务或递归扩张团队 |
 
-阶段接力必须使用“创建全新任务”的能力。不要使用会继承完整已完成对话的 fork 代替空白任务。若下一阶段任务已经由用户预先创建，可以向其发送消息；否则由当前阶段 owner 创建新任务，并把完整初始 prompt 一次性写入新任务。
+接力必须使用“创建全新任务”的能力。不要使用会继承完整已完成对话的 fork 代替空白任务。若下一接力单元任务已经由用户预先创建，可以向其发送消息；否则由当前 owner 创建新任务，并把完整初始 prompt 一次性写入新任务。
 
 ## 2. 固定仓库和任务环境
 
 - 工作目录：`E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline`
 - 分支：`codex/slim-v2-baseline`
-- 所有阶段在同一 local checkout 上串行工作；任一时刻只能有一个顶层阶段任务写入。
-- 创建下一阶段任务时，必须选择该 Slim V2 saved project 的 **local environment**，不能让工具默认从仓库默认分支创建另一个普通 worktree。否则下一任务可能从 `main` 启动并看不到当前阶段结果。
+- 所有接力单元在同一 local checkout 上串行工作；任一时刻只能有一个顶层接力单元写入。
+- 创建下一接力单元任务时，必须选择该 Slim V2 saved project 的 **local environment**，不能让工具默认从仓库默认分支创建另一个普通 worktree。否则下一任务可能从 `main` 启动并看不到当前成果。
 - 当前 owner 创建下一任务后不得继续修改文件。允许短暂读取下一任务状态，确认其已进入运行或明确失败，然后当前 owner 结束。
 - 不 push、merge、创建 PR 或修改远端。阶段 checkpoint 只使用当前本地分支的小粒度 commit。
 
@@ -94,15 +94,25 @@ reviewer 不得改文件。Stage 1 owner 统一裁决、修复，并执行第二
 
 完成后创建 Stage 3 新任务。
 
-### Stage 3：实施与验证总监督 owner
+### Stage 3：实施与验证（六个大型 task 逐棒 owner）
 
 **唯一目标**：按已批准计划完成 Slim V2 代码和离线/focused verification；不启动真实 representative provider 调用。
 
 **必须读取**：README、指标权威、接线合同、复用清单、已批准设计、已批准实施计划、本文和 progress 顶部。
 
-Stage 3 owner 保留集成所有权。每个 implementation task 使用一个新的实现子 Agent，严格串行；实现子 Agent完成后依次由新的 spec reviewer 和 code-quality reviewer 审查。多个实现子 Agent不得并行修改共享文件。owner 必须亲自检查 diff 和运行 fresh verification，不能只相信子 Agent摘要。
+Stage 3 严格由获批实施计划中的六个大型 task 组成。每个大型 task 是一个独立顶层接力单元，分别由一个全新的 Stage 3 Task 1/6 至 Task 6/6 owner 负责；每位owner的唯一实施范围就是当前一个大型task。owner可按风险驱动验证矩阵使用边界明确的实现或只读review子Agent，但必须亲自检查diff和运行fresh verification，不能只相信子Agent摘要。任何owner不得提前实现下一大型task、继续担任下一大型task owner，或以“保持集成所有权”为由监督完六个task。Task之间的强制轮换和原子交棒按第5.1节执行。
 
-**完成标准**：
+若Stage 3启动前存在重规划前的已提交或未提交实现，首位owner先按第5.2节执行一次`rebaseline existing implementation`。该审计只把既有成果映射到新计划并保护工作树，不增加第七个task，也不能替代Task 1的纵向验收。
+
+**每个大型task的完成标准**：
+
+- 当前task在实施计划中点名的可运行纵向切片、风险驱动验证、review要求和完成证据全部闭合；
+- 当前task范围内0个未解决Critical/Important；
+- owner fresh检查diff、运行focused verification、更新progress顶部并创建当前task本地checkpoint commit；
+- Task 1–5按第5.1节创建且只创建下一大型task的全新owner，确认其heartbeat active后结束；
+- Task 6除完成本task外，还必须满足以下Stage 3总完成标准，然后创建Stage 4 owner。
+
+**Task 6的Stage 3总完成标准**：
 
 - 实施计划中的代码任务全部有测试和验证证据；
 - Factorization k>1 worker、Lean fake/固定 fixture 接线、fixed response、coverage tail、Exp2/3/4 scenario、Exp5 fake transport、result sink/resume 和 reducer focused tests 通过；
@@ -140,19 +150,44 @@ Stage 4 默认是本协议的终点。如果启动时的用户授权明确包含
 
 ## 5. 阶段完成后的原子接力顺序
 
-当前 owner 只有在本阶段 Definition of Done 全部满足后，才能按以下顺序接力：
+当前 owner 只有在本阶段或当前Stage 3大型task的Definition of Done全部满足后，才能按以下顺序接力：
 
 1. 运行 fresh verification并读取完整退出状态。
-2. 审查本阶段 diff，排除无关文件、secret、`local/` 输出和历史日志。
-3. 更新 `progress.md` 顶部，至少记录：当前阶段、完成状态、HEAD、产物、验证命令与结果、未解决问题、下一阶段。
+2. 审查当前接力单元 diff，排除无关文件、secret、`local/` 输出和历史日志。
+3. 更新 `progress.md` 顶部，至少记录：当前阶段/Stage 3 task编号、完成状态、HEAD、产物、验证命令与结果、未解决问题、下一接力单元。
 4. 创建本地 checkpoint commit；不要 push。
 5. 生成不超过约 2,000 个中文字符的“交接胶囊”。胶囊只写不可从仓库直接推导的信息：阶段结论、关键裁决、验证证据、真正未解决的问题和下一任务目标。
-6. 通过 Codex 新建任务能力创建恰好一个下一阶段顶层任务：先列出 saved projects 并选择本地路径为 `E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline` 的项目，再以该 project 的 `local environment` 创建新任务，把第 6 节模板作为完整 initial prompt。不要为这次接力创建默认 worktree，也不要只创建空任务后依赖另一条消息补全目标。
+6. 通过 Codex 新建任务能力创建恰好一个下一接力单元顶层任务：Stage 3 Task 1–5创建下一编号的Stage 3 task owner，其他阶段或Stage 3 Task 6创建下一阶段owner。先列出 saved projects 并选择本地路径为 `E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline` 的项目，再以该 project 的 `local environment` 创建新任务，把第 6 节模板作为完整 initial prompt。不要为这次接力创建默认 worktree，也不要只创建空任务后依赖另一条消息补全目标。
 7. 使用任务等待/状态能力做一次即时确认：下一任务 ID 已产生且状态为 active/in progress。若创建仍在 setup，只能等待或重新列出任务以取得真实 thread/task ID；不要把临时 client ID传给发送消息、读取或等待工具。
 8. 等待下一任务报告 `RECOVERY_HEARTBEAT_ACTIVE`；在此之前保留当前任务 heartbeat，但不得继续修改仓库。确认后禁用当前 heartbeat，避免两个阶段重复唤起。
-9. 将下一任务 ID和 heartbeat 交接状态写入当前任务最终报告。此后当前 owner 不再编辑仓库或继续阶段工作。
+9. 将下一任务 ID、Stage 3 task编号（适用时）和heartbeat交接状态写入当前任务最终报告。此后当前owner不再编辑仓库、继续当前阶段工作或监督下一大型task。
 
-若本阶段未完成或命中强制停止条件，禁止创建下一阶段任务。原本需要用户授权/选择才能解除的 blocker 必须先执行第7.1节的代理授权法定人数流程；只有该流程裁决为安全不行动、客观条件仍缺失或问题仍不可闭合时，才在 progress 顶部和最终报告记录 blocker。
+若当前接力单元未完成或命中强制停止条件，禁止创建下一接力单元任务。原本需要用户授权/选择才能解除的 blocker 必须先执行第7.1节的代理授权法定人数流程；只有该流程裁决为安全不行动、客观条件仍缺失或问题仍不可闭合时，才在 progress 顶部和最终报告记录 blocker。
+
+### 5.1 Stage 3 六个大型 task 的强制 owner 轮换
+
+Stage 3 的六个大型task必须由六个连续、互不复用上下文的顶层owner串行完成，固定记为`Stage 3 Task 1/6`至`Stage 3 Task 6/6`。该划分是唯一Stage 3顶层接力链，不是六条并行分支，也不改变实施计划中的task语义。
+
+1. 每位owner启动时只接收当前一个大型task的唯一目标、允许写入、权威引用、上一task checkpoint和不超过约2,000中文字符的交接胶囊；不得fork上一owner完整历史。
+2. 当前owner只能实现、验证、审查和提交当前task。即使剩余上下文充足、下一task看似简单，也禁止继续实施、分派或监督下一task。
+3. Task 1–5完成后，当前owner按第5节创建恰好一个下一编号的全新顶层Stage 3 owner；Task 6完成并满足Stage 3总完成标准后，创建Stage 4 owner。不得创建空的“总监督owner”悬在六个task之上。
+4. 下一owner必须使用同一saved project的local environment、同一branch和当前working tree；不得创建默认worktree、full-history fork或复制/cherry-pick当前提交。
+5. 每个owner拥有恰好一个名称包含`Slim V2 Stage 3 Task <K> recovery`的30分钟heartbeat。下一owner active/in progress且明确报告`RECOVERY_HEARTBEAT_ACTIVE`前，当前owner保留自己的heartbeat但停止写入；确认后立即禁用当前heartbeat。任一时刻只能有一个Stage 3实现写owner。
+6. 每棒progress顶部和交接胶囊必须记录`stage=3`、`task_index=K/6`、当前task checkpoint SHA、允许/遗留dirty文件、verification、review结论、未解决问题、下一task唯一目标和两个heartbeat状态。旧task完成证据不能仅存在于聊天。
+7. 当前task未满足完成标准或命中第7节时，禁止创建下一task owner。heartbeat恢复只能恢复当前task，不能借自动唤起跨到下一task。
+
+### 5.2 下游阶段已启动后的上游重规划接力
+
+若设计或实施计划在下游Stage已经产生committed或dirty实现后重新开放，必须执行本小节，不能把普通Stage回退或重新开始当作清理工作树的理由。
+
+1. 立即暂停旧下游owner并在`progress.md`顶部标记`superseded_by_replan`；不得标记completed。旧heartbeat必须禁用或删除，旧owner不得再按被替代计划写入。
+2. 保留全部既有committed与dirty成果；禁止为了回到上游Stage而`reset`、`revert`、`stash`、删除未跟踪文件或复制/cherry-pick既有提交。上游新checkpoint可以成为旧下游提交的Git后继；Stage编号表示逻辑权威顺序，不要求Git历史倒退。
+3. 上游owner必须生成旧task到新task的逐文件映射。旧编号、旧测试通过或旧review不能自动证明新task完成；兼容成果只能标为待新纵向事实校准的可复用输入。
+4. 上游文档checkpoint只提交获准文档，不得混入未完成实现。dirty实现可以原样继承，但交接胶囊必须列出文件、性质、已知测试、未完成review和`not complete`状态。
+5. 新下游owner必须使用同一saved project的local environment、同一branch和working tree，先执行`rebaseline existing implementation against revised plan`，再进入新计划第一个未闭合纵向task。rebaseline是开工审计，不新增task编号。
+6. 任一时刻只有一个下游实现owner和一个active实现heartbeat。旧下游heartbeat禁用后才创建恰好一个fresh owner；fresh owner active并报告`RECOVERY_HEARTBEAT_ACTIVE`后，上游owner才禁用自己的heartbeat。
+7. 强制交接胶囊至少包含branch/HEAD、上游checkpoint、既有实现commits、dirty清单、旧到新映射、verification与未review状态、下一focus、权限/禁止项、旧线程和heartbeat状态。
+8. 若新权威要求删除或收窄已有实现，必须由获批文档和纵向系统事实证明；禁止仅为获得clean工作树而删除。
 
 ## 6. 下一阶段新任务初始 prompt 模板
 
@@ -179,11 +214,13 @@ codex/slim-v2-baseline
 读完上述启动文件后，在进行任何长工作前，按接力协议第 9 节为当前顶层任务创建或更新唯一的 30 分钟恢复 heartbeat，并在 commentary 明确报告 `RECOVERY_HEARTBEAT_ACTIVE`。如果无法建立 heartbeat，命中强制停止条件，不要假装可以无人监督运行。
 
 当前阶段：<阶段名称>
+当前接力单元：Stage <N><若为Stage 3则填写 Task <K>/6>
 唯一目标：<只写一个阶段目标>
 run_scope：<representative_only 或 representative_then_full>
 
-前一阶段 checkpoint：
-- previous_stage=<N-1>
+前一接力单元 checkpoint：
+- previous_stage=<N-1；若当前为Stage 3 Task K且K>1则填写3>
+- previous_task_index=<仅Stage 3填写上一棒J/6；其他填写not_applicable>
 - previous_task_id=<真实 task/thread ID>
 - branch=codex/slim-v2-baseline
 - head=<完整 40 位 SHA>
@@ -193,7 +230,7 @@ run_scope：<representative_only 或 representative_then_full>
 交接胶囊：
 <不超过约 2,000 中文字符；不得粘贴整份设计、计划、diff 或日志>
 
-严格执行接力协议中 Stage <N> 的职责、禁止项、子 Agent规则和完成标准。你是本阶段唯一顶层 owner。不要提前执行下一阶段，也不要修改本阶段范围外文件。
+严格执行接力协议中 Stage <N> 的职责、禁止项、子Agent规则和完成标准。你是当前接力单元的唯一顶层owner。若当前为Stage 3 Task <K>/6，你只负责该一个大型task，不得提前实施或监督Task <K+1>/6；不要修改当前接力单元范围外文件。
 
 普通可逆实现选择由你依据冻结权威自行裁决，不要等待用户例行批准。只有接力协议第 7 节的强制停止条件才允许暂停。
 
@@ -202,11 +239,11 @@ run_scope：<representative_only 或 representative_then_full>
 1. fresh verification；
 2. 更新 progress 顶部；
 3. 创建本地 checkpoint commit；
-4. 按本接力模板创建恰好一个 Stage <N+1> 全新顶层任务；
+4. 创建恰好一个下一接力单元的全新顶层任务：Stage 3 Task 1–5创建Task <K+1>/6，Stage 3 Task 6或其他阶段创建下一Stage；
 5. 确认下一任务 active/in progress 且已报告 `RECOVERY_HEARTBEAT_ACTIVE`；
 6. 禁用当前任务 heartbeat 后结束本任务。
 
-如果当前是接力协议定义的终点，则生成最终报告，不创建空任务。
+如果当前是接力协议定义的终点，则生成最终报告，不创建空任务。Stage 3不得把六个大型task交给同一顶层owner连续执行。
 ```
 
 新任务必须自己重新读取仓库文档。交接胶囊不能粘贴完整文档、长日志、整段命令输出或上一对话历史；这些内容会抵消新任务隔离上下文的意义。
@@ -241,8 +278,9 @@ run_scope：<representative_only 或 representative_then_full>
 4. owner只按实质动作归一化建议，不按措辞拆票。三票中至少两票给出相同`recommendation_id + authorize`时，该多数结论立即成为`approved_under_user_delegation_by_quorum`，owner直接执行，不询问用户许可。
 5. 若三份建议实质上全部不同，立即分派第四名全新只读auditor。第四名读取相同证据包和三份原始意见，必须在三案中选择一案，或裁决`safe_no_action`；其结论为本轮绑定裁决。不得递归增加第五名，也不得把问题退回用户。
 6. owner把reviewer任务ID、三票（以及适用时第四审计）、多数/审计结论、授权范围和验证证据写入当前设计/计划与`progress.md`顶部。这只是接力治理记录，不得进入Slim runtime成为approval gate、receipt、digest、lineage或publication state。
+7. 若用户直接确认或法定人数结论改变了任何现行权威文件中的实验/指标语义、派生数值、公共接口、设计合同或验收标准，owner必须在继续下游task或交棒前同步修改全部受影响的Slim权威、设计、计划和当前progress正文；只在quorum/evidence备注中声明supersede、却保留相互冲突的权威正文，视为未完成。同步后必须跨`Doc/SlimV2/`检索旧表述并分派全新只读reviewer做二次一致性审查。该规则构成受影响`Doc/SlimV2/`文件的明确写入例外，但只用于消除已确认裁决造成的文档漂移，不扩大runtime/shared/provider、实验数据集、`run_scope`、调用上限、安全范围或远端/破坏性权限。
 
-法定人数只能在用户已经授权的本地Slim V2任务边界内替代用户选择，不能覆盖system/developer指令、工具权限或法律/平台限制，也不能自行扩大`run_scope`、突破provider attempt上限、启用明确禁止的攻击/安全范围、push/merge/PR、删除/迁移用户数据或创建额外顶层接力链。对这些不可授权动作，reviewer只能选择现有范围内方案或`safe_no_action`，仍不得询问用户。
+除上一条由用户明确授权的受影响Slim文档同步例外外，法定人数只能在用户已经授权的本地Slim V2任务边界内替代用户选择，不能覆盖system/developer指令、工具权限或法律/平台限制，也不能自行扩大`run_scope`、突破provider attempt上限、启用明确禁止的攻击/安全范围、push/merge/PR、删除/迁移用户数据或创建额外顶层接力链。对这些不可授权动作，reviewer只能选择现有范围内方案或`safe_no_action`，仍不得询问用户。
 
 ## 8. 上下文控制规则
 
@@ -252,21 +290,21 @@ run_scope：<representative_only 或 representative_then_full>
 - 只有阶段 owner 综合子 Agent结果；不得让子 Agent互相递归委派。
 - 每阶段只保留一个 active focus。完成的研究和决定写入正式设计、计划、测试或 progress，不依赖聊天记忆。
 - 日志和大输出留在文件/运行目录，交接只给路径、命令、退出码和摘要。
-- 如果某阶段仍然过大，owner 可以在阶段内按已经批准的 task边界使用新鲜子 Agent，但不能再产生第二条顶层接力链。
+- Stage 1、2、4及以后若仍然过大，owner可以在阶段内按已批准边界使用新鲜子Agent，但不能产生第二条顶层接力链。Stage 3是明确例外：六个大型task必须按第5.1节形成同一条串行顶层接力链，每task强制更换owner。
 - 测试默认排除 Lean 专项 suite、LeanAudit、全量 catalog 和 `lake`/`lean` 回归；不要为了“保险”重复证明系统本体。代表性/正式实验中的 Lean roots 仍按指标权威运行。
 
 ## 9. 30 分钟恢复 heartbeat
 
-用户已经为整条接力链授权任务级恢复轮询。每个 Stage owner 在读完启动文档后、开始任何长工作前，必须用 Codex automation 能力为**当前顶层任务**创建或更新恰好一个 heartbeat：
+用户已经为整条接力链授权任务级恢复轮询。每个Stage owner或Stage 3大型task owner在读完启动文档后、开始任何长工作前，必须用Codex automation能力为**当前顶层任务**创建或更新恰好一个heartbeat：
 
-- 名称包含 `Slim V2 Stage <N> recovery`；
+- 名称包含`Slim V2 Stage <N> recovery`；Stage 3必须进一步包含task编号：`Slim V2 Stage 3 Task <K> recovery`；
 - 每 30 分钟唤起一次，附着当前任务，不创建新的独立任务或新 worktree；
 - 创建前先检查当前任务是否已有同名 heartbeat，存在则更新，不得创建重复项；
-- heartbeat 在本阶段未完成期间保持启用；交棒时按第 5 节确认下一阶段 heartbeat 后禁用当前项；终点阶段完成后直接禁用。
+- heartbeat 在当前接力单元未完成期间保持启用；交棒时按第 5 节确认下一接力单元 heartbeat 后禁用当前项；终点阶段完成后直接禁用。
 
 每次 heartbeat 唤起必须执行一次真正的恢复循环：
 
-1. 读取 `progress.md` 顶部、本阶段产物、工作树状态和最近 terminal/命令输出，判断阶段是否已经完成、仍在运行、意外中断或命中强制停止条件。
+1. 读取 `progress.md` 顶部、当前接力单元产物、工作树状态和最近 terminal/命令输出，判断当前单元是否已经完成、仍在运行、意外中断或命中强制停止条件。
 2. 若长命令仍存活，继续监督现有 session/process；使用短的有界等待持续读取输出，不启动重复命令。
 3. 若 Agent turn、shell、provider transport 或网络连接中断，从最近已持久化 checkpoint/result key 恢复。重试真实 provider 前先检查进程、普通结果文件和 per-unit trace，避免把未知终态的既有调用盲目重复计费；任何重试仍受冻结 attempt 上限约束。
 4. 若发现设施 bug，立即做系统性诊断，分派边界明确的新鲜子 Agent，并在同一次自动唤起中继续修复、验证和推进。
@@ -275,10 +313,10 @@ run_scope：<representative_only 或 representative_then_full>
 
 heartbeat 的恢复 prompt 必须包含上述六项语义，并明确写出：`CONTINUE_THIS_WAKE; DO_NOT_WAIT_FOR_NEXT_HEARTBEAT`。这只是任务恢复机制，不是实验 budget、门禁、receipt 或 evidence 系统，也不得为此向 Slim runtime 增加代码。
 
-可直接使用以下 heartbeat prompt；创建时把 `<N>` 和 `<阶段名称>` 替换为当前值：
+可直接使用以下 heartbeat prompt；创建时把 `<N>`、`<阶段名称>` 和（Stage 3适用时）`<K>` 替换为当前值：
 
 ```text
-这是 TokenShare Slim V2 Stage <N>（<阶段名称>）的 30 分钟恢复 heartbeat。检查当前任务、progress 顶部、本阶段产物、工作树、最近 terminal/进程和持久化结果。如果阶段未完成，立即从当前 checkpoint 恢复，并在本次唤起中持续执行所有现有可推进工作；命中原本需要用户裁决的强制停止条件时，立即执行第7.1节三名独立reviewer法定人数流程，三案全异再交第四auditor，不询问用户。不得只报告状态、不得主动等待下一次 heartbeat。已有命令或 owner turn 仍活跃时只继续监督，不建立第二条写路径。重试 provider 前先核对进程、results 和 per-unit trace，禁止盲目重复调用。默认不运行 Lean 专项测试、LeanAudit、全量 catalog 或 lake/lean 回归。阶段完成时执行规定的 checkpoint/交棒或终点收口。
+这是 TokenShare Slim V2 Stage <N>（<阶段名称><若为Stage 3则填写 Task <K>/6>）的 30 分钟恢复 heartbeat。检查当前任务、progress 顶部、当前接力单元产物、工作树、最近 terminal/进程和持久化结果。如果当前接力单元未完成，立即从当前 checkpoint 恢复，并在本次唤起中持续执行所有现有可推进工作；命中原本需要用户裁决的强制停止条件时，立即执行第7.1节三名独立reviewer法定人数流程，三案全异再交第四auditor，不询问用户。不得只报告状态、不得主动等待下一次 heartbeat。已有命令或 owner turn 仍活跃时只继续监督，不建立第二条写路径。重试 provider 前先核对进程、results 和 per-unit trace，禁止盲目重复调用。默认不运行 Lean 专项测试、LeanAudit、全量 catalog 或 lake/lean 回归。当前接力单元完成时执行规定的 checkpoint/交棒或终点收口。
 
 CONTINUE_THIS_WAKE; DO_NOT_WAIT_FOR_NEXT_HEARTBEAT
 ```
