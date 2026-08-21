@@ -27,6 +27,7 @@ run_scope: representative_only
 - 用普通原子 root/trace 文件和最小 provider terminal journal 支持恢复和防重复付费；
 - reducer 只读一个 run 目录，输出指标权威冻结的 153 个 metric IDs；
 - `representative` 与 `full` 使用完全相同的入口、装配、schema、恢复和 reducer。
+- 人工运行同时提供现有 CLI 和一个 Windows 双击启动脚本；脚本只用薄图形窗口收集 CLI 参数，随后仍执行同一个 CLI/runner。
 
 明确非目标：
 
@@ -43,6 +44,8 @@ run_scope: representative_only
 最终源码保持为一个薄实验包；已有文件优先校准，只有纵向闭环确实需要时才创建新文件。
 
 ```text
+run_slim_v2.cmd                            # Windows双击打开Slim V2参数选择窗口
+
 src/tokenshare/experiments/slim_v2/
 ├── __init__.py       # 公开版本和少量稳定导出
 ├── schema.py         # 冻结 inventory/result/trace/call 普通数据合同
@@ -55,7 +58,8 @@ src/tokenshare/experiments/slim_v2/
 ├── runtime.py        # 每 root 公共对象装配、唯一 run_root 调用、Exp1 tail
 ├── projector.py      # 只读公共事实并生成 RootResultV1
 ├── reducer.py        # 流式统计内核和 Exp1–5 全部表
-└── cli.py            # plan/run/run-all/reduce/representative 原子入口
+├── cli.py            # plan/run/run-all/reduce/representative 原子入口
+└── gui.py            # Tkinter薄包装；把窗口选择确定性转换为同一CLI argv
 
 tests/experiments/slim_v2/
 ├── fixtures/                    # 小型 Factorization、Lean fixed-DAG、provider、golden run
@@ -67,7 +71,8 @@ tests/experiments/slim_v2/
 ├── test_answer_paths.py         # Task 3 provider/fixed/tail/Exp5
 ├── test_scenarios.py            # Task 4 Exp2–4、Thread/Process
 ├── test_reducer_golden.py       # Task 5 153 IDs 与统计 golden
-└── test_cli_e2e.py              # Task 6 全离线原子命令/resume
+├── test_cli_e2e.py              # Task 6 全离线原子命令/resume
+└── test_gui_launcher.py         # Task 6 窗口选择→CLI argv与双击脚本合同
 ```
 
 允许在实施中合并重复测试或把 fixture 移到同目录，但不得为测试计数拆文件。若一个候选模块只有一个调用点且不能证明单一职责，优先并入上述拥有者，不新增文件。
@@ -109,9 +114,13 @@ python -m tokenshare.experiments.slim_v2.cli run --experiment <exp1|exp2|exp3|ex
 python -m tokenshare.experiments.slim_v2.cli run-all --profile <p> --run-id <id> [--output-root <dir>] [--resume]
 python -m tokenshare.experiments.slim_v2.cli reduce --run-dir <dir>
 python -m tokenshare.experiments.slim_v2.cli representative --run-id <id> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.gui
+# Windows资源管理器中双击仓库根目录的 run_slim_v2.cmd，打开上一行窗口
 ```
 
-package-level re-export 只保留`SCHEMA_VERSION`。获支持的 module-qualified Python 调用点只保留`profiles.build_profile/build_inventory/build_plan`、`runtime.run_root_slice/run_coverage_tail`、`provider.call_provider_once`、`storage.select_trace_attempt`、`cli.run_experiment/main`和`reducer.reduce_run`；其余表内名称是模块合同类型或内部装配符号，不扩展成通用公共框架。没有 service 入口、后台 worker service、HTTP server 或第二个 runner。
+图形窗口只保留启动脚本必须提供的输入：`profile=representative|full`、`experiment=exp1|exp2|exp3|exp4|exp5|all`、可自动生成也可覆盖的`run_id`、`output_root`、Exp2–4单独运行时的显式`source_run_dir`和`resume`。`all`精确映射到`run-all`，单实验精确映射到`run --experiment`；点击“启动”只执行窗口当前展示的同一CLI argv。窗口不提供计划看板、日志系统、偏好保存、任务队列、自动重试或额外审批。
+
+package-level re-export 只保留`SCHEMA_VERSION`。获支持的 module-qualified Python 调用点只保留`profiles.build_profile/build_inventory/build_plan`、`runtime.run_root_slice/run_coverage_tail`、`provider.call_provider_once`、`storage.select_trace_attempt`、`cli.run_experiment/main`、`gui.build_cli_argv/main`和`reducer.reduce_run`；其余表内名称是模块合同类型或内部装配符号，不扩展成通用公共框架。`run_slim_v2.cmd`只定位仓库、设置当前进程`PYTHONPATH=src`并用既有`tokenshare` conda环境启动`gui.main`；它不安装环境，不承载实验逻辑。没有 service 入口、后台 worker service、HTTP server 或第二个 runner。
 
 Canonical condition ID编码集中冻结如下；ID只用于身份，任何行为必须读取结构化condition字段：
 
@@ -139,6 +148,8 @@ Canonical condition ID编码集中冻结如下；ID只用于身份，任何行�
 | `projector.py` | join 当前 root 的 result/ledger/store/plugin/hook事实 | `project_root_result` | 仅当前 root 的只读 join 缓冲 | 不制造缺失事实，不把 status 猜成正确性 |
 | `reducer.py` | 从一个 run 目录生成 153-ID 指标表 | `reduce_run`,`metric_ids` | 当前 table/slice 的流式聚合与 bootstrap 样本 | 不读 system events/raw response，不调用 runtime/checker/provider |
 | `cli.py` | 解析原子命令、串行 roots、依赖与 preflight | `run_experiment`,`main` | 当前命令上下文 | 不拥有协议状态，不隐式运行 Exp1，不提供 service |
+| `gui.py` | 把本地窗口选择确定性转换为同一CLI argv并启动一个CLI子进程 | `build_cli_argv`,`main` | 仅当前窗口字段和一个子进程句柄 | 不新增GUI DTO，不导入runtime/provider/reducer实现，不自行preflight/resume/retry，不保存偏好，不并发启动两个run |
+| `run_slim_v2.cmd` | Windows双击启动参数选择窗口 | 无Python导出 | 仅当前cmd进程环境 | 不运行实验矩阵，不安装依赖，不保存配置，不实现fallback runner |
 
 `schema.py` 和 `profiles.py` 的已提交成果继续使用；Task 2 只删除无法映射到权威字段或最小恢复的通用抽象，不因重写蓝图丢弃 case IDs、condition IDs、153 metric-ID 合同或逐 root plan 派生能力。
 
@@ -156,6 +167,8 @@ Canonical condition ID编码集中冻结如下；ID只用于身份，任何行�
 | runtime tail | storage/provider | unscheduled IDs、existing trace keys | `TailSummaryV1` | `run_coverage_tail` | 逐 unit trace、call journal；不写 system event |
 | CLI | storage | inventory/root/trace/call对象 | committed keys / `ResumeView` | `RunStore`, `scan_resume` | 同目录 temp + atomic replace |
 | reducer | storage | run目录和普通 JSON/JSONL | observation iterator | `RunStore.iter_*` | 只写 `metrics/` 输出 |
+| GUI | CLI子进程 | profile/experiment/run-id/path/resume普通参数 | 确定性argv和exit code | `build_cli_argv`后执行`sys.executable -m tokenshare.experiments.slim_v2.cli ...` | GUI自身不写run数据；全部副作用仍由CLI/RunStore拥有 |
+| `run_slim_v2.cmd` | GUI | 仓库路径、既有conda环境 | 一个本地GUI进程 | `python -m tokenshare.experiments.slim_v2.gui` | 不创建run目录、不调用provider |
 
 接口规则：传递 typed 普通对象，不传 global mutable registry；所有跨文件持久化都经 `RunStore`；只有 provider call journal 和 Exp1 coverage tail 是 Slim-local 非协议事实。`scenarios.py` 返回配置和 observation collector，不返回预填的运行结论。
 
@@ -209,6 +222,8 @@ CLI/profile/case
   -> read-only projector
   -> atomic ordinary root result
 ```
+
+人工入口只在这条控制流之前增加参数包装：`run_slim_v2.cmd → gui.main → build_cli_argv → 同一CLI子进程`。选择`all`生成`run-all`；选择Exp1–5之一生成单一`run`命令。Exp2–4没有显式source目录时窗口必须给出普通输入错误，禁止替用户隐式运行Exp1或搜索旧输出。GUI不得直接调用runtime绕过CLI，也不得自动重启失败命令。
 
 ### Experiment 1
 
@@ -303,12 +318,14 @@ flowchart LR
     T2 --> T3["Task 3 Exp1/5回答路径"]
     T3 --> T4["Task 4 Exp2-4系统场景"]
     T4 --> T5["Task 5 统一reducer"]
-    T5 --> T6["Task 6 CLI/resume/readiness"]
+    T5 --> T6["Task 6 CLI/启动脚本图形包装/resume/readiness"]
 ```
 
 逻辑上，golden fixture准备、文档核对和只读公共接口审计可与当前阶段内部实现并行；实际写入继续遵守 `one focus at a time`，不得同时打开第二条代码写路径。三个审查里程碑固定为：Task 1本体闭环、Task 4全部实验场景闭环、Task 6最终representative readiness。其余Task不要求逐微步骤双review或双commit。
 
-当前实例按`slim_v2_stage_relay_protocol.md` §5.2执行replan-aware启动，并按relay §5.1让六个大型Task分别由六名连续、全新的顶层owner串行完成；不得由一个Stage 3总监督owner连续实现六项。当前relay只读输入的SHA256为`B7F6785957B0FD0EC5D35A4AE18A81715476A4DD6EFEDB1A78B8BD8B41FE0777`。
+本次在Task 3完成、Task 4尚未进入实现写入时追加的启动脚本图形包装，只扩展Task 6的人机入口与focused verification。Tasks 1–5不需要改动：窗口消费现有profile/experiment/source/resume参数，不改变schema、provider、scenario、reducer、实验规模、run目录或状态真值，也不要求GUI专用跨Task接口。Task 4可在本蓝图checkpoint后按原范围继续；若Task 6实现时发现CLI参数缺口，只在Task 6补齐同一CLI映射。
+
+当前实例按`slim_v2_stage_relay_protocol.md` §5.2执行replan-aware启动，并按relay §5.1让六个大型Task分别由六名连续、全新的顶层owner串行完成；不得由一个Stage 3总监督owner连续实现六项。当前relay只读输入的SHA256为`CDFABC5AFD7EDD549A74B7FEDED03AB2A08551E1EE4C04A4641D2E379669BD16`；文末蓝图初审记录中的旧SHA只描述当时review输入，不覆盖当前relay。
 
 | 重规划前成果 | 新计划映射 | 启动裁决 |
 |---|---|---|
@@ -575,31 +592,33 @@ metric ID集合精确153/153；所有公式方向与authority一致；Exp2–4�
 
 不建立formula graph、metric registry、publication eligibility、在线报告service或每实验独立框架。
 
-### Task 6 CLI、resume与representative readiness
+### Task 6 CLI、启动脚本图形包装、resume与representative readiness
 
 #### 1. 目标结果/可运行切片
 
-接通全部原子CLI、run-all、resume、preflight和全离线E2E；通过后立即进入真实representative下一阶段，不继续扩建设施。
+接通全部原子CLI、run-all、resume、preflight、Windows双击启动脚本及其薄参数选择窗口和全离线E2E；用户可在窗口选择`representative/full`以及Exp1–5任一项或`all`。通过后立即进入真实representative下一阶段，不继续扩建设施。
 
 #### 2. 创建/修改文件
 
-修改`cli.py`,`runtime.py`,`storage.py`,`projector.py`；创建`test_cli_e2e.py`，必要时复用全部前序fixtures。
+修改`cli.py`,`runtime.py`,`storage.py`,`projector.py`；创建`gui.py`、仓库根目录`run_slim_v2.cmd`、`test_cli_e2e.py`和`test_gui_launcher.py`，必要时复用全部前序fixtures。根目录脚本是本次用户明确授权的唯一Slim包外新增运行入口。
 
 #### 3. 导出的类、函数、CLI
 
-`run_experiment`,`main`以及第2章冻结的`plan/run/run-all/reduce/representative`命令。
+CLI导出`run_experiment`,`main`以及第2章冻结的`plan/run/run-all/reduce/representative`命令；GUI只导出`build_cli_argv`,`main`，不新增DTO。脚本无导出，只启动`python -m tokenshare.experiments.slim_v2.gui`。
 
 #### 4. 输入/输出类型
 
-输入：profile、experiment、run ID、显式source目录、resume标志。输出：完整run目录、exit code、metrics文件和清晰failure scope。
+输入：profile、experiment或all、run ID、output root、Exp2–4显式source目录、resume标志。GUI只输出精确CLI argv和一个子进程exit code；CLI输出完整run目录、metrics文件和清晰failure scope。
 
 #### 5. 上游/下游及精确公共符号
 
-组合Tasks 1–5公开符号；最终系统调用仍只有`ProtocolRunCoordinator.run_root`，Exp2–4 source只能显式传入。
+组合Tasks 1–5公开符号；最终系统调用仍只有`ProtocolRunCoordinator.run_root`，Exp2–4 source只能显式传入。GUI只调用当前解释器的`tokenshare.experiments.slim_v2.cli`模块，launcher只调用GUI模块；二者不导入runtime/provider/scenarios/reducer实现。
 
 #### 6. 关键控制流/实现逻辑
 
 preflight在secret/runtime前校验inventory、依赖、source closure、entry/model、磁盘和调用上限；roots串行；每root前检查下一root所需空间；resume扫描committed root/trace/terminal call；run-all按`exp1→exp2→exp3→exp4→exp5→reduce`并显式传source；representative调用相同内部路径。
+
+GUI只使用Tkinter标准库：profile与experiment为封闭选择；run ID默认按本地时间生成且允许修改；Exp2–4单独运行时显示并强制source目录；`all`走同一run的依赖序。点击“启动”后使用`sys.executable -m tokenshare.experiments.slim_v2.cli`启动一个CLI子进程，进程退出前禁用再次启动。除此之外不增加计划看板、日志系统、偏好保存、停止/重试工作流或任务队列。`run_slim_v2.cmd`只解析自身仓库目录、设置当前进程`PYTHONPATH`并通过`conda run --no-capture-output -n tokenshare`打开GUI；找不到conda/env/Tkinter时显示清晰错误并退出，不安装依赖或切换解释器。
 
 这里的“磁盘和调用上限”只有运行安全含义：磁盘检查只防止下一次原子写耗尽空间；调用上限只核对逐root inventory派生的自然attempt hard cap、发现重复dispatch或计划越界，避免程序失控与意外重复付费。preflight不得读取或判断价格、余额或可支付性，不得创建`budget authority`，不得等待人工授权，不得检查`publication readiness`或`evidence completeness`，也不得把价格表缺失、变化或成本投影结果作为阻止实验的条件。价格问题只能使成本字段为`null + reason`或留下普通诊断，不能改变root/condition/run是否允许启动。
 
@@ -609,7 +628,7 @@ CLI只拥有调度与退出码。单root自然失败继续；condition identity/
 
 #### 8. 风险驱动验证场景与命令
 
-覆盖原子命令、source显式/零fallback、roots串行、resume/unknown、防重复fake调用、89-call representative preflight、secret/磁盘preflight、全离线两领域E2E；另以合同/absence断言证明preflight不接受价格、余额、budget、人工批准、publication或evidence gate输入，成本投影缺失/变化不改变同一运行计划的启动结论：
+覆盖原子命令、source显式/零fallback、roots串行、resume/unknown、防重复fake调用、89-call representative preflight、secret/磁盘preflight、全离线两领域E2E；参数化验证12种窗口核心选择（2 profiles × Exp1–5/all）生成正确CLI命令，Exp2–4缺source拒绝、all映射run-all、打开窗口provider calls=0、同一时刻至多一个CLI子进程、launcher精确指向`gui.main`且没有第二runner；不为控件像素或覆盖率堆GUI测试。另以合同/absence断言证明preflight不接受价格、余额、budget、人工批准、publication或evidence gate输入，成本投影缺失/变化不改变同一运行计划的启动结论：
 
 ```powershell
 conda run -n tokenshare python -m pytest tests/experiments/slim_v2 -q
@@ -617,11 +636,11 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2 -q
 
 #### 9. 完成标准
 
-Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Exp5 4；论文roots 72、executions 74；provider cap 89；Exp2–4 0 calls；所有root一次run_root或按第7章诚实记录中断；preflight只实施运行安全检查且不存在价格/余额/budget/人工批准/publication/evidence gate；第三里程碑review关闭范围内Critical/Important。当前owner满足relay的Stage 3总完成标准后，按relay §5.1创建Stage 4 owner并完成heartbeat交棒；不得自行启动真实representative。
+Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Exp5 4；论文roots 72、executions 74；provider cap 89；Exp2–4 0 calls；所有root一次run_root或按第7章诚实记录中断；CLI与窗口对同一选择生成同一路径，窗口可选择两个profile与Exp1–5/all且没有第二runner/service；preflight只实施运行安全检查且不存在价格/余额/budget/人工批准/publication/evidence gate；第三里程碑review关闭范围内Critical/Important。当前owner满足relay的Stage 3总完成标准后，按relay §5.1创建Stage 4 owner并完成heartbeat交棒；不得自行启动真实representative。
 
 #### 10. 明确非目标
 
-不在本Task调用真实provider、运行真实representative/full、增加UI/service、补充低风险覆盖或继续建设通用基础设施；不实现价格/余额审批、budget authority、人工授权门禁、publication readiness、evidence completeness，且不因价格表变化阻止实验。
+不在本Task调用真实provider、运行真实representative/full、增加Web UI/service/daemon、GUI偏好数据库、任务队列、自动重试、低风险控件覆盖或通用基础设施；不实现价格/余额审批、budget authority、额外人工授权门禁、publication readiness、evidence completeness，且不因价格表变化阻止实验。窗口的“启动”按钮只是现有脚本参数入口，不得膨胀成审批工作流。
 
 ## 9. 状态真值、失败作用域、恢复与资源边界
 
@@ -650,6 +669,7 @@ Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Ex
 - `plan`按当前inventory逐root计算provider/protocol/simulated attempt上限，并用Representative raw-response p95与16MiB response hard limit分别给出estimate/hard scenario；磁盘preflight依据下一root所需原子写空间计算，不复制陈旧总量；这些检查只限制技术资源和重复调用，不读取价格/余额、不产生budget或审批权威；价格表变化只影响普通成本投影，不能阻止运行；
 - secret只存在于当前进程env和HTTP调用栈，不进入run目录、event/artifact metadata、error或命令输出；
 - Representative与Full只替换profile数据，所有资源控制、runner、resume、provider和reducer路径完全相同。
+- 图形窗口同一时刻只启动并监督一个CLI子进程；窗口退出不创建隐藏重试、后台service或第二条run路径。
 
 ## 10. 风险驱动验证矩阵
 
@@ -667,6 +687,7 @@ Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Ex
 | Exp4真实消融 | mode-blind plan、11 modes、六四端组合 | 4 | 不离线拼接双机制结果 |
 | reducer统计 | 153 IDs、fixed denominator、pairs/quadruples/bootstrap/null | 5 | 不拆五套统计框架 |
 | CLI与恢复 | 显式source、roots串行、unknown、防重复、89 cap、离线E2E | 6 | 不隐式运行Exp1或更换source |
+| 启动脚本图形包装漂移 | 2 profiles × Exp1–5/all参数映射、Exp2–4 source规则、单CLI子进程、launcher目标与provider=0 | 6 | 不测控件像素，不复制runner/preflight/resume |
 | preflight膨胀 | preflight输入/输出absence合同；成本投影缺失或变化不改变启动结论 | 6 | 不增加价格/余额/budget/人工批准/publication/evidence gate |
 
 review只在三个里程碑触发：
@@ -691,6 +712,7 @@ review只在三个里程碑触发：
 - Representative冻结为72论文roots、74 executions、provider hard cap 89；Full为7,554论文roots、7,660 executions、provider hard cap 10,902；Exp3/4 corrected upper均由逐root inventory公式得出；
 - resume跳过committed root/trace/terminal call，不重复同ordinal付费；unknown transport诚实记录；
 - `plan`、source/secret/model/disk preflight和全离线E2E通过；Representative与Full共享同一路径；preflight仅防技术失控、磁盘耗尽和重复调用，不包含价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness，价格表变化不得阻止实验；
+- Windows双击`run_slim_v2.cmd`可打开薄参数选择窗口；窗口能选择`representative/full`和Exp1–5/all，精确生成并运行同一CLI argv，Exp2–4 source显式、单CLI子进程、无隐式provider/重试/fallback/第二runner；
 - 未运行真实provider、representative/full、Lean专项suite、LeanAudit、全量catalog、`lake`或`lean`；
 - UTF-8、Markdown结构、旧常量、禁止依赖、公开接口符号和`git diff --check` focused verification通过；
 - `progress.md`顶部记录旧横向计划暂停、Task 3参数勘误、Task 1公共接口实证、六Task当前状态和下一步。

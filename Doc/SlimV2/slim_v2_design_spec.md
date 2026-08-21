@@ -37,6 +37,7 @@ Slim V2 只交付以下能力：
 6. 从一个普通 run 目录离线生成 CSV/JSON；
 7. 用普通文本主键 resume/skip，避免丢失已完成工作或重复真实调用；
 8. 以同一管线运行 `representative` 与 `full`，二者只在 profile 数据和 condition 规模上不同。
+9. 为本地人工运行提供一个Windows双击脚本和薄参数选择窗口；它只包装同一CLI，不形成第二个runner。
 
 ### 1.2 非目标和禁止依赖
 
@@ -72,6 +73,8 @@ Slim V2 只交付以下能力：
 ## 2. 最小总体架构与模块树
 
 ```text
+run_slim_v2.cmd                     # Windows双击打开Slim V2参数选择窗口
+
 src/tokenshare/experiments/slim_v2/
 ├── __init__.py             # 包版本和少量稳定导出
 ├── schema.py               # inventory/root/trace/call 普通数据合同
@@ -84,7 +87,8 @@ src/tokenshare/experiments/slim_v2/
 ├── runtime.py              # 每 root 公共对象装配、唯一 run_root 调用、Exp1 tail
 ├── projector.py            # event/store/plugin/hook 事实到 RootResultV1
 ├── reducer.py              # 单 run 目录流式统计与 Exp1–5 表
-└── cli.py                  # plan/run/run-all/reduce/representative 原子入口
+├── cli.py                  # plan/run/run-all/reduce/representative 原子入口
+└── gui.py                  # Tkinter薄包装；窗口选择确定性映射为同一CLI argv
 
 tests/experiments/slim_v2/
 ├── fixtures/               # 小型Factorization、Lean fixed-DAG、provider与golden run
@@ -96,16 +100,18 @@ tests/experiments/slim_v2/
 ├── test_answer_paths.py
 ├── test_scenarios.py
 ├── test_reducer_golden.py
-└── test_cli_e2e.py
+├── test_cli_e2e.py
+└── test_gui_launcher.py
 ```
 
-上述是最终责任边界，不是每个文件都要独立成实施Task。已有`schema.py`,`case_source.py`,`profiles.py`,`cli.py`成果先保留，再用真实两领域纵链校准；只有当前冻结运行确需的文件才创建。不建立额外 registry、service layer、repository layer、数据库 authority、第二个runner或representative runner。`cli.py` 是唯一 orchestration 入口；`representative` 只是 `run-all --profile representative` 的别名。package-level re-export只保留`SCHEMA_VERSION`；实施蓝图列出的稳定调用点以module-qualified名称调用，schema DTO与装配helper不自动升级为公共framework。
+上述是最终责任边界，不是每个文件都要独立成实施Task。已有`schema.py`,`case_source.py`,`profiles.py`,`cli.py`成果先保留，再用真实两领域纵链校准；只有当前冻结运行确需的文件才创建。不建立额外 registry、service layer、repository layer、数据库 authority、第二个runner或representative runner。`cli.py` 是唯一 orchestration 入口；`gui.py`和`run_slim_v2.cmd`只在它之前包装参数，`representative` 只是 `run-all --profile representative` 的别名。package-level re-export只保留`SCHEMA_VERSION`；实施蓝图列出的稳定调用点以module-qualified名称调用，schema DTO与装配helper不自动升级为公共framework。
 
 ### 2.1 架构数据流
 
 ```mermaid
 flowchart LR
-    P["Frozen profile + cases"] --> R["One serial runner"]
+    H["CLI or thin local launcher GUI"] --> P["Frozen profile + cases"]
+    P --> R["One serial runner"]
     R --> A["Per-root assembly"]
     A --> C["ProtocolRunCoordinator.run_root exactly once"]
     C --> E["Domain bridge + existing worker/engine/ledger/store"]
@@ -144,6 +150,8 @@ flowchart LR
 | `projector.py` / root | result、同一 ledger/store、plugin、hook、attempt journals | `RootResultV1`；临时内存仅当前 root | protocol/tail后 | 缺公共事实写null+reason；接线缺失分类 infrastructure-invalid | 与指标权威第8节叶字段集合、嵌套结构和必填/可空规则精确相等，另验领域正确性与failure taxonomy |
 | `provider.py` 的纯价格投影 / projector | provider family/model、usage、request UTC | attempt cost、version、tier；随attempt/root记录 | 实际/模拟usage之后 | 必需cache split/time缺失则cost null，不阻止调用 | 峰谷边界、四endpoint、reasoning不双算 |
 | `reducer.py` / 离线 | 单个 run 目录 | `metrics/*.jsonl`、`*.csv`、`summary.json` | 单独命令或run-all末尾 | inventory-result缺口进入固定分母并标null/reason；绝不调用runtime/provider | 全指标、CI、pair/quadruple、流式内存边界 |
+| `gui.py` / 人工入口 | profile、Exp1–5/all、run ID、output、必要source、resume | 同一CLI argv和一个CLI子进程exit code；自身不持久化 | CLI之前 | 无效选择不启动；运行中不再启动第二进程 | 12种核心选择、Exp2–4 source、all→run-all、provider=0 |
+| `run_slim_v2.cmd` / Windows入口 | 脚本所在仓库、既有`tokenshare` conda环境 | 启动`python -m tokenshare.experiments.slim_v2.gui` | 用户双击时 | 缺conda/env/Tkinter时清晰退出，不安装或fallback | 静态目标与working-directory合同 |
 
 每个新增组件都直接服务冻结实验、必需字段、恢复或资源上界；没有单独的tail、pricing、trace-source或sink实施Task。若实现发现这些职责只需少量函数，就留在表中已有owner；不存在“以后可能有用”的扩展点。
 
@@ -318,11 +326,15 @@ python -m tokenshare.experiments.slim_v2.cli run --experiment exp5 --profile <p>
 python -m tokenshare.experiments.slim_v2.cli run-all --profile <p> --run-id <id> [--output-root <dir>] [--resume]
 python -m tokenshare.experiments.slim_v2.cli reduce --run-dir <dir>
 python -m tokenshare.experiments.slim_v2.cli representative --run-id <id> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.gui
+# 或在Windows资源管理器中双击仓库根目录 run_slim_v2.cmd
 ```
 
 `representative`严格等价于`run-all --profile representative`。默认输出根为`TokenShareData/outputs/slim_v2/<run_id>/`；可用`--output-root`改变父目录，但run目录仍以run_id为末级。已有run目录时不带`--resume`立即退出，绝不覆盖。失败root不在同一run内自动重跑；要取得独立重复结果必须使用新run_id。
 
 `plan`只展开inventory、调用量和磁盘估计，不解析secret、不调用provider。`reduce`只需要run目录。不存在旧runner fallback或隐式source搜索。
+
+图形入口不是新命令体系。`run_slim_v2.cmd`只在既有`tokenshare` conda环境中启动`gui.main`；Tkinter窗口只包含profile、Exp1–5/all、run ID、output root、Exp2–4单跑时的source目录、resume和一个“启动”按钮。run ID默认用本地时间生成并允许覆盖。`gui.build_cli_argv()`必须是无副作用纯映射：`all→run-all`，单实验→`run --experiment`，Exp2–4缺source则拒绝；点击启动后只执行`sys.executable -m tokenshare.experiments.slim_v2.cli <argv>`。窗口不提供计划看板、日志框架、偏好保存、任务队列、自动重试、provider fallback或额外审批，且同一时刻最多启动一个CLI子进程。
 
 ### 7.2 `SlimRunConfigV1`
 
@@ -881,6 +893,7 @@ estimate = 1.25 × [
 
 - provider、trace、root文件每条写完立即关闭；当前root外不保留句柄；
 - HTTP response在parse/持久化后关闭；线程/进程backend每root结束即shutdown；
+- 图形窗口同一时刻最多持有一个CLI子进程句柄；子进程退出后释放，窗口不创建后台service、隐藏重试或第二条run路径；
 - 临时文件只位于目标同目录，原子replace后消失；异常temp保留供人工检查，不自动递归删除或形成repair流程；
 - 首版不建立独立日志框架；CLI错误摘要有界且不含raw/prompt/secret；
 - raw responses只保留一份Slim response和系统必需artifact，不复制进root result或命令输出。
@@ -909,6 +922,7 @@ estimate = 1.25 × [
 | Exp3/4语义被Slim伪造 | 五fault/death/recovery与11-mode challenge均由hook + event + backend + checker join，不按condition ID反填 |
 | 统计口径漂移 | 单一golden fixture覆盖153 IDs、固定分母、pair/quadruple、10k bootstrap和null传播 |
 | CLI恢复重复工作 | 原子source、roots串行、unknown transport、防重复fake call、89-call preflight和全离线E2E |
+| 启动脚本图形包装偏离CLI | 参数化覆盖2 profiles × Exp1–5/all、Exp2–4 source规则、all→run-all、单CLI子进程和launcher目标；打开窗口provider calls=0 |
 
 review只在三个里程碑触发：现有系统本体闭环、全部实验场景闭环、最终representative readiness。每个里程碑至少有spec与implementation-quality两路只读检查；不要求每个内部步骤双review或双commit。
 
@@ -923,9 +937,11 @@ review只在三个里程碑触发：现有系统本体闭环、全部实验场�
 | 3 Exp1/5回答路径 | fake transport通过同一caller/bridge，Exp1 protocol+tail trace闭合，Exp5四endpoint | `provider.py,execution.py,runtime.py,storage.py,projector.py` | Task2 | 16MiB/close/journal/unknown、tail隔离、fixed path无transport |
 | 4 Exp2–4系统场景 | 六worker、五fault/death/reference、11-mode challenge全部真实进system/plugin | `scenarios.py,runtime.py,execution.py,projector.py` | Task3 traces | 0 provider calls；先证明Thread，death使用Process，Slim不生成系统真值 |
 | 5 统一reducer | 一个统计内核生成Exp1–5全部153-ID表 | `reducer.py` | Task4普通结果 | fixed denominator、pairs/quadruples/bootstrap/null、流式只读 |
-| 6 CLI/resume/readiness | 原子命令、preflight、串行roots、resume和全离线E2E | `cli.py,runtime.py,storage.py,projector.py` | Tasks1–5 | Representative 72 roots/74 executions/cap89；通过后直接进入真实representative下一阶段 |
+| 6 CLI/启动脚本图形包装/resume/readiness | 原子命令、Windows双击参数窗口、preflight、串行roots、resume和全离线E2E | `cli.py,gui.py,run_slim_v2.cmd,runtime.py,storage.py,projector.py` | Tasks1–5 | 两profile与Exp1–5/all均映射同一CLI；Representative 72 roots/74 executions/cap89；通过后直接进入真实representative下一阶段 |
 
 Task顺序冻结。golden fixture准备、文档核对和只读审计在单个Task内部逻辑上可并行，但实际实现仍保持单一focus。既有schema/profile/plan代码只是Task 2的候选输入；在Task 1两领域纵向金丝雀闭合前，不得以其已存在为由跳过Task 1或宣称新Task 2完成。
+
+用户在Task 3完成、Task 4尚未进入实现写入时追加的只是启动脚本图形包装，因此Tasks 1–5无需返工，也不新增第七个Task：该窗口只消费Task 6本来就必须闭合的CLI参数。若实现发现CLI参数缺口，修正在Task 6内完成；不得因此给provider、scenario、reducer或run schema增加GUI专用合同。
 
 ## 18. 复用清单
 

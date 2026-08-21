@@ -4,17 +4,18 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 当前 focus：Stage 3 Task 3/6已完成，下一棒为fresh Task 4/6 owner
+## Slim V2 当前 focus：Task 3/6已完成；Task 4/6等待启动脚本图形包装蓝图checkpoint后恢复
 
-- **接力身份与checkpoint**：`stage=3`、`task_index=3/6`、branch=`codex/slim-v2-baseline`；本棒启动HEAD=`92c69b15c2a4f6cf49c60be57766c805661be563`（Task 2 checkpoint）。Task 3 checkpoint为本条所在的后续本地commit，实际SHA必须在Task 4完整initial prompt中传递。
+- **接力身份与checkpoint**：`stage=3`、`task_index=3/6`、branch=`codex/slim-v2-baseline`；Task 3参数覆盖checkpoint=`93ebf0dad2715d944a6cbe9476b71cd47096a29e`。原Task 4任务`01a0238e-b2db-7da1-9d6c-60bb12d79ecd`已创建但保持`PAUSED_FOR_UPSTREAM_CHECKPOINT`，没有基于旧蓝图进入实现写入；本轮文档checkpoint完成后由Task 3 owner向同一Task 4发送新SHA并恢复接力，不另建Task 4。
 - **Task 3回答纵链已闭合**：新增`provider.py/execution.py/test_answer_paths.py`，校准`runtime.py/storage.py/projector.py`并最小调整`test_system_vertical.py`。Exp1与Exp5经同一single-attempt caller、公共`ExecutionSubmission`、两领域parser/bridge/checker跑完整root；caller显式接收call context与同一`RunStore`，send前intent、16 MiB+1、有界关闭、response/terminal、无内部retry或第二store。Exp1=`600s/300000`，Exp5按用户最新覆盖=`600s/100000`；三个thinking entry仍为`thinking_budget=32768`，价格只作普通纯投影。
 - **trace/tail/resume闭合**：Exp1先写不可变`protocol.json`完整protocol-origin trace重建素材，再物化唯一protocol traces；tail只从terminal protocol的typed unscheduled集合调用缺key unit。tail timing与资源事实进入typed trace，resume不重复provider且重建完整target/recorded/success/failure/attempt/token/cost/原时间边界；正文status/runtime/正确性/protocol bytes不变。fixed adapter exact/last fallback零transport；Exp5四entry零replacement、无tail。
 - **已启动失败必须计入正确率**：配置、模型身份或journal错误sticky后不重复provider/journal；若root已经启动，现有coordinator返回terminal failed result，projector落`protocol_started=true, root_status=failed, final_result_present=false, verified_correct=false`和显式provider failure，不能因无最终答案从固定分母消失。只允许协议尚未启动的preflight/config阻断不成为已启动样本；Task 4–6必须继续传递本规则，Task 5 reducer不得丢弃任何已启动失败row，Task 6停止后续condition roots前必须先commit当前失败root。
 - **Task 3验证与review**：参数覆盖前主体纵链owner/spec/quality分别为`22 passed in 26.63s / 26.61s / 28.88s`，只保留为基线。用户把Exp5 `max_tokens`提高到`100000`后，四endpoint先取得预期RED，targeted=`4 passed in 8.60s`、实现者fresh=`22 passed in 26.82s`；覆盖后spec/quality首轮独立复跑分别为`22 passed in 28.44s / 27.92s`，均确认代码、测试、design spec与metrics authority参数一致，唯一`Important=1`均为覆盖后证据尚未写入本计划/progress。补录后短复核最终为`SPEC_COMPLIANT / APPROVED`且`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；owner post-override fresh=`22 passed in 26.79s`。scoped compile、禁止依赖扫描、`git diff --check`通过，当前未解决问题=`none`，shared interface gap=`none`。现有conda环境未editable-install本仓库，验证仅为当前进程设置`PYTHONPATH=src`，没有修改共享环境/conftest。
 - **运行边界**：`run_scope=representative_only`，provider/network=`0/0`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。
 - **遗留dirty保护**：范围外继承`AGENTS.md`保持启动SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`，禁止reset/revert/stash/delete或纳入checkpoint；提交后仍应是唯一范围外dirty。
-- **六Task状态与唯一下一步**：Tasks 1–3=`completed`；Task 4=`next`；Tasks 5–6=`pending`。下一步只创建fresh顶层`Stage 3 Task 4/6` owner：用Exp1 fake traces完成Exp2六worker、Exp3五fault/worker death/reference与Exp4 11-mode challenge，真实经过现有system/plugin/checker且provider calls=0；禁止Task 5 reducer、Task 6完整CLI/E2E或真实provider。当前Task 3 heartbeat=`active_until_Task4_reports_RECOVERY_HEARTBEAT_ACTIVE`，Task 4 heartbeat=`pending_creation_after_checkpoint`。
-- **Task 6边界只跨棒传递**：未来Task 6 preflight只允许防程序失控、磁盘耗尽、重复调用/重复付费；禁止价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness，价格表缺失或变化不得阻止实验。该边界不得前移为Task 4范围。
+- **启动脚本图形包装裁决**：用户明确要求的只是用薄图形窗口包装启动脚本。Task 6新增仓库根目录`run_slim_v2.cmd`和Slim-local `gui.py`：只选择`representative/full`、Exp1–5/all、run ID/output、Exp2–4必要source与resume，然后执行同一CLI。禁止计划看板、日志系统、偏好保存、任务队列、Web service、自动重试或第二runner。当前`tokenshare` conda环境已只读确认Tkinter=`8.6`。
+- **影响审计与六Task状态**：Tasks 1–3=`completed`；Task 4=`paused_for_upstream_checkpoint`；Tasks 5–6=`pending`。本次变化只扩展Task 6的人机入口，不改schema、provider、scenario、reducer、指标、run目录或状态真值，因此Tasks 1–5无需返工，Task 4仍按原范围执行。文档checkpoint后唯一下一步是由Task 3 owner通知同一Task 4恢复；禁止另建Task 4、提前Task 5/6实现或运行真实provider。
+- **Task 6边界只跨棒传递**：未来Task 6除原子CLI、resume、preflight和离线E2E外，只增加上述启动脚本图形包装；GUI必须映射同一CLI且同一时刻至多一个CLI子进程。preflight只允许防程序失控、磁盘耗尽、重复调用/重复付费；禁止价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness，价格表缺失或变化不得阻止实验。该边界不得前移为Task 4范围。
 
 ## Slim V2 旧Stage 3 provenance：已暂停并由六Task重规划取代
 
