@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tokenshare.core.models import (
     Attempt,
     AttemptState,
@@ -14,6 +16,7 @@ from tokenshare.experiments.paper_catalog import (
     default_lean_paper_environment_manifest,
 )
 from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
+from tokenshare.plugins.contracts import IncompleteMergeInputError
 from tokenshare.storage.artifacts import ArtifactStore
 
 from tests.support.lean_checker import RecordingLeanChecker
@@ -108,6 +111,29 @@ def test_simple_runtime_requests_use_stable_planned_child_ids(tmp_path: Path) ->
         planned_ids.append(request.soft_hints["planned_ai_unit_id"])
 
     assert planned_ids == ["child_0", "child_1"]
+
+
+def test_build_merge_rejects_missing_required_logical_keys_before_lookup(
+    tmp_path: Path,
+) -> None:
+    adapter = LeanRuntimeAdapter(
+        provider_family="siliconflow",
+        environment_manifest=default_lean_paper_environment_manifest(),
+        checker=RecordingLeanChecker(),
+        created_at=NOW,
+    )
+    units = adapter.plan_units(
+        _case("lean_v2_medium_lemma_dag_01"),
+        artifact_store=ArtifactStore(tmp_path),
+    )
+
+    with pytest.raises(IncompleteMergeInputError) as caught:
+        adapter.build_merge(
+            parent=units[0],
+            canonical_children=(units[0],),
+        )
+
+    assert isinstance(caught.value, ValueError)
 
 
 def _case(case_id: str) -> dict:

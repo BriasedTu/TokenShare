@@ -469,19 +469,80 @@ class ChallengeObservationV1(SchemaRecordV1):
             )
 
 
+@dataclass(frozen=True, slots=True)
+class PrematureMergeObservationV2:
+    """Slim-local recovery-premerge probe 的实际结果；checker 未到达保持 null。"""
+
+    recovery_attempt_id: str
+    gate_satisfied: bool
+    required_child_unit_ids: tuple[str, ...]
+    canonical_child_unit_ids: tuple[str, ...]
+    missing_required_slot_ids: tuple[str, ...]
+    plugin_merge_attempted: bool
+    plugin_outcome: str
+    plugin_error_kind: str | None
+    root_checker_reached: bool
+    root_check_passed: bool | None
+    final_result_present: bool
+    failure_stage: str | None
+    schema_version: str = "tokenshare.slim_v2.premature_merge_observation.v2"
+
+    def validate(self) -> None:
+        _require_nonempty_text(self.recovery_attempt_id, "recovery_attempt_id")
+        _require_bool(self.gate_satisfied, "gate_satisfied")
+        _require_bool(self.plugin_merge_attempted, "plugin_merge_attempted")
+        _require_bool(self.root_checker_reached, "root_checker_reached")
+        _validate_optional_bool(self.root_check_passed, "root_check_passed")
+        _require_bool(self.final_result_present, "final_result_present")
+        if not self.root_checker_reached and self.root_check_passed is not None:
+            raise SchemaValidationError(
+                "checker-not-reached premature merge must keep root_check_passed null"
+            )
+        if self.plugin_outcome not in {
+            "not_attempted",
+            "rejected_incomplete_input",
+            "candidate_produced",
+        }:
+            raise SchemaValidationError("invalid premature merge plugin_outcome")
+        if self.failure_stage is not None and self.failure_stage not in {
+            "plugin_merge",
+            "root_checker",
+            "no_final",
+        }:
+            raise SchemaValidationError("invalid premature merge failure_stage")
+
+
 @dataclass(slots=True)
 class AblationObservationV1(SchemaRecordV1):
     disabled_mechanism: str | None = _required()
+    route_status: str | None = _nullable()
+    domain_parser_call_count: int | None = _nullable()
+    domain_child_checker_call_count: int | None = _nullable()
+    plugin_verify_submission_call_count: int | None = _nullable()
+    root_checker_call_count: int | None = _nullable()
     candidate_independent_label: str | None = _nullable()
     wrong_canonical_accepted: bool | None = _nullable()
+    root_checker_reached: bool | None = _nullable()
+    root_check_passed: bool | None = _nullable()
     root_checker_rejected_after_wrong_canonical: bool | None = _nullable()
     raw_only_exposed: bool | None = _nullable()
     raw_only_accepted: bool | None = _nullable()
+    parse_result: str | None = _nullable()
+    recovery_attempt_id: str | None = _nullable()
+    recovery_retry_allowed: bool | None = _nullable()
+    replacement_attempt_id: str | None = _nullable()
     stuck_due_to_no_requeue: bool | None = _nullable()
     merge_gate_satisfied: bool | None = _nullable()
+    required_child_unit_ids: list[str] | None = _nullable()
+    canonical_child_unit_ids: list[str] | None = _nullable()
     missing_required_slot_ids: list[str] | None = _nullable()
+    plugin_merge_attempted: bool | None = _nullable()
+    plugin_outcome: str | None = _nullable()
+    plugin_error_kind: str | None = _nullable()
     premature_merge_attempted: bool | None = _nullable()
     premature_merge_failed: bool | None = _nullable()
+    final_result_present: bool | None = _nullable()
+    failure_stage: str | None = _nullable()
 
     def validate(self) -> None:
         _require_nonempty_text(
@@ -494,27 +555,64 @@ class AblationObservationV1(SchemaRecordV1):
                 "ablation observation candidate_independent_label",
             )
         for name in (
+            "route_status",
+            "parse_result",
+            "recovery_attempt_id",
+            "replacement_attempt_id",
+            "plugin_outcome",
+            "plugin_error_kind",
+            "failure_stage",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _require_nonempty_text(value, f"ablation observation {name}")
+        for name in (
+            "domain_parser_call_count",
+            "domain_child_checker_call_count",
+            "plugin_verify_submission_call_count",
+            "root_checker_call_count",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _require_nonnegative_int(value, f"ablation observation {name}")
+        for name in (
             "wrong_canonical_accepted",
+            "root_checker_reached",
+            "root_check_passed",
             "root_checker_rejected_after_wrong_canonical",
             "raw_only_exposed",
             "raw_only_accepted",
+            "recovery_retry_allowed",
             "stuck_due_to_no_requeue",
             "merge_gate_satisfied",
+            "plugin_merge_attempted",
             "premature_merge_attempted",
             "premature_merge_failed",
+            "final_result_present",
         ):
             _validate_optional_bool(
                 getattr(self, name),
                 f"ablation observation {name}",
             )
-        if self.missing_required_slot_ids is not None:
-            if any(
-                not isinstance(item, str) or not item
-                for item in self.missing_required_slot_ids
+        for name in (
+            "required_child_unit_ids",
+            "canonical_child_unit_ids",
+            "missing_required_slot_ids",
+        ):
+            value = getattr(self, name)
+            if value is not None and any(
+                not isinstance(item, str) or not item for item in value
             ):
                 raise SchemaValidationError(
-                    "ablation observation missing_required_slot_ids must contain text IDs"
+                    f"ablation observation {name} must contain text IDs"
                 )
+        if self.root_checker_reached is False and (
+            self.root_check_passed is not None
+            or self.root_checker_call_count != 0
+        ):
+            raise SchemaValidationError(
+                "checker-not-reached ablation must keep pass null and call count zero"
+            )
 
 
 ACTUAL_PROVIDER_FIELDS = frozenset(

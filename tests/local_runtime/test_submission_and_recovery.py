@@ -13,12 +13,13 @@ from tokenshare.experiments.paper_ablation import (
     runtime_controls_for_mode,
 )
 from tokenshare.local_runtime import (
+    NoOpRuntimeHooks,
     ProtocolMechanismPolicy,
     ProtocolRunCoordinator,
     ProtocolRunRequest,
     SequentialWorkerBackend,
 )
-from tokenshare.local_runtime.contracts import WorkerCompletionSchedule
+from tokenshare.local_runtime.contracts import RecoveryMergeContext, WorkerCompletionSchedule
 from tokenshare.local_runtime.logical_scheduler import (
     LOGICAL_SOURCE_LATENCY_1X,
     LogicalSourceLatencyScheduler,
@@ -49,6 +50,33 @@ class _FailFirstExecutor:
             submission_id=submission_id,
             submitted_at=submitted_at,
         )
+
+
+class _FailFirstChildExecutor:
+    def __init__(self, delegate: _ArtifactExecutor) -> None:
+        self.delegate = delegate
+        self.failed = False
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        if request.unit_id != "unit_ready" and not self.failed:
+            self.failed = True
+            raise RuntimeError("child executor unavailable once")
+        return self.delegate.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
+
+
+class _RecoveryMergeRecorder(NoOpRuntimeHooks):
+    def __init__(self, ledger: EventLedger) -> None:
+        self.ledger = ledger
+        self.calls: list[tuple[RecoveryMergeContext, int]] = []
+
+    def before_recovery_merge(self, context: RecoveryMergeContext):
+        events = self.ledger.read_all()
+        self.calls.append((context, events[-1].event_seq))
+        return None
 
 
 class _ReturnFailureFirstExecutor:
@@ -425,6 +453,90 @@ def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
     assert result.summary["runtime_observation"]["runtime_wall_clock_ms"] == 300.0
 
 
+def _run_child_recovery_case(tmp_path, *, logical: bool, hooks):
+    store, ledger, plugin, clock, coordinator = _runtime(tmp_path, max_retries=1)
+    scheduler = LogicalSourceLatencyScheduler(start_ms=0) if logical else None
+
+    def completion_schedule(request, _submission, _failure_kind):
+        return WorkerCompletionSchedule(
+            source_latency_ms=10,
+            attempt_ordinal=request.attempt_ordinal,
+        )
+
+    backend = SequentialWorkerBackend(
+        executor=_FailFirstChildExecutor(_ArtifactExecutor(store)),
+        submitted_at=scheduler.now_timestamp if scheduler is not None else clock,
+        completion_schedule=completion_schedule if scheduler is not None else None,
+    )
+    result = coordinator.run_root(
+        ProtocolRunRequest(
+            run_id=f"run_recovery_seam_{'logical' if logical else 'direct'}",
+            root_input={"failure": "first_child_once"},
+            plugin_runtime=plugin,
+            worker_backend=backend,
+            hooks=hooks,
+            trace_delay_policy=(
+                LOGICAL_SOURCE_LATENCY_1X if scheduler is not None else "online_real_time"
+            ),
+            logical_scheduler=scheduler,
+        )
+    )
+    return result, ledger, plugin
+
+
+@pytest.mark.parametrize("logical", [False, True])
+def test_optional_recovery_merge_seam_is_post_recovery_and_pre_replacement(
+    tmp_path,
+    logical: bool,
+) -> None:
+    probe_ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
+    hooks = _RecoveryMergeRecorder(probe_ledger)
+    result, ledger, _plugin = _run_child_recovery_case(
+        tmp_path,
+        logical=logical,
+        hooks=hooks,
+    )
+
+    assert result.status == "completed"
+    assert len(hooks.calls) == 1
+    context, observed_event_seq = hooks.calls[0]
+    assert context.gate_satisfied is False
+    assert context.recovery_decision["retry_allowed"] is True
+    assert set(context.required_child_unit_ids) - {
+        child.unit_id for child in context.canonical_children
+    }
+    events = ledger.read_all()
+    recovery = next(
+        event for event in events if event.event_type == EventType.RECOVERY_ACTION_RECORDED
+    )
+    replacement = next(
+        event
+        for event in events
+        if event.event_type == EventType.LEASE_STATE_CHANGED
+        and event.payload.get("new_state") == "Active"
+        and event.payload.get("lease", {}).get("attempt_ordinal") == 1
+    )
+    assert recovery.event_seq <= observed_event_seq < replacement.event_seq
+
+
+@pytest.mark.parametrize("logical", [False, True])
+def test_default_hooks_have_zero_recovery_merge_capability_and_preserve_result(
+    tmp_path,
+    logical: bool,
+) -> None:
+    hooks = NoOpRuntimeHooks()
+    assert not hasattr(hooks, "before_recovery_merge")
+
+    result, _ledger, plugin = _run_child_recovery_case(
+        tmp_path,
+        logical=logical,
+        hooks=hooks,
+    )
+
+    assert result.status == "completed"
+    assert plugin.merge_calls == 1
+
+
 def test_actual_replacement_resolver_uses_persisted_ordinal_and_replays_same_slots(
     tmp_path,
 ) -> None:
@@ -666,12 +778,39 @@ def test_task7_no_verification_skips_plugin_gate_but_uses_engine_canonical(
     assert {
         event.payload["verification_report"]["validator_policy_id"]
         for event in verification_events
-    } == {plugin.descriptor.validator_policy_id}
+    } == {"runtime_ablation_no_verification.v1"}
+    assert all(
+        event.payload["verification_report"]["verifier"]
+        == {
+            "verifier_id": "runtime_ablation_no_verification",
+            "verifier_version": "v1",
+        }
+        for event in verification_events
+    )
+    assert all(
+        event.payload["verification_report"]["verification_environment"]
+        == {
+            "runtime": "tokenshare.local_runtime",
+            "ablation_mode": "NO_VERIFICATION",
+            "domain_verification_layer": "bypassed_before_domain_verifier",
+            "synthetic_verification": True,
+        }
+        for event in verification_events
+    )
     assert all(
         event.payload["verification_report"]["metadata"] == {
             "ablation_mode": "NO_VERIFICATION",
             "domain_verifier_invoked": False,
+            "synthetic_verification": True,
+            "bypass_reason": "verification_mechanism_disabled",
         }
+        for event in verification_events
+    )
+    assert all(
+        event.payload["verification_report"]["plugin_id"]
+        == plugin.descriptor.plugin_id
+        and event.payload["verification_report"]["plugin_version"]
+        == plugin.descriptor.plugin_version
         for event in verification_events
     )
     assert any(

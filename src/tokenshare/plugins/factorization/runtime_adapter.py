@@ -40,7 +40,7 @@ from tokenshare.local_runtime.contracts import (
     MergeResolutionAction,
     RootProtocolPlan,
 )
-from tokenshare.plugins.contracts import OutputContract
+from tokenshare.plugins.contracts import IncompleteMergeInputError, OutputContract
 from tokenshare.plugins.factorization.descriptor import (
     build_factorization_plugin_descriptor,
 )
@@ -52,6 +52,7 @@ from tokenshare.plugins.factorization.models import (
     FactorIntegerSubject,
     FactorSearchRangeInput,
     PrimeFactorizationResult,
+    RANGE_RESULT_FOUND_FACTOR,
     RangeResult,
     RootInput,
     canonical_json_digest,
@@ -617,6 +618,19 @@ class FactorizationRuntimeAdapter:
                 )
             )
         merge_unit_id = f"merge_unit:{split_plan.merge_plan.merge_plan_header['merge_plan_id']}"
+        required_slot_keys = {
+            str(slot["slot_key"]) for slot in split_plan.merge_plan.required_slots
+        }
+        provided_slot_keys = {slot.slot_key for slot in slots}
+        missing_slot_keys = sorted(required_slot_keys - provided_slot_keys)
+        has_factor_witness = any(
+            slot.range_result.result_kind == RANGE_RESULT_FOUND_FACTOR
+            for slot in slots
+        )
+        if missing_slot_keys and not has_factor_witness:
+            raise IncompleteMergeInputError(
+                "missing required range slots: " + ", ".join(missing_slot_keys)
+            )
         merged = merge_required_range_results(
             merge_plan=split_plan.merge_plan,
             slot_results=slots,
@@ -641,7 +655,9 @@ class FactorizationRuntimeAdapter:
             )
             refs[REQUESTED_OUTPUT_PRIME_FACTORIZATION] = prime_ref
         if not merged.expected_output_resolvable:
-            raise ValueError("factorization merge did not resolve the parent output")
+            raise IncompleteMergeInputError(
+                "factorization merge did not resolve the parent output"
+            )
         self._merge_candidate_refs = refs
         return MergeAction(resolution_builder=self._merge_resolution)
 

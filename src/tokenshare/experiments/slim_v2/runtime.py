@@ -13,6 +13,8 @@ from tokenshare.local_runtime import (
     ProtocolRunCoordinator,
     ProtocolRunRequest,
     ProtocolRunResult,
+    build_runtime_observation,
+    project_protocol_run,
 )
 from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.storage.artifacts import ArtifactStore
@@ -37,7 +39,12 @@ class RootAssembly:
     now: Callable[[], str]
     observation_clock: Callable[[], str]
     mechanism_policy: ProtocolMechanismPolicy | None = None
-    submission_adapter: ProviderSubmissionAdapter | None = None
+    submission_adapter: object | None = None
+    hooks: object | None = None
+    logical_scheduler: object | None = None
+    trace_delay_policy: str = "online_real_time"
+    continue_after_terminal_child_failure: bool = True
+    scenario: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,18 +83,23 @@ def run_root_slice(assembly: RootAssembly) -> ProtocolRunResult:
         plugin_runtime=assembly.plugin_runtime,
         worker_backend=assembly.worker_backend,
         mechanism_policy=assembly.mechanism_policy or ProtocolMechanismPolicy(),
-        hooks=NoOpRuntimeHooks(),
-        continue_after_terminal_child_failure=True,
+        hooks=assembly.hooks or NoOpRuntimeHooks(),
+        continue_after_terminal_child_failure=(
+            assembly.continue_after_terminal_child_failure
+        ),
         execution_scope=ProtocolExecutionScope(
             mode="whole_root",
             selected_ai_unit_ids=(),
         ),
-        trace_delay_policy="online_real_time",
-        logical_scheduler=None,
+        trace_delay_policy=assembly.trace_delay_policy,
+        logical_scheduler=assembly.logical_scheduler,
     )
-    result = coordinator.run_root(request)
+    try:
+        result = coordinator.run_root(request)
+    except Exception as exc:
+        result = _project_started_runtime_failure(assembly=assembly, error=exc)
     condition_error = (
-        assembly.submission_adapter.condition_error
+        getattr(assembly.submission_adapter, "condition_error", None)
         if assembly.submission_adapter is not None
         else None
     )
@@ -102,6 +114,98 @@ def run_root_slice(assembly: RootAssembly) -> ProtocolRunResult:
             "slim_condition_failure": {
                 "failure_stage": "provider_call",
                 "failure_kind": condition_error.error_kind,
+            },
+        },
+    )
+
+
+def _project_started_runtime_failure(
+    *, assembly: RootAssembly, error: Exception
+) -> ProtocolRunResult:
+    """已写入root lifecycle后，把coordinator异常保留为固定分母失败结果。"""
+
+    events = assembly.event_ledger.read_all()
+    registered = [event for event in events if event.event_type == EventType.TASK_REGISTERED]
+    if not registered:
+        raise error
+    created_units = [
+        event.payload.get("task_unit")
+        for event in events
+        if event.event_type == EventType.TASK_UNIT_CREATED
+        and isinstance(event.payload.get("task_unit"), Mapping)
+    ]
+    root_units = [
+        unit
+        for unit in created_units
+        if unit.get("unit_type") == "root" and isinstance(unit.get("unit_id"), str)
+    ]
+    if len(root_units) != 1:
+        raise RuntimeError("started failure lacks a unique root unit") from error
+    task_id = registered[0].task_id
+    root_unit_id = str(root_units[0]["unit_id"])
+    scenario = assembly.scenario
+    inventory = getattr(scenario, "inventory", None)
+    planned = tuple(getattr(inventory, "planned_ai_unit_ids", ()))
+    if not planned:
+        raise RuntimeError("started failure lacks structured planned AI units") from error
+    adapter = getattr(scenario, "submission_adapter", assembly.submission_adapter)
+    attempts = tuple(getattr(adapter, "attempts", ()))
+    dispatched = tuple(
+        dict.fromkeys(
+            str(item.planned_ai_unit_id)
+            for item in attempts
+            if isinstance(getattr(item, "planned_ai_unit_id", None), str)
+        )
+    )
+    canonical_attempt_ids = {
+        event.payload.get("selected_attempt_id")
+        for event in events
+        if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+        and isinstance(event.payload.get("selected_attempt_id"), str)
+    }
+    completed = tuple(
+        dict.fromkeys(
+            str(item.planned_ai_unit_id)
+            for item in attempts
+            if item.attempt_id in canonical_attempt_ids
+        )
+    )
+    facts = tuple(
+        fact.to_dict()
+        for fact in getattr(assembly.worker_backend, "execution_facts", ())
+    )
+    scheduler = assembly.logical_scheduler
+    ended_at = (
+        scheduler.now_timestamp()
+        if scheduler is not None and getattr(scheduler, "has_wall_clock_origin", False)
+        else assembly.observation_clock()
+    )
+    observation = build_runtime_observation(
+        run_id=assembly.run_id,
+        runtime_started_at=events[0].occurred_at,
+        runtime_ended_at=ended_at,
+        planned_ai_unit_ids=planned,
+        dispatched_ai_unit_ids=dispatched,
+        completed_ai_unit_ids=completed,
+        worker_execution_facts=facts,
+    )
+    projected = project_protocol_run(
+        run_id=assembly.run_id,
+        task_id=task_id,
+        root_unit_id=root_unit_id,
+        event_ledger=assembly.event_ledger,
+        artifact_store=assembly.artifact_store,
+        runtime_observation=observation,
+    )
+    return replace(
+        projected,
+        status="failed",
+        summary={
+            **projected.summary,
+            "slim_runtime_failure": {
+                "failure_stage": "protocol_runtime",
+                "failure_kind": type(error).__name__,
+                "engine_root_status": projected.status,
             },
         },
     )

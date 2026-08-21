@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tokenshare.core.models import ArtifactRef, ProtocolConfig
+from tokenshare.core.models import ArtifactRef, ProtocolConfig, TaskState
 from tokenshare.executors.contracts import ExecutionSubmission
 from tokenshare.local_runtime import (
     ProtocolRunCoordinator,
@@ -18,6 +18,7 @@ from tokenshare.plugins.factorization.runtime_adapter import (
     FactorizationExecutionBridge,
     FactorizationRuntimeAdapter,
 )
+from tokenshare.plugins.contracts import IncompleteMergeInputError
 import tokenshare.plugins.factorization.runtime_adapter as runtime_adapter_module
 from tokenshare.plugins.factorization.models import RangeResult
 from tokenshare.plugins.factorization.schemas import (
@@ -76,6 +77,72 @@ def test_plan_units_are_real_factorization_child_snapshots(tmp_path: Path) -> No
     assert all(unit.parent_unit_id == "paper_factor_root_factor_runtime_91" for unit in units)
     assert all(unit.required_capabilities["executor"] == "mock_ai" for unit in units)
     assert [unit.plugin_payload["summary"]["child_index"] for unit in units] == [0, 1, 2]
+
+
+def test_build_merge_types_only_unresolved_missing_required_ranges(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    adapter = FactorizationRuntimeAdapter(provider_family="siliconflow", seed=7)
+    units = adapter.plan_units(_case(), artifact_store=store)
+    parent = replace(
+        units[0],
+        unit_id="factor_runtime_parent",
+        parent_unit_id=None,
+        unit_type="root",
+    )
+
+    def canonical_child(index: int, *, found_factor: int | None):
+        unit = units[index]
+        bounds = ((2, 4), (5, 7), (8, 9))[index]
+        summary = unit.plugin_payload["summary"]
+        result = RangeResult(
+            range_result_id=f"direct_range_{index}",
+            target_n="91",
+            range_start=str(bounds[0]),
+            range_end=str(bounds[1]),
+            coverage_id=str(summary["coverage_id"]),
+            child_index=index,
+            partition_params_digest=str(summary["partition_params_digest"]),
+            result_kind=(
+                RANGE_RESULT_FOUND_FACTOR
+                if found_factor is not None
+                else RANGE_RESULT_NO_FACTOR
+            ),
+            found_factor=str(found_factor) if found_factor is not None else None,
+            cofactor=str(91 // found_factor) if found_factor is not None else None,
+            checked_divisor_count=bounds[1] - bounds[0] + 1,
+            executor_summary={"executor": "focused_merge_contract"},
+            created_at="2026-08-21T00:00:00Z",
+        )
+        ref = store.save_json(
+            result.to_dict(),
+            artifact_id=result.range_result_id,
+            artifact_type="canonical_output",
+            artifact_schema_id="factorization.range_result",
+            artifact_schema_version="v1",
+            source={"kind": "focused_merge_contract"},
+            metadata={"output_name": "range_result"},
+            created_at=result.created_at,
+        )
+        return replace(
+            unit,
+            state=TaskState.COMPLETED,
+            canonical_output_refs={"range_result": ref},
+        )
+
+    with pytest.raises(IncompleteMergeInputError) as caught:
+        adapter.build_merge(
+            parent=parent,
+            canonical_children=(canonical_child(0, found_factor=None),),
+        )
+    assert isinstance(caught.value, ValueError)
+
+    action = adapter.build_merge(
+        parent=parent,
+        canonical_children=(canonical_child(1, found_factor=7),),
+    )
+    assert callable(action.resolution_builder)
 
 
 class _Clock:

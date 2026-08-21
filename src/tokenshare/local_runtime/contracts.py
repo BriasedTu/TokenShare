@@ -331,6 +331,21 @@ class MergeContext:
 
 
 @dataclass(frozen=True, kw_only=True)
+class RecoveryMergeContext:
+    """recovery 已落账、replacement 尚未创建时的真实 merge 快照。"""
+
+    parent: object
+    canonical_children: tuple[object, ...]
+    required_child_unit_ids: tuple[str, ...]
+    gate_satisfied: bool
+    recovered_attempt_id: str
+    recovery_trigger: str
+    recovery_decision: JsonObject
+    protocol_event_refs: tuple[JsonObject, ...] = ()
+    recovery_event_refs: tuple[JsonObject, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
 class UnitProgressContext:
     """worker/liveness hook 可观察的 unit progress。"""
 
@@ -874,6 +889,14 @@ class RuntimeHooks(Protocol):
     def on_unit_progress(
         self, context: UnitProgressContext
     ) -> WorkerDirective | None: ...
+
+
+class RecoveryMergeHooks(Protocol):
+    """可选 capability；普通 RuntimeHooks/NoOp 不实现该边界。"""
+
+    def before_recovery_merge(
+        self, context: RecoveryMergeContext
+    ) -> GateDirective | None: ...
 
 
 class NoOpRuntimeHooks:

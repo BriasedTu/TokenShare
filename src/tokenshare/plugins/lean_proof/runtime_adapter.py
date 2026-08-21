@@ -37,7 +37,7 @@ from tokenshare.local_runtime.contracts import (
     MergeResolutionAction,
     RootProtocolPlan,
 )
-from tokenshare.plugins.contracts import OutputContract
+from tokenshare.plugins.contracts import IncompleteMergeInputError, OutputContract
 from tokenshare.plugins.lean_proof.checker import (
     LeanChecker,
     LeanCheckerMode,
@@ -603,12 +603,21 @@ class LeanRuntimeAdapter:
     ) -> MergeAction:
         split_plan = self._require_split_plan()
         parent_ref = self._require_parent_payload_ref()
-        expected_keys = {
+        canonical_keys = {
             str(child.metadata["child_logical_key"])
             for child in canonical_children
         }
-        if expected_keys != set(self._proof_inputs_by_logical_key):
-            raise ValueError("Lean merge requires checker-accepted input for every child")
+        required_keys = {
+            str(slot["source_child_logical_key"])
+            for slot in split_plan.merge_plan.required_slots
+        }
+        if (
+            canonical_keys != required_keys
+            or set(self._proof_inputs_by_logical_key) != required_keys
+        ):
+            raise IncompleteMergeInputError(
+                "Lean merge requires checker-accepted input for every child"
+            )
         merge_unit_id = (
             f"merge_unit:{split_plan.merge_plan.merge_plan_header['merge_plan_id']}"
         )

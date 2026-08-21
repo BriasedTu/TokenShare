@@ -9,7 +9,19 @@ from typing import Any, Callable
 from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
 from tokenshare.plugins.factorization.validator import parse_factorization_ai_output
 from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
-from tokenshare.plugins.lean_proof.prompt_builder import parse_lean_proof_candidate_ai_output
+from tokenshare.plugins.lean_proof.prompt_builder import (
+    PROOF_CANDIDATE_OUTPUT_NAME,
+    parse_lean_proof_candidate_ai_output,
+)
+from tokenshare.plugins.lean_proof.runtime_adapter import (
+    LeanExecutionBridge,
+    LeanRuntimeAdapter,
+)
+from tokenshare.plugins.lean_proof.schemas import (
+    LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+    LEAN_PROOF_SUBGOAL_TASK_TYPE,
+    PROOF_ARTIFACT_OUTPUT_NAME,
+)
 from tokenshare.storage.artifacts import ArtifactStore
 
 from .provider import ProviderCallContextV1, call_provider_once, project_cost
@@ -263,6 +275,9 @@ class FixedTraceSubmissionAdapter:
         provider_entry_id: str,
         configured_model: str,
         provider_family: str = "deepseek",
+        experiment_id: str = "exp2",
+        scenario_controller: object | None = None,
+        structural_route_observer: object | None = None,
     ) -> None:
         self.source_store = source_store
         self.artifact_store = artifact_store
@@ -271,6 +286,11 @@ class FixedTraceSubmissionAdapter:
         self.provider_entry_id = provider_entry_id
         self.configured_model = configured_model
         self.provider_family = provider_family
+        if experiment_id not in {"exp2", "exp3", "exp4"}:
+            raise ValueError("fixed trace adapter requires Exp2, Exp3, or Exp4")
+        self.experiment_id = experiment_id
+        self.scenario_controller = scenario_controller
+        self.structural_route_observer = structural_route_observer
         self.attempts: list[AttemptResultV1] = []
 
     def execute(
@@ -300,6 +320,13 @@ class FixedTraceSubmissionAdapter:
             document = self.source_store.read_relative_response(source.raw_response_relative_path)
             body = document.get("body")
             content = _response_content(body)
+            transform_content = getattr(
+                self.scenario_controller,
+                "transform_content",
+                None,
+            )
+            if isinstance(content, str) and callable(transform_content):
+                content = transform_content(request, content)
             outcome = ProviderCallResultV1(
                 ok=isinstance(content, str),
                 content_text=content if isinstance(content, str) else None,
@@ -331,9 +358,41 @@ class FixedTraceSubmissionAdapter:
             artifact_store=self.artifact_store,
             domain=self.domain,
             outcome=outcome,
+            parser_route_selector=(
+                getattr(self.structural_route_observer, "select_parser_route", None)
+            ),
         )
+        transform_submission = getattr(
+            self.scenario_controller,
+            "transform_submission",
+            None,
+        )
+        if callable(transform_submission):
+            submission = transform_submission(request, submission)
+        record_parser_result = getattr(
+            self.structural_route_observer,
+            "record_parser_result",
+            None,
+        )
+        if callable(record_parser_result):
+            parser_record = record_parser_result(request, submission, _parse_result)
+            if isinstance(parser_record, dict):
+                submission = replace(
+                    submission,
+                    environment_summary={
+                        **dict(submission.environment_summary or {}),
+                        "slim_parser_route_observation": dict(parser_record),
+                    },
+                )
         replay_attempt = _fixed_attempt(request, planned, trace, selected)
-        replay_attempt.validate(experiment_id="exp2")
+        transform_attempt = getattr(
+            self.scenario_controller,
+            "transform_attempt",
+            None,
+        )
+        if callable(transform_attempt):
+            replay_attempt = transform_attempt(request, replay_attempt, submission)
+        replay_attempt.validate(experiment_id=self.experiment_id)
         self.attempts.append(replay_attempt)
         return replace(
             submission,
@@ -349,8 +408,49 @@ class FixedTraceSubmissionAdapter:
                 "source_cost_estimate_cny": source.cost_estimate_cny,
                 "source_pricing_version": source.pricing_version,
                 "source_pricing_tier": source.pricing_tier,
+                **(
+                    {
+                        "simulated_latency_ms": replay_attempt.simulated_latency_ms,
+                        "simulated_total_tokens": replay_attempt.simulated_total_tokens,
+                    }
+                    if self.experiment_id == "exp3"
+                    else {}
+                ),
             },
         )
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission,
+    ) -> dict[str, Any]:
+        """把子进程已消费的source attempt和Slim observation带回parent。"""
+
+        matches = [
+            item
+            for item in self.attempts
+            if item.attempt_id == request.attempt_id
+        ]
+        if len(matches) != 1:
+            raise ValueError("process result has no unique fixed-source attempt")
+        export = getattr(self.scenario_controller, "export_process_result", None)
+        return {
+            "attempt": matches[0],
+            "scenario": export(request) if callable(export) else None,
+        }
+
+    def ingest_process_result(self, captured: Any) -> None:
+        if not isinstance(captured, dict) or not isinstance(
+            captured.get("attempt"), AttemptResultV1
+        ):
+            raise TypeError("fixed-source process result is malformed")
+        attempt = captured["attempt"]
+        if any(item.attempt_id == attempt.attempt_id for item in self.attempts):
+            raise ValueError("fixed-source process result repeats an attempt")
+        self.attempts.append(attempt)
+        ingest = getattr(self.scenario_controller, "ingest_process_result", None)
+        if callable(ingest):
+            ingest(captured.get("scenario"))
 
 
 def _submission_from_content(
@@ -361,6 +461,7 @@ def _submission_from_content(
     artifact_store: ArtifactStore,
     domain: str,
     outcome: ProviderCallResultV1,
+    parser_route_selector: Callable[[ExecutionRequest, Any], str] | None = None,
 ) -> tuple[ExecutionSubmission, str | None]:
     raw_ref = None
     parsed_ref = None
@@ -381,16 +482,27 @@ def _submission_from_content(
             created_at=submitted_at,
         )
     if outcome.ok:
-        parse = _parse_domain(
-            domain=domain,
-            request=request,
-            artifact_store=artifact_store,
-            content=outcome.content_text,
-            raw_ref=raw_ref,
-            created_at=submitted_at,
+        parser_route = (
+            parser_route_selector(request, raw_ref)
+            if callable(parser_route_selector)
+            else "PARSE"
         )
-        parse_status = "parsed" if parse.succeeded else "rejected"
-        if parse.succeeded:
+        if parser_route not in {"PARSE", "RAW_PASSTHROUGH"}:
+            raise ValueError("fixed trace parser route must be PARSE or RAW_PASSTHROUGH")
+        if parser_route == "RAW_PASSTHROUGH":
+            parse_status = "bypassed"
+            result_kind = "succeeded"
+        else:
+            parse = _parse_domain(
+                domain=domain,
+                request=request,
+                artifact_store=artifact_store,
+                content=outcome.content_text,
+                raw_ref=raw_ref,
+                created_at=submitted_at,
+            )
+            parse_status = "parsed" if parse.succeeded else "rejected"
+        if parser_route == "PARSE" and parse.succeeded:
             for output_name, body in parse.candidate_output_artifact_bodies.items():
                 ref = artifact_store.save_json(
                     body,
@@ -406,7 +518,7 @@ def _submission_from_content(
                 if parsed_ref is None:
                     parsed_ref = ref
             result_kind = "succeeded"
-        else:
+        elif parser_route == "PARSE":
             failure_ref = artifact_store.save_json(
                 dict(parse.parse_failure_artifact_body or {"failure_kind": "parse_rejected"}),
                 artifact_id=f"slim_parse_failure_{_safe(submission_id)}",
@@ -455,6 +567,136 @@ def _submission_from_content(
         error=error,
         submitted_at=submitted_at,
     ), parse_status
+
+
+class SlimLeanExecutionBridge:
+    """只在 Lean proof candidate 的 normalize/checker 前实施结构性 V 换路。"""
+
+    def __init__(
+        self,
+        *,
+        plugin_runtime: LeanRuntimeAdapter,
+        proof_candidate_executor: Any,
+        verification_enabled: bool,
+        structural_route_observer: object | None = None,
+    ) -> None:
+        self._plugin_runtime = plugin_runtime
+        self._proof_candidate_executor = proof_candidate_executor
+        self._verification_enabled = verification_enabled
+        self._structural_route_observer = structural_route_observer
+        self._delegate = LeanExecutionBridge(
+            plugin_runtime=plugin_runtime,
+            proof_candidate_executor=proof_candidate_executor,
+        )
+
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        submission_id: str,
+        submitted_at: str,
+    ) -> ExecutionSubmission:
+        unit_type = str(request.task_unit_snapshot["unit_type"])
+        if unit_type not in {
+            LEAN_PROOF_SUBGOAL_TASK_TYPE,
+            LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+        }:
+            return self._delegate.execute(
+                request,
+                submission_id=submission_id,
+                submitted_at=submitted_at,
+            )
+        submission = self._proof_candidate_executor.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
+        checker_input_present = bool(submission.candidate_output_refs)
+        invoked = self._verification_enabled and checker_input_present
+        if self._verification_enabled:
+            normalized = self._plugin_runtime.normalize_proof_submission(
+                submission,
+                request=request,
+            )
+        else:
+            proof_candidate_ref = submission.candidate_output_refs.get(
+                PROOF_CANDIDATE_OUTPUT_NAME
+            )
+            if proof_candidate_ref is None:
+                normalized = submission
+            else:
+                store = getattr(self._proof_candidate_executor, "artifact_store", None)
+                if not isinstance(store, ArtifactStore):
+                    raise TypeError(
+                        "Slim Lean verification bypass requires the candidate artifact store"
+                    )
+                provenance_ref = store.save_json(
+                    {
+                        "schema_version": "tokenshare.slim_v2.unchecked_candidate.v1",
+                        "request_id": request.request_id,
+                        "attempt_id": request.attempt_id,
+                        "proof_candidate_ref": proof_candidate_ref.to_dict(),
+                        "domain_verifier_invoked": False,
+                    },
+                    artifact_id=f"slim_unchecked_{_safe(submission_id)}",
+                    artifact_type="execution_provenance",
+                    artifact_schema_id="tokenshare.slim_v2.unchecked_candidate",
+                    artifact_schema_version="v1",
+                    source={"kind": "slim_v2_structural_verification_bypass"},
+                    metadata={"domain_verifier_invoked": False},
+                    created_at=submitted_at,
+                )
+                normalized = replace(
+                    submission,
+                    candidate_output_refs={
+                        PROOF_ARTIFACT_OUTPUT_NAME: proof_candidate_ref
+                    },
+                    provenance_ref=provenance_ref,
+                    environment_summary={
+                        **dict(submission.environment_summary or {}),
+                        "candidate_provenance": "unchecked_candidate",
+                        "domain_verifier_invoked": False,
+                    },
+                )
+        record = getattr(
+            self._structural_route_observer,
+            "record_lean_verification_route",
+            None,
+        )
+        if callable(record):
+            verification_record = record(
+                request,
+                domain_child_checker_invoked=invoked,
+                normalize_invoked=self._verification_enabled,
+            )
+            if isinstance(verification_record, dict):
+                normalized = replace(
+                    normalized,
+                    environment_summary={
+                        **dict(normalized.environment_summary or {}),
+                        "slim_lean_verification_route_observation": dict(
+                            verification_record
+                        ),
+                    },
+                )
+        return normalized
+
+    def prepare_process_execution(
+        self,
+        request: ExecutionRequest,
+        execution_index: int,
+    ) -> None:
+        self._delegate.prepare_process_execution(request, execution_index)
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission,
+    ) -> Any:
+        return self._delegate.export_process_result(request, submission)
+
+    def ingest_process_result(self, process_result: Any) -> None:
+        self._delegate.ingest_process_result(process_result)
 
 
 def _parse_domain(

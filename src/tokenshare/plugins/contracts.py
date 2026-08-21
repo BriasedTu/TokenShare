@@ -10,6 +10,10 @@ from typing import Any
 from tokenshare.core.models import ArtifactRef, JsonObject
 
 
+class IncompleteMergeInputError(ValueError):
+    """插件因缺少 required merge input 而拒绝构造候选。"""
+
+
 @dataclass(frozen=True)
 class OutputContract:
     """Execution output shape requested from an executor.

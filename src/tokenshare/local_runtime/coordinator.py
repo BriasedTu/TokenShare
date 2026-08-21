@@ -36,6 +36,7 @@ from tokenshare.local_runtime.contracts import (
     ProtocolRunRequest,
     ProtocolRunResult,
     RecoveryContext,
+    RecoveryMergeContext,
     RootProtocolPlan,
     RuntimeHookObservationV1,
     UnitProgressContext,
@@ -788,6 +789,7 @@ class ProtocolRunCoordinator:
             partial_observation = False
             witness_observed_at: str | None = None
             in_flight_ai_unit_ids_at_witness: tuple[str, ...] = ()
+            recovery_merge_once_keys: set[tuple[str, str]] = set()
         else:
             runtime_started_at = resume_checkpoint.runtime_started_at
             run_key = resume_checkpoint.run_key
@@ -818,6 +820,7 @@ class ProtocolRunCoordinator:
             in_flight_ai_unit_ids_at_witness = (
                 resume_checkpoint.in_flight_ai_unit_ids_at_witness
             )
+            recovery_merge_once_keys = set()
 
         while True:
             pending_control = any(
@@ -1115,6 +1118,12 @@ class ProtocolRunCoordinator:
                         worker_outcome=worker_outcome,
                         retry_counts=retry_counts,
                         runtime_observations=runtime_observations,
+                        recovery_merge_snapshot=(
+                            registration.root_unit.unit_id,
+                            tuple(expand_result.child_units) if expand_result is not None else (),
+                            merge_plan,
+                            recovery_merge_once_keys,
+                        ),
                     )
                 else:
                     popped_event = logical_scheduler.pop_next()
@@ -1163,6 +1172,12 @@ class ProtocolRunCoordinator:
                             worker_outcome=worker_outcome,
                             retry_counts=retry_counts,
                             runtime_observations=runtime_observations,
+                            recovery_merge_snapshot=(
+                                registration.root_unit.unit_id,
+                                tuple(expand_result.child_units) if expand_result is not None else (),
+                                merge_plan,
+                                recovery_merge_once_keys,
+                            ),
                         )
                         deferred = execution.get("deferred_recovery")
                         if deferred is not None:
@@ -1194,25 +1209,48 @@ class ProtocolRunCoordinator:
                         )
                         graph = applied.graph
                         if applied.decision.retry_allowed:
-                            requeue_event = logical_scheduler.schedule_event(
-                                event_kind="requeue",
-                                logical_time_ms=logical_scheduler.clock_ms,
-                                event_priority=EVENT_PRIORITY_BY_KIND["requeue"],
-                                task_id=scheduled.task_unit.task_id,
-                                unit_id=scheduled.task_unit.unit_id,
-                                attempt_ordinal=popped_event.attempt_ordinal,
+                            recovery_merge_directive = self._before_recovery_merge(
+                                request=request,
+                                applied=applied,
+                                root_unit_id=registration.root_unit.unit_id,
+                                child_units=(
+                                    tuple(expand_result.child_units)
+                                    if expand_result is not None
+                                    else ()
+                                ),
+                                merge_plan=merge_plan,
+                                once_keys=recovery_merge_once_keys,
+                                runtime_observations=runtime_observations,
                             )
-                            pending_executions.append(
-                                _LogicalPendingRequeue(
-                                    event=requeue_event,
-                                    recovery=applied,
+                            if (
+                                isinstance(recovery_merge_directive, GateDirective)
+                                and recovery_merge_directive.stop
+                            ):
+                                execution = _recovery_result(
+                                    applied,
+                                    requeue_blocked=True,
                                 )
+                            else:
+                                requeue_event = logical_scheduler.schedule_event(
+                                    event_kind="requeue",
+                                    logical_time_ms=logical_scheduler.clock_ms,
+                                    event_priority=EVENT_PRIORITY_BY_KIND["requeue"],
+                                    task_id=scheduled.task_unit.task_id,
+                                    unit_id=scheduled.task_unit.unit_id,
+                                    attempt_ordinal=popped_event.attempt_ordinal,
+                                )
+                                pending_executions.append(
+                                    _LogicalPendingRequeue(
+                                        event=requeue_event,
+                                        recovery=applied,
+                                    )
+                                )
+                                continue
+                        else:
+                            execution = _recovery_result(
+                                applied,
+                                requeue_blocked=False,
                             )
-                            continue
-                        execution = _recovery_result(
-                            applied,
-                            requeue_blocked=False,
-                        )
                     elif isinstance(pending_execution, _LogicalPendingRequeue):
                         scheduled = pending_execution.recovery.scheduled
                         execution = self._finish_requeue(
@@ -1453,6 +1491,11 @@ class ProtocolRunCoordinator:
                         canonical_selection=canonical.canonical_selection,
                     )
                 )
+                if (
+                    isinstance(action, CompleteAction)
+                    and not request.mechanism_policy.verification_enabled
+                ):
+                    action = _bind_no_verification_completion(action)
                 split = self._engine.record_split_strategy_invocation(
                     invocation=action.invocation,
                     correlation_id=f"{request.run_id}:split:{unit_id}",
@@ -1857,6 +1900,7 @@ class ProtocolRunCoordinator:
         worker_outcome: WorkerBatchOutcome,
         retry_counts,
         runtime_observations,
+        recovery_merge_snapshot,
     ) -> dict[str, object]:
         unit_id = scheduled.task_unit.unit_id
         prepared_delivery = worker_outcome.prepared_delivery
@@ -1901,6 +1945,7 @@ class ProtocolRunCoordinator:
                     else None
                 ),
                 runtime_observations=runtime_observations,
+                recovery_merge_snapshot=recovery_merge_snapshot,
                 trace_delivery_outcome=(
                     worker_outcome if trace_terminal_status is not None else None
                 ),
@@ -1927,6 +1972,7 @@ class ProtocolRunCoordinator:
                     else scheduled.lease.expires_at
                 ),
                 runtime_observations=runtime_observations,
+                recovery_merge_snapshot=recovery_merge_snapshot,
             )
         if submission.result_kind == "late_submission":
             submission = replace(
@@ -1970,6 +2016,7 @@ class ProtocolRunCoordinator:
                 trigger="parser_failure",
                 causation_event_id=request_flow.event.event_id,
                 runtime_observations=runtime_observations,
+                recovery_merge_snapshot=recovery_merge_snapshot,
             )
         if (
             submission.parsed_output_ref is not None
@@ -2028,6 +2075,7 @@ class ProtocolRunCoordinator:
                     else None
                 ),
                 runtime_observations=runtime_observations,
+                recovery_merge_snapshot=recovery_merge_snapshot,
             )
         if submission.result_kind != "succeeded":
             return self._recover(
@@ -2041,6 +2089,7 @@ class ProtocolRunCoordinator:
                 attempt_for_recovery=submission_flow.attempt,
                 halt_run=submission.result_kind == "fatal_executor_error",
                 runtime_observations=runtime_observations,
+                recovery_merge_snapshot=recovery_merge_snapshot,
             )
         verification_directive = _observe(
             request.hooks.before_verification,
@@ -2073,6 +2122,7 @@ class ProtocolRunCoordinator:
                     causation_event_id=submission_flow.event.event_id,
                     attempt_for_recovery=submission_flow.attempt,
                     runtime_observations=runtime_observations,
+                    recovery_merge_snapshot=recovery_merge_snapshot,
                 )
         else:
             report = _build_no_verification_report(
@@ -2105,6 +2155,7 @@ class ProtocolRunCoordinator:
                 causation_event_id=recovery_causation_event_id,
                 attempt_for_recovery=recovery_attempt,
                 runtime_observations=runtime_observations,
+                recovery_merge_snapshot=recovery_merge_snapshot,
             )
         canonical = self._engine.bind_canonical_outputs(
             task_id=scheduled.task_unit.task_id,
@@ -2133,6 +2184,7 @@ class ProtocolRunCoordinator:
         runtime_observations=None,
         trace_delivery_outcome=None,
         trace_delivery_status=None,
+        recovery_merge_snapshot=None,
     ) -> dict[str, object]:
         deferred = _DeferredRecovery(
             scheduled=scheduled,
@@ -2159,6 +2211,28 @@ class ProtocolRunCoordinator:
             retry_counts=retry_counts,
             deferred=deferred,
         )
+        recovery_merge_directive = None
+        if applied.decision.retry_allowed and recovery_merge_snapshot is not None:
+            (
+                root_unit_id,
+                child_units,
+                merge_plan,
+                once_keys,
+            ) = recovery_merge_snapshot
+            recovery_merge_directive = self._before_recovery_merge(
+                request=request,
+                applied=applied,
+                root_unit_id=root_unit_id,
+                child_units=child_units,
+                merge_plan=merge_plan,
+                once_keys=once_keys,
+                runtime_observations=runtime_observations,
+            )
+        if (
+            isinstance(recovery_merge_directive, GateDirective)
+            and recovery_merge_directive.stop
+        ):
+            return _recovery_result(applied, requeue_blocked=True)
         return self._finish_requeue(
             request=request,
             applied=applied,
@@ -2251,6 +2325,75 @@ class ProtocolRunCoordinator:
             halt_run=deferred.halt_run,
             trace_delivery_attempt=trace_delivery_attempt,
         )
+
+    def _before_recovery_merge(
+        self,
+        *,
+        request,
+        applied: _AppliedRecovery,
+        root_unit_id: str,
+        child_units,
+        merge_plan,
+        once_keys: set[tuple[str, str]],
+        runtime_observations,
+    ) -> GateDirective | None:
+        """仅对显式 capability 暴露 recovery 后、replacement 前的真实快照。"""
+
+        hook = getattr(request.hooks, "before_recovery_merge", None)
+        if not callable(hook) or not child_units or merge_plan is None:
+            return None
+        recovered_attempt_id = str(applied.recovery.attempt.attempt_id)
+        once_key = (root_unit_id, recovered_attempt_id)
+        if once_key in once_keys:
+            raise RuntimeError(
+                "duplicate recovery-premerge observation for recovered attempt"
+            )
+        once_keys.add(once_key)
+        readiness, children, canonical_events, verification_events = (
+            _current_merge_readiness(
+                request=request,
+                graph=applied.graph,
+                event_ledger=self._event_ledger,
+                root_unit_id=root_unit_id,
+                child_units=tuple(child_units),
+                merge_plan=merge_plan,
+            )
+        )
+        completed_children = tuple(
+            child for child in children if child.state == TaskState.COMPLETED
+        )
+        decision = applied.decision
+        directive = _observe(
+            hook,
+            RecoveryMergeContext(
+                parent=applied.graph.units[root_unit_id],
+                canonical_children=completed_children,
+                required_child_unit_ids=tuple(
+                    readiness.required_child_unit_ids
+                ),
+                gate_satisfied=readiness.status == "ready",
+                recovered_attempt_id=recovered_attempt_id,
+                recovery_trigger=applied.trigger,
+                recovery_decision={
+                    "trigger": decision.trigger,
+                    "retry_allowed": decision.retry_allowed,
+                    "next_task_state": decision.next_task_state.value,
+                    "superseded_attempt_state": (
+                        decision.superseded_attempt_state.value
+                    ),
+                    "retry_count": decision.retry_count,
+                    "reason": decision.reason,
+                },
+                protocol_event_refs=tuple(
+                    _event_ref(event)
+                    for event in (*canonical_events, *verification_events)
+                ),
+                recovery_event_refs=applied.recovery_event_refs,
+            ),
+        )
+        if runtime_observations is not None:
+            _collect_observations(runtime_observations, directive)
+        return directive
 
     def _finish_requeue(
         self,
@@ -2764,10 +2907,7 @@ def _build_no_verification_report(
             execution_request.output_contract.required_outputs
         ),
         output_contract_id=execution_request.output_contract.output_contract_id,
-        validator_policy_id=str(
-            plugin.get("validator_policy_id")
-            or "runtime_ablation_no_verification_v1"
-        ),
+        validator_policy_id="runtime_ablation_no_verification.v1",
         plugin_id=str(plugin.get("plugin_id") or "unknown_plugin"),
         plugin_version=str(plugin.get("plugin_version") or "unknown_version"),
         plugin_descriptor_digest=str(
@@ -2787,6 +2927,8 @@ def _build_no_verification_report(
         verification_environment={
             "runtime": "tokenshare.local_runtime",
             "ablation_mode": "NO_VERIFICATION",
+            "domain_verification_layer": "bypassed_before_domain_verifier",
+            "synthetic_verification": True,
         },
         verifier={
             "verifier_id": "runtime_ablation_no_verification",
@@ -2797,7 +2939,26 @@ def _build_no_verification_report(
         metadata={
             "ablation_mode": "NO_VERIFICATION",
             "domain_verifier_invoked": False,
+            "synthetic_verification": True,
+            "bypass_reason": "verification_mechanism_disabled",
         },
+    )
+
+
+def _bind_no_verification_completion(action: CompleteAction) -> CompleteAction:
+    """让complete evidence引用实际选中的synthetic verification policy。"""
+
+    action_body = dict(action.decision.action_body)
+    evidence = action_body.get("completion_evidence")
+    if not isinstance(evidence, dict):
+        raise ValueError("complete decision requires structured completion_evidence")
+    action_body["completion_evidence"] = {
+        **evidence,
+        "validator_policy_id": "runtime_ablation_no_verification.v1",
+    }
+    return replace(
+        action,
+        decision=replace(action.decision, action_body=action_body),
     )
 
 
