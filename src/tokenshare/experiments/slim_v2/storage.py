@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields, is_dataclass
 import json
 from pathlib import Path
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Iterable, Iterator, Literal, Mapping
 from urllib.parse import parse_qsl, quote, unquote, urlencode
 from uuid import uuid4
 
@@ -62,6 +62,28 @@ class SelectedTraceAttemptV1:
     requested_attempt_ordinal: int
     source_attempt_ordinal: int
     source_attempt_fallback_used: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Exp4ChallengeInventoryRowV1:
+    """Reducer 所需的冻结 Exp4 challenge inventory 普通映射。"""
+
+    challenge_plan_id: str
+    case_id: str
+    repeat_id: int
+    challenge_family: str
+    target_rule: str
+    attempt_rule: str
+
+    def validate(self) -> None:
+        for name in (
+            "challenge_plan_id", "case_id", "challenge_family",
+            "target_rule", "attempt_rule",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"Exp4 challenge inventory {name} must be text")
+        _natural(self.repeat_id, "Exp4 challenge inventory repeat_id")
 
 
 def _natural(value: Any, name: str) -> int:
@@ -248,6 +270,17 @@ class RunStore:
     ) -> Path:
         return self.root_directory(experiment_id, condition_id, case_id, repeat_id) / "protocol.json"
 
+    def exp3_reference_result_path(
+        self,
+        condition_id: str,
+        case_id: str,
+        repeat_id: int,
+    ) -> Path:
+        """返回辅助 Exp3 reference 的独立普通结果路径。"""
+
+        key = ("exp3", condition_id, case_id, repeat_id)
+        return self.run_dir / "references" / "exp3" / _root_directory_name(key) / "result.json"
+
     def trace_path(self, case_id: str, source_repeat_id: int, unit_id: str) -> Path:
         return (
             self.run_dir / "traces" / "exp1" / _segment(case_id)
@@ -365,20 +398,87 @@ class RunStore:
 
         if name not in {"roots", "exp3_references"}:
             raise ValueError(f"not a root inventory: {name}")
-        projected: list[RootInventoryV1] = []
-        for line_number, line in enumerate(
-            self.inventory_path(name).read_text(encoding="utf-8").splitlines(),
-            start=1,
-        ):
-            if not line.strip():
+        return tuple(self.iter_root_inventory_rows(name))
+
+    def iter_root_inventory_rows(
+        self,
+        name: Literal["roots", "exp3_references"] = "roots",
+    ) -> Iterator[RootInventoryV1]:
+        """逐行验证并产出 root/reference inventory，不一次载入全文件。"""
+
+        if name not in {"roots", "exp3_references"}:
+            raise ValueError(f"not a root inventory: {name}")
+        with self.inventory_path(name).open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, start=1):
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if not isinstance(value, Mapping):
+                    raise ValueError(
+                        f"{name}.jsonl line {line_number} must be an object"
+                    )
+                row = RootInventoryV1(**_exact_values(RootInventoryV1, value))
+                row.validate()
+                yield row
+
+    def iter_inventory_results(
+        self,
+        name: Literal["roots", "exp3_references"] = "roots",
+        *,
+        experiment_id: str | None = None,
+    ) -> Iterator[tuple[RootInventoryV1, RootResultV1 | None]]:
+        """流式 join 冻结 inventory 与同主键 committed result。
+
+        缺少 committed result 时仍产出 inventory identity 和 ``None``；这使
+        reducer 能维持固定分母，而不会扫描 raw/system/artifact 目录。
+        """
+
+        for inventory in self.iter_root_inventory_rows(name):
+            if experiment_id is not None and inventory.experiment_id != experiment_id:
                 continue
-            value = json.loads(line)
-            if not isinstance(value, Mapping):
-                raise ValueError(f"{name}.jsonl line {line_number} must be an object")
-            row = RootInventoryV1(**_exact_values(RootInventoryV1, value))
-            row.validate()
-            projected.append(row)
-        return tuple(projected)
+            key = (
+                str(inventory.experiment_id),
+                str(inventory.condition_id),
+                str(inventory.case_id),
+                int(inventory.repeat_id),
+            )
+            path = (
+                self.root_result_path(*key)
+                if name == "roots"
+                else self.exp3_reference_result_path(key[1], key[2], key[3])
+            )
+            if not path.is_file():
+                yield inventory, None
+                continue
+            result = _root_result_from_document(_read_object(path))
+            result_key = (
+                result.experiment_id,
+                result.condition_id,
+                result.case_id,
+                result.repeat_id,
+            )
+            if result_key != key:
+                raise ValueError("RootResultV1 identity differs from its ordinary path")
+            yield inventory, result
+
+    def iter_exp4_challenge_rows(self) -> Iterator[Exp4ChallengeInventoryRowV1]:
+        """逐行产出冻结 challenge plan；不导入 profile 或 runtime。"""
+
+        name = "exp4_challenges"
+        with self.inventory_path(name).open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, start=1):
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if not isinstance(value, Mapping):
+                    raise ValueError(
+                        f"{name}.jsonl line {line_number} must be an object"
+                    )
+                row = Exp4ChallengeInventoryRowV1(
+                    **_exact_values(Exp4ChallengeInventoryRowV1, value)
+                )
+                row.validate()
+                yield row
 
 
 def select_trace_attempt(
