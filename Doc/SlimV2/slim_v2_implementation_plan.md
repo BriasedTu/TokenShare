@@ -626,6 +626,16 @@ metric ID集合精确153/153；所有公式方向与authority一致；Exp2–4�
 
 不建立formula graph、metric registry、publication eligibility、在线报告service或每实验独立框架。
 
+#### 11. Task 5完成证据（2026-08-22）
+
+- 实现checkpoint=`5d4ec4a18b2ad45c870cee02718e03595c3a95b6`。新增单一`reducer.py`、golden fixture与`test_reducer_golden.py`，并只为Task 5缺口在Slim-local `storage.py`增加逐行root/reference/result join和Exp4 challenge inventory只读接口；没有修改schema、shared core、local runtime、plugin或executor。
+- `reduce_run()`按experiment和不拆pair/quadruple的slice流式join，同一时刻只保留当前slice的nested result与当前table rows；Exp3 reference只用于配对且不进入paper root分母。五表和summary先写目标同目录temporary，全部公式、occurrence与null finalizer通过后才发布；提交前撤下旧summary并最后发布新summary，晚表公式错误保留旧完整输出，replace失败时不留下可误认的summary。
+- formal metric occurrence合同为有序`153/153`，每项含ordinal、table scope、row kind、formula producer与冻结evidence fields；实际值、具体合法missing/not-applicable reason或显式`authority_legal_not_observed`均在写表前验证。固定分母、Exp2独立pair eligibility、Exp3 fault/death reference与资源语义、Exp4六组四端及逐metric eligibility、Exp5四端分类、type-7、`n-1` sample variance、case-cluster bootstrap=`10000/20260820`、tail隔离和null传播全部由golden测试闭合。
+- 独立spec审计初审发现`1 Critical/8 Important`，修复后复审又发现`0/3`；全部闭合后最终`SPEC_COMPLIANT`，C/I/M/OOS=`0/0/0/0`。不同的独立quality reviewer初审为`0 Critical/4 Important/0 Minor`，闭合正式median CI、统一null finalizer、Exp4 slot bootstrap与staged publish后最终`APPROVED`，C/I/M/OOS=`0/0/0/0`。
+- owner fresh focused命令=`14 passed in 8.90s`；scoped compile通过；formal occurrences=`153/153 ordered`；fixture JSON、禁止runtime/checker/provider/network依赖、raw/system读取spy、tracked/untracked whitespace与`git diff --check`均通过。provider/network=`0/0`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
+- 邻接的`test_schema.py test_profiles.py`只读诊断为`3 failed, 22 passed`，三项均是Task 5未修改的既有`schema.py`新增ablation leaves与既有authority fixture leaf集合差异；Task 5 diff不含schema/profiles/authority fixture，因此不把该诊断冒充reducer回归，也不在本Task越界修改。
+- Task 6边界未前移：下一owner仍只接同一CLI、薄Windows参数窗口、resume与运行安全preflight；不得建立第二runner、service、计划看板、日志系统、偏好/队列/自动重试、价格/余额/budget authority、人工授权或publication/evidence gate。
+
 ### Task 6 CLI、启动脚本图形包装、resume与representative readiness
 
 #### 1. 目标结果/可运行切片

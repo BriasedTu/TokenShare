@@ -1,21 +1,20 @@
 # TokenShare 当前进度
 
-更新时间：2026-08-21 +08:00
+更新时间：2026-08-22 +08:00
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 当前 focus：Stage 3 Task 4/6已完成；正在向fresh Task 5/6交棒
+## Slim V2 当前 focus：Stage 3 Task 5/6已完成；正在向fresh Task 6/6交棒
 
-- **接力身份与实现checkpoint**：`stage=3`、`task_index=4/6`、branch=`codex/slim-v2-baseline`，Task 4=`01a0238e-b2db-7da1-9d6c-60bb12d79ecd`；实现checkpoint=`af4e9b0a515fd7e381da97d623d0fe99abbe7643`。Task 4已完成Exp2–4系统场景路径；当前owner只允许补证据checkpoint并按relay §5.1创建且只创建fresh Task 5/6，不得自行实现或监督Task 5。
-- **Exp2/Thread**：六worker档均消费Exp1 fixed traces并走现有system/plugin/checker，ordinary backend为Thread（worker1为Sequential）；Factorization k>1和Lean fake fixed-DAG的unit/attempt/canonical/checker事实完整，logical scheduler真实投影capacity、makespan与early-stop。
-- **Exp3/fault/death/reference**：五类rate-fault只在ordinal 0实施，replacement/recovery由existing engine拥有；Lean false±在normalize/checker前的Slim bridge边界实施。两领域`dead={1,3} × progress={25%,50%,75%}` 12-cell均使用真实Process；Factor dead=3三格均为三条真实PID/exit/progress facts、两次replacement及failed/no-final terminal row。reference不进入论文root分母且不混入fault/death字段。
-- **Exp4结构性旁路**：四family×11 modes全部真实运行；六个双机制在单root同时生效。P/V/R/M分别在真实parser/verifier/replacement/merge前换路，`{R,M}`固定`RECOVERY_MERGE_FIRST`且R=`preempted_by_merge_first`、stuck=false。projector只认actual evidence；checker未到达=`false/null/0`，缺actual route evidence不按mode反填。
-- **shared范围**：仅使用已批准的optional`RecoveryMergeContext` seam与synthetic V provenance、通用`IncompleteMergeInputError(ValueError)`及两plugin既有incomplete-required-input分支；无capability默认零新增调用/observation。未建立第二runner、状态机或普通场景bounded-process facade，未发现新的shared gap。
-- **最终review与验证**：spec reviewer独立固定=`37 passed in 244.64s`并实跑12-cell，`SPEC_COMPLIANT`、C/I/M/OOS=`0/0/0/0`；quality reviewer固定=`37 passed in 247.26s`、shared/plugin=`32 passed in 28.21s`，`APPROVED`、C/I/M=`0/0/0`。owner fresh固定=`37 passed in 243.68s`，shared/plugin=`32 passed in 28.15s`；compile、禁止import、whitespace/diff-check均通过。
-- **provider与运行边界**：Task 4 provider/network=`0/0`，全部scenario attempts均`provider_call_made=false`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。
-- **Task 5唯一下一步**：实现一个`reduce_run()`读取Task 2 `RunStore.iter_*`与Task 4 committed rows/references，生成Experiment 1–5全部表与精确153 metric IDs；固定分母必须保留每个已启动失败/no-final row，reducer不得导入runtime/checker/provider或读取raw/system全目录。provider/network继续为`0/0`。
-- **Task 6边界继续传递**：未来只实现薄`run_slim_v2.cmd → gui.py → 同一CLI`参数窗口与运行安全preflight；只选择representative/full、Exp1–5/all、run_id/output、Exp2–4必要source、resume。禁止第二runner/service/计划看板/日志系统/偏好保存/队列/自动重试、价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness；价格缺失/变化不得阻止实验。
-- **dirty保护**：范围外用户`AGENTS.md`继续保留dirty，SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`；禁止reset/revert/stash/delete或纳入Task 4/5提交。
+- **接力身份与实现checkpoint**：`stage=3`、`task_index=5/6`、branch=`codex/slim-v2-baseline`，Task 5=`01a024f3-1950-7ad2-84a1-17e10780bc97`，`previous_task_id=01a0238e-b2db-7da1-9d6c-60bb12d79ecd`；实现checkpoint=`5d4ec4a18b2ad45c870cee02718e03595c3a95b6`，证据checkpoint为本条所在提交。Task 5已完成唯一统一reducer；当前owner只允许补证据checkpoint并按relay §5.1创建且只创建fresh Task 6/6，不得自行实现或监督Task 6。
+- **统一reducer与只读输入**：单一`reduce_run()`只读同run冻结root/reference inventory、committed root results与Exp4 challenge inventory；Exp3 auxiliary references只用于配对，不进入paper root分母。`RunStore`仅增加逐行只读iterator/result join与Exp3 reference/Exp4 challenge路径适配；schema、shared core、local runtime、plugin、executor均未修改。
+- **统计与正式输出**：按experiment和不拆pair/quadruple的slice流式处理；固定分母保留missing/no-final/incorrect/infra-invalid identity，所有nullable正式值必须有missing或not-applicable reason。Exp2独立pair eligibility、Exp3 fault/death配对与`simulated_trace_attributed`、Exp4六组四端逐metric eligibility/interaction、Exp5首次attempt四端互斥分类、type-7、`n-1` sample variance、case-cluster bootstrap=`10000/seed 20260820`、tail隔离均已闭合。
+- **153 occurrence与发布事务**：formal metric occurrence有序`153/153`，每项携带scope、row kind、formula producer与evidence fields；实际值、科学null或空scope的显式authority-legal NA在发布前验证。五表与summary先写目标同目录temporary；全部公式/finalizer成功后才发布，旧summary在表提交前撤下且新summary最后发布，晚表公式错误不污染旧完整输出，replace失败不留下可误认summary。
+- **独立review**：spec初审`1 Critical/8 Important`、中间复审`0/3`，全部修复后`SPEC_COMPLIANT`、C/I/M/OOS=`0/0/0/0`；不同quality reviewer初审`0 Critical/4 Important/0 Minor`，全部修复后`APPROVED`、C/I/M/OOS=`0/0/0/0`。
+- **owner fresh验证**：用户指定focused命令=`14 passed in 8.90s`；scoped compile、formal occurrences=`153/153 ordered`、fixture JSON、禁止runtime/checker/provider/network依赖与raw/system读取、tracked/untracked whitespace、`git diff --check`均通过。邻接`test_schema.py test_profiles.py`只读诊断为`3 failed, 22 passed`，只涉及Task 5未修改的既有schema新增ablation leaves与authority fixture集合差异，不作为Task 5 reducer回归，也未越界修改。
+- **provider与运行边界**：Task 5 provider/network=`0/0`；未运行真实provider、representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。
+- **Task 6唯一下一步**：只实现薄`run_slim_v2.cmd → gui.py → 同一CLI`参数窗口、原子命令、resume与运行安全preflight；只选择representative/full、Exp1–5/all、run_id/output、Exp2–4必要source、resume。禁止第二runner/service/计划看板/日志系统/偏好保存/队列/自动重试、价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness；价格缺失/变化不得阻止实验。
+- **dirty保护**：范围外用户`AGENTS.md`继续保留dirty，SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`；禁止reset/revert/stash/delete或纳入Task 5/6提交。
 
 ## Slim V2 旧Stage 3 provenance：已暂停并由六Task重规划取代
 

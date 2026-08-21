@@ -1,6 +1,6 @@
 # TokenShare V1 当前 Code Map
 
-更新时间：2026-08-21
+更新时间：2026-08-22
 
 状态：当前总体代码归属权威。本文回答“改动应该放哪里、哪些边界不能跨”，不记录逐次修复历史。协议语义看 `tokenshare_v1_complete_spec.md`，论文实验参数看 `tokenshare_latest_real_plugin_experiment_design.md`。
 
@@ -21,7 +21,7 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 ## Slim V2 精简实验路径
 
-Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokenshare/experiments/slim_v2/`，不得import旧`paper_*`/formal runner。Task 4的主要归属如下：
+Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokenshare/experiments/slim_v2/`，不得import旧`paper_*`/formal runner。Task 4/5的主要归属如下：
 
 | 文件 | 职责 |
 |---|---|
@@ -30,7 +30,10 @@ Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokens
 | `experiments/slim_v2/runtime.py` | 把scenario scheduler/policy/hooks/backend注入同一个`ProtocolRunCoordinator.run_root`，不建立第二runner或状态机。 |
 | `experiments/slim_v2/projector.py` | 从同一次system result、ledger、worker facts、plugin/checker与Slim route artifacts投影Exp2–4字段；只认actual evidence，未到达checker为`false/null/0`。 |
 | `experiments/slim_v2/schema.py` | Slim root/attempt/fault/recovery/death/challenge/ablation typed schema与跨字段不变量。 |
+| `experiments/slim_v2/storage.py` | 普通run文件与resume事实；Task 5增加逐行root/reference inventory-result join、独立Exp3 reference路径和Exp4 challenge inventory只读行，缺committed result仍产出固定identity。 |
+| `experiments/slim_v2/reducer.py` | 唯一Exp1–5离线统计内核；按table/slice流式归约，拥有153 occurrence/evidence合同、固定分母、pair/quadruple、type-7、sample variance、固定bootstrap、null finalizer及五表/summary staged atomic publish；不得导入runtime/checker/provider或读取raw/system目录。 |
 | `tests/experiments/slim_v2/test_scenarios.py` | 风险驱动覆盖Thread双域事实、Exp2六worker、Exp3五fault与12-cell真实Process death、Exp4四family×11 modes、default-zero与零provider/transport。 |
+| `tests/experiments/slim_v2/test_reducer_golden.py` | 单一golden run风险驱动覆盖153/153、fixed denominator、tail、独立pair eligibility、六组四端、Exp5四端分类、bootstrap/null阈值、读取边界和晚失败/replace失败发布事务。 |
 
 Task 4获批的shared例外仍保持最小：`local_runtime/contracts.py`定义optional`RecoveryMergeContext`，`local_runtime/coordinator.py`只在真实recovery记录后/replacement前调用capability并记录固定synthetic-V provenance；`plugins/contracts.py`的`IncompleteMergeInputError(ValueError)`只替换Factorization/Lean adapter原有incomplete-required-input异常分支。P、Lean-V、mode/challenge、premature-v2和projector全部留在Slim-local。
 
