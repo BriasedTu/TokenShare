@@ -414,6 +414,15 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.p
 
 153个metric IDs集合不变，指标权威第8节原始字段路径合同逐项闭合；Full/Representative全部冻结数值与逐root公式一致；陈旧Exp3/4 inventory常量不再出现在active正文；Task 1结果能写、读、skip。当前owner随后严格按relay §5.1创建且只创建fresh Stage 3 Task 3/6 owner并完成heartbeat交棒，不得自行继续Task 3。
 
+**Task 2完成证据与独立review（2026-08-21）**：
+
+- 继承的`schema.py/case_source.py/profiles.py/cli.py`成果已按Task 1真实`RootResultV1`纵链校准；新增`storage.py`后，`build_inventory → RootInventoryV1 → inventory/*.jsonl → typed read → Task 1 projector`闭合。Factorization planned IDs使用经catalog count校验的`range_N`，Lean使用`dependency_order`；四个冻结inventory逐文件原子写，重复同规范内容为`skipped`，冲突立即停止且不覆盖已committed文件。
+- 首轮storage/inventory fail-first分别为`3 failed, 6 deselected in 0.29s`与`1 failed in 0.32s`；typed inventory纵链补强RED为`1 failed in 0.27s`。质量review发现的3个Important与3个Minor补强RED为`4 failed, 2 passed in 0.63s`，随后全部关闭。
+- `SlimRunConfigV1`已收窄为设计规格7.2的12个普通字段，`ordinary_parallel_backend_kind="thread"`、`reducer_workers=1`和16 MiB response上限固定，不含日志轮转framework；`select_trace_attempt`只接收并验证typed连续自然ordinal的`UnitTraceV1`。resume只扫精确committed文件名，不repair、compaction或重建协议状态。
+- 冻结profile复核：Full roots/executions=`7,554/7,660`；Exp3 rate/death/planned/upper=`13,920/2,808/16,728/52,992`，references=`468/1,404`；Exp4 planned/upper=`9,669/15,822`且每mode/repeat=`293`；Exp5顺序=`ABCD/BDAC/CADB`。Representative roots/executions/cap=`72/74/89`、Exp3=`42/16/58/190`、Exp4=`209/342`。Exp4 195个challenge的配额=`49/49/48/49`，Factorization composite/prime与Lean delay target均按authority冻结。
+- spec reviewer最终独立复跑为`28 passed in 1.17s`，并重算Full/Representative inventory、153 metric records与168 authority leaves，结论`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；implementation-quality reviewer独立复跑为`28 passed in 1.18s`，结论`APPROVED`且`Critical/Important/Minor=0/0/0`。
+- owner最终fresh focused验证为`28 passed in 1.39s`，`git diff --check`通过；provider/network=`0/0`，shared interface gap=`none`。未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
+
 #### 10. 明确非目标
 
 不实现通用状态机、checkpoint generation authority、日志框架、固定句柄魔数、通用资源治理、provider或场景。

@@ -27,7 +27,6 @@ _TRACE_ORIGINS = frozenset({"protocol", "coverage_tail"})
 _PROFILES = frozenset({"representative", "full"})
 _EXPERIMENT_ORDER = ("exp1", "exp2", "exp3", "exp4", "exp5")
 _EXPERIMENTS = frozenset(_EXPERIMENT_ORDER)
-_BACKENDS = frozenset({"sequential", "thread", "process"})
 _EXP1_PROVIDER_CONFIG_PATH = (
     "benchmarks/paper/exp1_baseline_provider_config.v3.json"
 )
@@ -36,8 +35,6 @@ _EXP5_PROVIDER_CONFIG_PATH = (
 )
 _LOCAL_SECRET_CONFIG_PATH = "local/ai_api_smoke.local.json"
 _RESPONSE_MAX_BYTES = 16 * 1024 * 1024
-_LOG_ROTATE_BYTES = 32 * 1024 * 1024
-_LOG_FILE_COUNT = 5
 
 
 class SchemaValidationError(ValueError):
@@ -898,10 +895,8 @@ class SlimRunConfigV1(SchemaRecordV1):
     )
     local_secret_config_path: str = _required(_LOCAL_SECRET_CONFIG_PATH)
     pricing_version: str = _required(PRICING_VERSION)
-    backend_kind: str | None = _required()
+    ordinary_parallel_backend_kind: str = _required("thread")
     response_max_bytes: int = _required(_RESPONSE_MAX_BYTES)
-    log_rotate_bytes: int = _required(_LOG_ROTATE_BYTES)
-    log_file_count: int = _required(_LOG_FILE_COUNT)
     reducer_workers: int = _required(1)
 
     def validate(self) -> None:
@@ -917,8 +912,10 @@ class SlimRunConfigV1(SchemaRecordV1):
             raise SchemaValidationError(
                 "experiment_ids must be an ordered Exp1-5 subsequence"
             )
-        if self.backend_kind not in _BACKENDS:
-            raise SchemaValidationError(f"invalid backend_kind {self.backend_kind!r}")
+        if self.ordinary_parallel_backend_kind != "thread":
+            raise SchemaValidationError(
+                "ordinary_parallel_backend_kind must equal frozen value 'thread'"
+            )
         frozen_paths = {
             "exp1_provider_config_path": _EXP1_PROVIDER_CONFIG_PATH,
             "exp5_provider_config_path": _EXP5_PROVIDER_CONFIG_PATH,
@@ -929,24 +926,19 @@ class SlimRunConfigV1(SchemaRecordV1):
                 raise SchemaValidationError(f"{field_name} must equal its frozen path")
         if self.pricing_version != PRICING_VERSION:
             raise SchemaValidationError("pricing_version is not frozen Slim V2 pricing")
-        frozen_limits = {
-            "response_max_bytes": _RESPONSE_MAX_BYTES,
-            "log_rotate_bytes": _LOG_ROTATE_BYTES,
-            "log_file_count": _LOG_FILE_COUNT,
-        }
+        frozen_limits = {"response_max_bytes": _RESPONSE_MAX_BYTES}
         for field_name, expected in frozen_limits.items():
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value != expected:
                 raise SchemaValidationError(
                     f"{field_name} must equal frozen value {expected}"
                 )
-        if isinstance(self.reducer_workers, bool) or not isinstance(
-            self.reducer_workers,
-            int,
+        if (
+            isinstance(self.reducer_workers, bool)
+            or not isinstance(self.reducer_workers, int)
+            or self.reducer_workers != 1
         ):
-            raise SchemaValidationError("reducer_workers must be an integer")
-        if not 1 <= self.reducer_workers <= 4:
-            raise SchemaValidationError("reducer_workers must be between 1 and 4")
+            raise SchemaValidationError("reducer_workers must equal frozen value 1")
         is_run_all = self.experiment_ids == list(_EXPERIMENT_ORDER)
         needs_external_source = any(
             item in {"exp2", "exp3", "exp4"} for item in self.experiment_ids

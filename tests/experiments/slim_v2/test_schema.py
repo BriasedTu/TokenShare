@@ -448,20 +448,34 @@ def test_nullable_fields_require_missing_or_not_applicable_reason() -> None:
     with pytest.raises(SchemaValidationError, match="checker_result"):
         invalid_attempt.validate()
 
+    assert SlimRunConfigV1.field_names() == (
+        "schema_version",
+        "run_id",
+        "profile_id",
+        "experiment_ids",
+        "source_run_dir",
+        "exp1_provider_config_path",
+        "exp5_provider_config_path",
+        "local_secret_config_path",
+        "pricing_version",
+        "ordinary_parallel_backend_kind",
+        "response_max_bytes",
+        "reducer_workers",
+    )
     valid_config = SlimRunConfigV1(
         run_id="run-0",
         profile_id="representative",
         experiment_ids=["exp1", "exp3", "exp5"],
         source_run_dir="source-exp1",
-        backend_kind="thread",
+        ordinary_parallel_backend_kind="thread",
     )
     valid_config.validate()
     with pytest.raises(SchemaValidationError, match="subsequence"):
         replace(valid_config, experiment_ids=["exp3", "exp1"]).validate()
     for field_name, invalid_value in (
+        ("ordinary_parallel_backend_kind", "process"),
         ("response_max_bytes", 16 * 1024 * 1024 + 1),
-        ("log_rotate_bytes", 32 * 1024 * 1024 - 1),
-        ("log_file_count", 6),
+        ("reducer_workers", 2),
     ):
         with pytest.raises(SchemaValidationError, match=field_name):
             replace(valid_config, **{field_name: invalid_value}).validate()
@@ -476,7 +490,7 @@ def test_nullable_fields_require_missing_or_not_applicable_reason() -> None:
         profile_id="full",
         experiment_ids=["exp1", "exp2", "exp3", "exp4", "exp5"],
         source_run_dir=None,
-        backend_kind="process",
+        ordinary_parallel_backend_kind="thread",
     ).validate()
 
 
@@ -587,3 +601,92 @@ def test_schema_contains_no_forbidden_authority_fields() -> None:
                 )
             ],
         ).validate()
+
+
+def test_run_store_round_trips_and_scans_root_result_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2.storage import (
+        RunStore,
+        StorageConflictError,
+        scan_resume,
+    )
+
+    store = RunStore(tmp_path)
+    result = _valid_root()
+    root_key = ("exp1", "exp1-condition", "case-0", 0)
+
+    assert store.write_root_result(result) == "written"
+    result_path = store.root_result_path(*root_key)
+    assert result_path.parts[-4] == "roots"
+    assert result_path.parts[-3] == "exp1"
+    assert result_path.name == "result.json"
+    assert store.read_root_result(*root_key) == result
+    assert scan_resume(tmp_path).committed_root_keys == frozenset({root_key})
+    assert store.write_root_result(result) == "skipped"
+
+    with pytest.raises(StorageConflictError, match="conflicting ordinary file"):
+        store.write_root_result(replace(result, verified_correct=False))
+
+    assert store.write_root_protocol(*root_key, {"status": "completed"}) == "written"
+    view = scan_resume(tmp_path)
+    assert view.protocol_root_keys == frozenset({root_key})
+
+    orphan_temp = store.root_result_path(*root_key).with_name(
+        ".result.json.interrupted.tmp"
+    )
+    orphan_temp.write_text('{"partial":true}', encoding="utf-8")
+    assert scan_resume(tmp_path) == view
+
+
+def test_scan_resume_records_trace_terminal_and_intent_only_call_facts(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore, scan_resume
+
+    store = RunStore(tmp_path)
+    trace = _valid_trace()
+
+    assert store.write_trace(trace) == "written"
+    assert store.trace_path("case-0", 0, "range_0").relative_to(tmp_path) == Path(
+        "traces/exp1/case-0/0/range_0.json"
+    )
+    assert store.read_trace("case-0", 0, "range_0") == trace
+    assert store.write_call_intent("call-live", {"request": "pending"}) == "written"
+    assert store.write_call_intent("call-done", {"request": "sent"}) == "written"
+    assert store.write_call_terminal("call-done", {"result": "ok"}) == "written"
+    assert store.call_terminal_path("call-done").relative_to(tmp_path) == Path(
+        "calls/call-done.terminal.json"
+    )
+
+    view = scan_resume(tmp_path)
+    assert view.trace_keys == frozenset({("case-0", 0, "range_0")})
+    assert view.terminal_call_keys == frozenset({"call-done"})
+    assert view.nonterminal_call_keys == frozenset({"call-live"})
+
+
+def test_select_trace_attempt_uses_exact_or_last_natural_ordinal() -> None:
+    from tokenshare.experiments.slim_v2.storage import select_trace_attempt
+
+    attempts = [
+        _actual_attempt(),
+        replace(
+            _actual_attempt(),
+            attempt_id="attempt-1",
+            attempt_ordinal=1,
+        ),
+    ]
+    trace = replace(_valid_trace(), attempts=attempts)
+
+    exact = select_trace_attempt(trace, 0)
+    assert exact.attempt == attempts[0]
+    assert exact.source_attempt_ordinal == 0
+    assert exact.source_attempt_fallback_used is False
+
+    fallback = select_trace_attempt(trace, 2)
+    assert fallback.attempt == attempts[1]
+    assert fallback.source_attempt_ordinal == 1
+    assert fallback.source_attempt_fallback_used is True
+
+    with pytest.raises(TypeError, match="UnitTraceV1"):
+        select_trace_attempt({"attempts": attempts}, 0)  # type: ignore[arg-type]

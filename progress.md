@@ -4,16 +4,16 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 当前 focus：Stage 3 Task 1/6已完成，下一棒为fresh Task 2/6 owner
+## Slim V2 当前 focus：Stage 3 Task 2/6已完成，下一棒为fresh Task 3/6 owner
 
-- **HEAD基线不是Task 1成果**：本棒启动HEAD=`991fb316bf8de2d3d68aa5bf218352d2f4136eb2`，它只是父线程收窄Task 6 preflight边界的plan-only文档checkpoint，不包含也不证明Task 1成果。Task 1 checkpoint为本条所在的后续本地commit，实际SHA必须在Task 2交棒prompt中传递。
-- **Task 1实现已完成**：新增Slim-local `runtime.py`、`projector.py`与`test_system_vertical.py`，用fake answer真实贯通Factorization与Lean fixed-DAG的`ProtocolRunCoordinator.run_root → domain bridge → existing worker → ProtocolEngine/EventLedger/ArtifactStore → verifier/checker → canonical/merge/root recheck → read-only projector`；未修改shared接口，shared interface gap=`none`。
-- **Task 1纵链结果**：真实成功Factorization root触发early merge，`planned=3/dispatched=2/completed=2`且`range_2`保持unscheduled；真实成功Lean fixed-DAG root通过child checker、merge和root recheck；真实自然rejection root可通过`run_root_slice`投影；每个root的`run_root`均恰好调用一次。
-- **Task 1验证与review**：fail-first为缺少`projector`模块，`1 error in 0.29s`；实现者最终focused=`3 passed in 10.19s`；spec reviewer独立复跑=`3 passed in 9.85s`且`Critical/Important/Minor=0/0/0`；implementation-quality reviewer独立复跑=`3 passed in 8.67s`且`Critical/Important/Minor=0/0/0`。里程碑范围内问题为0。
-- **运行边界**：branch=`codex/slim-v2-baseline`，`run_scope=representative_only`，provider/network=`0/0`；未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。
-- **六Task状态与唯一下一步**：Task 1=`completed`；Task 2=`next`；Tasks 3–6=`pending`。下一步只创建fresh顶层`Stage 3 Task 2/6` owner并完成heartbeat接力；Task 2只做冻结profile、最小schema与普通输出，Task 6 preflight边界仅随胶囊跨棒传递，不前移为Task 2实现范围。
-- **遗留dirty保护**：继续保留并禁止覆盖、reset、revert、stash或删除继承的`AGENTS.md`、`profiles.py`,`test_profiles.py`及未跟踪`cli.py`,`test_cli_plan.py`；旧横向编号或既有测试通过不能替代Task 2按真实纵链校准和独立完成。
-- **冻结勘误保持不变**：Full Exp3 rate/death/planned/upper=`13,920/2,808/16,728/52,992`，其中references planned/upper=`468/1,404`；Full Exp4每mode/repeat/planned/upper=`293/9,669/15,822`；Representative Exp3=`42/16/58/190`、Exp4=`209/342`；representative provider cap=`89`、roots/executions=`72/74`、正式metrics=`153`。所有planned/upper继续按逐root inventory派生。
+- **接力身份与checkpoint**：`stage=3`、`task_index=2/6`、branch=`codex/slim-v2-baseline`；本棒启动HEAD=`0f0e431689c70af17afcc0d64055d7c2a9e9dea8`（Task 1 checkpoint）。Task 2 checkpoint为本条所在的后续本地commit，实际SHA必须在Task 3完整initial prompt中传递。
+- **Task 2普通纵链已闭合**：保留并校准`schema.py/case_source.py/profiles.py/cli.py`，新增`storage.py`；`build_inventory → typed RootInventoryV1 → 四个固定inventory JSONL → typed read → Task 1 projector`闭合。Task 1 `RootResultV1`可原子write/read，同key同内容`skip`，冲突fail-stop；`ResumeView/scan_resume`只陈述精确committed root/protocol/trace/call文件事实，不repair、compaction或建立第二状态机。
+- **冻结profile/schema校准**：正式metric records=`153`、authority leaves=`168`；`SlimRunConfigV1`精确12字段，普通parallel backend固定`thread`、reducer固定`1`、response固定16 MiB且无日志framework。Full roots/executions=`7,554/7,660`，Exp3=`13,920/2,808/16,728/52,992`且references=`468/1,404`，Exp4=`293/9,669/15,822`，Exp5顺序=`ABCD/BDAC/CADB`；Representative roots/executions/cap=`72/74/89`，Exp3=`42/16/58/190`、Exp4=`209/342`。
+- **Task 2验证与review**：storage/inventory/纵链三轮fail-first分别为`3 failed, 6 deselected in 0.29s`、`1 failed in 0.32s`、`1 failed in 0.27s`；review补强RED=`4 failed, 2 passed in 0.63s`。owner最终fresh focused=`28 passed in 1.39s`；spec reviewer=`28 passed in 1.17s`且`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；quality reviewer=`28 passed in 1.18s`、`APPROVED`且`Critical/Important/Minor=0/0/0`。当前未解决问题=`none`，shared interface gap=`none`。
+- **运行边界**：`run_scope=representative_only`，provider/network=`0/0`；未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`，未push/merge/PR。
+- **遗留dirty保护**：Task 2允许的`profiles.py/test_profiles.py/cli.py/test_cli_plan.py`已审计、接管并随本checkpoint提交；范围外继承`AGENTS.md`保持启动SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`，禁止reset/revert/stash/delete，checkpoint后仍应是唯一范围外dirty。
+- **六Task状态与唯一下一步**：Tasks 1–2=`completed`；Task 3=`next`；Tasks 4–6=`pending`。下一步只创建fresh顶层`Stage 3 Task 3/6` owner：用fake transport完成Exp1/5同一生产caller/`ExecutionSubmission`路径、Exp1 protocol+coverage-tail唯一trace和Exp5四endpoint，禁止真实provider、Task 4场景、Task 5 reducer或Task 6 CLI/E2E；当前Task 2 heartbeat=`active_until_Task3_reports_RECOVERY_HEARTBEAT_ACTIVE`，Task 3 heartbeat=`pending_creation_after_checkpoint`。
+- **Task 6边界只跨棒传递**：未来Task 6 preflight只允许防程序失控、磁盘耗尽、重复调用/重复付费；禁止价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness，价格表缺失或变化不得阻止实验。本边界不前移为Task 3实现范围。
 
 ## Slim V2 旧Stage 3 provenance：已暂停并由六Task重规划取代
 
