@@ -527,7 +527,7 @@ def test_thread_backend_preserves_lean_fixed_dag_checker_and_canonical_facts(
     assert isinstance(scenario.worker_backend, ThreadWorkerBackend)
     assert projected.verified_correct
     assert len(projected.attempts) == len(inventory.planned_ai_unit_ids)
-    assert all(item.checker_result in {"accepted", "passed"} for item in projected.attempts)
+    assert all(item.checker_result == "accepted" for item in projected.attempts)
     assert sum(event.event_type == EventType.CANONICAL_OUTPUTS_BOUND for event in events) >= len(projected.attempts)
     assert checker.requests
 
@@ -664,7 +664,9 @@ def test_exp3_lean_candidate_faults_reach_checker_then_use_unmodified_replacemen
         original = next(
             item for item in row.attempts if item.attempt_id == record["attempt_id"]
         )
-        assert original.checker_result == "rejected"
+        assert original.checker_result == (
+            "accepted" if fault_type == "false_negative" else "proof_rejected"
+        )
         replacement = next(
             item
             for item in row.attempts
@@ -867,6 +869,7 @@ def test_exp3_factor_process_realizes_frozen_death_count_across_progress(
         assert terminal_row.root_status == "failed"
         assert terminal_row.final_result_present is False
         assert terminal_row.failure_stage == "child_execution"
+        assert terminal_row.failure_origin == "worker_death_exhausted"
         assert len(terminal_row.worker_death_observations) == 3
         assert all(
             item.pid is not None
@@ -918,7 +921,7 @@ def test_exp3_lean_process_transfers_state_and_p75_dead3_is_terminal(
         item.attempt_id for item in recovered_row.attempts
     }
     assert all(
-        item.checker_result in {"accepted", "passed"}
+        item.checker_result == "accepted"
         for item in recovered_row.attempts
         if item.attempt_id not in terminated_attempt_ids
     )
@@ -942,6 +945,7 @@ def test_exp3_lean_process_transfers_state_and_p75_dead3_is_terminal(
     assert terminal_protocol.status == "failed"
     assert terminal_row.final_result_present is False
     assert terminal_row.failure_stage == "child_execution"
+    assert terminal_row.failure_origin == "worker_death_exhausted"
     assert len(terminal_row.worker_death_observations) == 3
     assert terminal_scenario.submission_adapter.attempts
     assert terminal_scenario.provider_call_count == 0
@@ -990,8 +994,9 @@ def test_exp4_failed_source_before_parser_is_valid_no_final_actual_evidence(
     assert row.protocol_started is True
     assert row.final_result_present is False
     assert row.verified_correct is False
-    assert row.failure_stage == "child_execution"
+    assert row.failure_stage == "candidate_acquisition"
     assert row.failure_kind == "no_final"
+    assert row.failure_origin == "provider_transport_exhausted"
     assert any(item.source_result_kind == "source_attempt_failed" for item in row.attempts)
     assert all(item.provider_call_made is False for item in row.attempts)
     assert len(row.challenge_observations) == 1

@@ -62,6 +62,17 @@ _LEAN_ENVIRONMENT_ALLOWLIST = (
     "PATH",
 )
 _PREPARED_LEAN_ENVIRONMENT_CACHE: dict[tuple[str, str, str, str], dict[str, str]] = {}
+_LEAN_ENVIRONMENT_DIAGNOSTIC_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"object file .+\.olean.+does not exist",
+        r"\bunknown module\b",
+        r"\bfailed to load module\b",
+        r"\binvalid import\b",
+        r"\btoolchain(?:/project)? unavailable\b",
+        r"\bproject unavailable\b",
+    )
+)
 
 
 class LeanEnvironmentBootstrapError(RuntimeError):
@@ -225,11 +236,14 @@ def check_lean_proof(
             exit_code = completed.returncode
             stdout = completed.stdout[: request.max_output_bytes]
             stderr = completed.stderr[: request.max_output_bytes]
-            status = (
-                LeanCheckerStatus.ACCEPTED
-                if completed.returncode == 0
-                else LeanCheckerStatus.REJECTED
-            )
+            if completed.returncode == 0:
+                status = LeanCheckerStatus.ACCEPTED
+            elif diagnostics_indicate_environment_failure(stdout, stderr):
+                status = LeanCheckerStatus.ENVIRONMENT_ERROR
+                failure_kind = "lean_environment_diagnostic"
+                failure_message = "Lean checker reported an unavailable import or project environment"
+            else:
+                status = LeanCheckerStatus.REJECTED
             warning_placeholder = _placeholder_from_lean_output(stdout, stderr)
             blocked_placeholder = forbidden_placeholder or warning_placeholder
             if blocked_placeholder is not None:
@@ -243,6 +257,12 @@ def check_lean_proof(
         status = LeanCheckerStatus.ENVIRONMENT_ERROR
         exit_code = None
         failure_kind = "lean_environment_bootstrap_failed"
+        failure_message = str(exc)
+        stderr = str(exc)[: request.max_output_bytes]
+    except OSError as exc:
+        status = LeanCheckerStatus.ENVIRONMENT_ERROR
+        exit_code = None
+        failure_kind = "lean_toolchain_unavailable"
         failure_message = str(exc)
         stderr = str(exc)[: request.max_output_bytes]
     except subprocess.TimeoutExpired as exc:
@@ -472,6 +492,13 @@ def _placeholder_from_lean_output(stdout: str, stderr: str) -> str | None:
     if "uses 'admit'" in lowered or 'uses "admit"' in lowered:
         return "admit"
     return None
+
+
+def diagnostics_indicate_environment_failure(stdout: str, stderr: str) -> bool:
+    """Return whether Lean diagnostics show an unavailable fixed environment."""
+
+    combined = f"{stdout}\n{stderr}"
+    return any(pattern.search(combined) is not None for pattern in _LEAN_ENVIRONMENT_DIAGNOSTIC_PATTERNS)
 
 
 def _checker_diagnostics(

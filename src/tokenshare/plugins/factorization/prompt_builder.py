@@ -15,7 +15,7 @@ from tokenshare.plugins.factorization.schemas import (
 )
 
 
-FACTOR_SEARCH_PROMPT_PROFILE = "factorization.bounded_range_prompt.v1"
+FACTOR_SEARCH_PROMPT_PROFILE = "factorization.bounded_range_prompt.v2"
 
 _RANGE_RESULT_REQUIRED_FIELDS = [
     "schema_version",
@@ -130,83 +130,78 @@ def _check_instruction_alignment(
 
 
 def _prompt_text(range_input: FactorSearchRangeInput) -> str:
-    required_fields = ", ".join(_RANGE_RESULT_REQUIRED_FIELDS)
     range_start = int(range_input.range_start)
     range_end = int(range_input.range_end)
     divisor_count = range_end - range_start + 1
-    bound_fields = {
+    response_skeleton = {
         "schema_version": RANGE_RESULT_SCHEMA_VERSION,
+        "range_result_id": f"range_result:{range_input.coverage_id}:{range_input.child_index}",
+        "result_kind": f"<{RANGE_RESULT_FOUND_FACTOR} or {RANGE_RESULT_NO_FACTOR}>",
         "target_n": range_input.target_n,
         "range_start": range_input.range_start,
         "range_end": range_input.range_end,
         "coverage_id": range_input.coverage_id,
         "child_index": range_input.child_index,
         "partition_params_digest": range_input.partition_params_digest,
-    }
-    found_factor_template = {
-        **bound_fields,
-        "range_result_id": f"range_result:{range_input.coverage_id}:{range_input.child_index}",
-        "result_kind": RANGE_RESULT_FOUND_FACTOR,
-        "found_factor": "<decimal string divisor in the assigned range>",
-        "cofactor": "<decimal string target_n divided by found_factor>",
-        "checked_divisor_count": 1,
-        "executor_summary": {"checked_range": f"{range_input.range_start}-{range_input.range_end}"},
-        "created_at": "<ISO-8601 timestamp>",
-    }
-    no_factor_template = {
-        **bound_fields,
-        "range_result_id": f"range_result:{range_input.coverage_id}:{range_input.child_index}",
-        "result_kind": RANGE_RESULT_NO_FACTOR,
-        "found_factor": None,
-        "cofactor": None,
-        "checked_divisor_count": divisor_count,
+        "found_factor": "<decimal string divisor or null>",
+        "cofactor": "<decimal string cofactor or null>",
+        "checked_divisor_count": "<unquoted JSON integer>",
         "executor_summary": {"checked_range": f"{range_input.range_start}-{range_input.range_end}"},
         "created_at": "<ISO-8601 timestamp>",
     }
     return "\n".join(
         [
-            "You are executing a TokenShare factorization bounded range task.",
-            f"Target integer: {range_input.target_n}",
+            "Execute one TokenShare bounded factor search.",
+            "IMMUTABLE TASK AND RESPONSE SKELETON:",
+            json.dumps(response_skeleton, ensure_ascii=False, sort_keys=True),
             (
-                "Search divisor range: "
-                f"{range_input.range_start} to {range_input.range_end} inclusive"
+                "The skeleton is canonical. N=target_n, L=range_start, U=range_end. "
+                "Never replace, round, reconstruct, or change these decimal strings."
             ),
-            f"Candidate divisors to test: {_candidate_divisors_text(range_start, range_end)}",
+            "SEARCH SILENTLY; never enumerate candidates in the response.",
+            (
+                "1. For odd N, bounded Fermat: "
+                "a_start = ceil((U^2 + N) / (2U)) and "
+                "a_end = floor((L^2 + N) / (2L))."
+            ),
+            (
+                "Use it when a_start <= a_end and 3*(a_end-a_start+1) < U-L+1. "
+                "Test every a in that interval. If a^2-N=b^2, test d=a-b, q=a+b, "
+                "accepting only L<=d<=U. A complete scan covers all odd factor pairs "
+                "with smaller factor in [L,U]."
+            ),
+            (
+                "2. Otherwise use sound wheel-sieved trial division. A multiple of p "
+                "may be skipped only when N % p != 0. If N % p == 0 and p is outside "
+                "[L,U], do not sieve its multiples. Test every remaining candidate."
+            ),
+            (
+                f"{RANGE_RESULT_NO_FACTOR} is allowed only after exhaustive coverage of "
+                "[L,U], never after a partial search, timeout, or quick guess."
+            ),
+            "FINAL GATE:",
+            (
+                "Reload N, L, and U from the immutable skeleton, not scratch work. For d: "
+                "require L<=d<=U; set q=N//d; require N%d==0 and d*q==N; compare the "
+                "decimal product digit-for-digit with the original target_n. On failure, "
+                "discard d and continue."
+            ),
+            (
+                f"{RANGE_RESULT_FOUND_FACTOR}: found_factor=str(d), cofactor=str(q). "
+                f"{RANGE_RESULT_NO_FACTOR}: both are null."
+            ),
+            (
+                "checked_divisor_count is an unquoted protocol coverage integer, not an "
+                f"operation count: use {divisor_count} for {RANGE_RESULT_NO_FACTOR}, "
+                f"or d-L+1 for {RANGE_RESULT_FOUND_FACTOR}."
+            ),
+            (
+                "Replace created_at with a non-empty ISO-8601 timestamp. Keep "
+                "executor_summary as an object. Copy every other bound value exactly."
+            ),
             f"Return only one JSON object matching {RANGE_RESULT_SCHEMA_VERSION}.",
-            (
-                "Allowed result_kind values: "
-                f"{RANGE_RESULT_FOUND_FACTOR}, {RANGE_RESULT_NO_FACTOR}."
-            ),
-            "If a divisor d in the assigned range divides the target, return found_factor with cofactor target_n / d.",
-            "If no divisor in the assigned range divides the target, return no_factor_in_range with found_factor and cofactor set to null.",
-            "Do the divisibility checks silently before choosing result_kind.",
-            "Do not copy the no_factor_in_range template unless every candidate divisor has non-zero remainder.",
             "Do not search outside the assigned range.",
             "Do not create child tasks or modify the task graph.",
-            "Do not invent a different output schema.",
-            "Do not return prose, markdown, or reasoning outside the JSON object.",
-            "Use these exact protocol-bound JSON field values:",
-            json.dumps(bound_fields, ensure_ascii=False, indent=2, sort_keys=True),
-            "For found_factor, return exactly this JSON shape with computed factor fields:",
-            json.dumps(found_factor_template, ensure_ascii=False, indent=2, sort_keys=True),
-            "For no_factor_in_range, return exactly this JSON shape:",
-            json.dumps(no_factor_template, ensure_ascii=False, indent=2, sort_keys=True),
-            "All integer-valued protocol fields shown as strings must remain strings.",
-            (
-                "checked_divisor_count must be an unquoted JSON integer. "
-                f"For no_factor_in_range in this range it must be {divisor_count}; "
-                "for found_factor it must be found_factor - range_start + 1."
-            ),
-            "executor_summary must be a JSON object, not a string.",
-            f"Required JSON fields: {required_fields}.",
+            "Do not change the schema or return prose, markdown, or reasoning.",
         ]
     )
-
-
-def _candidate_divisors_text(range_start: int, range_end: int) -> str:
-    values = list(range(range_start, range_end + 1))
-    if len(values) <= 50:
-        return ", ".join(str(value) for value in values)
-    prefix = ", ".join(str(value) for value in values[:25])
-    suffix = ", ".join(str(value) for value in values[-5:])
-    return f"{prefix}, ... , {suffix} ({len(values)} total integers)"

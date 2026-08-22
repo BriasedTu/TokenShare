@@ -4,7 +4,21 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
-## Slim V2 当前 focus：Stage 4 representative已启动但命中credential强制停止
+## Slim V2 当前 focus：最终汇总轻量修复 Tasks 1–6 全部完成并验收，交棒 Owner 3
+
+- **用户决定（2026-08-22）**：采用 `Doc/SlimV2/slim_v2_final_summary_lightweight_repair_plan.md` 的六项轻量修复；不迁移旧 `root_result.v1`，统一升级为严格 v2 并以全新 run ID/目录重跑。保留同一 v2 run 的 crash/resume。Exp4 route evidence 实现若不阻断结果输出则延期；不增加指标、规则、shared 改动、安全或门禁。
+- **接力安排**：三个 Owner 是三个独立侧边栏对话，均为 `gpt-5.6-sol/high` 并顺序续接同一保存项目 dirty 工作树。Owner 1 thread=`01a028ea-9c35-7391-ad6a-3fdccc20467e` 已完成 Tasks 1–3；Owner 2 thread=`01a028ea-e22d-7a21-bbb6-62283ea8394f` 已完成 Tasks 4–6；Owner 3 thread=`01a028eb-386f-7fe2-b1ff-867c40209b36` 现在可从同一 dirty tree 启动全新 v2 真实 AI Representative。各 Owner 只统筹，具体实现和复核由其对话内子智能体完成。
+- **原始阻断证据（已修复）**：生产 reducer 在 Representative 规模全部 72 paper roots + 2 references 提交后，曾先因 Exp2 repeat 数值残留模板 missing reason 停止；临时越过后又因 Exp3 合法零分母无 reason 停止，均未发布 summary/tables。Tasks 1–3 已按冻结计划修复这些 reducer 接线及相邻 failure/infra 语义，未改公式。
+- **Owner 1 实现结果**：Task 1 已用统一内部写入路径闭合 metric value/reason 互斥、Exp2 repeat 旧 reason 清理和所有直接正式 point ratio 的 `zero_denominator`；Task 2 的三类 failure breakdown 只按 committed `failure_kind` 直接分组并互斥求和；Task 3 删除 Exp3/Exp5 过宽 infra-invalid early return，保留输入完整的 inventory/attempt/fault/replacement 与 token/cost/wall-clock 精确事实，只使相关科学 rate/effect/interval 为 `null + infrastructure_invalid_root_present`。生产改动仅为 `reducer.py`，focused test 改动仅为 `test_reducer_golden.py`；Exp4 route、shared code和Tasks 4–6未动。
+- **独立复核**：每项均由独立实现子智能体完成，并依次通过 fresh spec 与 fresh implementation-quality reviewer。Task 3 review 发现的 reference-only infra、missing committed reference、infra/slot metadata 三项 Important 均经 fail-first、原实现者修复和原 reviewer 复核关闭；最终 Tasks 1–3 的 Critical/Important/Minor/out_of_scope 均为 `0/0/0/0`。
+- **Owner 1 fresh 验证**：`test_reducer_golden.py -q`=`31 passed in 10.74s`；完整 `tests/experiments/slim_v2 -q`=`168 passed in 328.03s`；Slim 源码/测试 `compileall`与`git diff --check`均 exit 0。provider/network=`0/0`；未运行真实provider、representative/full、LeanAudit、Lean suite/catalog、`lake`或`lean`。
+- **Owner 2 Task 4**：ordinary root result 的唯一生产 literal 为`tokenshare.slim_v2.root_result.v2`，`failure_origin`必现且可为null；writer/reader/embedded protocol projection/projector/runtime/CLI/reducer均只接受v2并明确拒绝v1。Exp2–4 source run必须有strict v2 committed Exp1 roots；无migration、compat、dual reader或old-run reuse。schema另加入`verified_correct`与`failure_kind`双向互斥。fresh spec=`SPEC_COMPLIANT`、quality=`APPROVED`、最终C/I/M/OOS=`0/0/0/0`；相关组合`94 passed`，Tasks 1–3回归`24 passed`。
+- **Owner 2 Task 5**：fresh/resume共用从protocol snapshot与当前root全部已持久化coverage-tail `UnitTraceV1.attempts`重建最终attempts的路径，顺序固定为protocol原顺序，再按冻结tail target和自然ordinal；相同持久化事实的fresh/resume `asdict()`完全相等。完整tail调用保持`3→3`，部分tail为`2→3→3`。fresh spec=`SPEC_COMPLIANT`、quality=`APPROVED`、C/I/M/OOS=`0/0/0/0`；`test_runtime_resume.py/test_answer_paths.py/test_schema.py`分别为`20/19/14 passed`。
+- **Owner 2 Task 6**：production CLI Representative fake E2E使用冻结真实profile `Exp1–5=4/12/8/44/4`，合计72 paper roots，加Factorization/Lean references各1为74 executions；原始用户硬约束是`72+2`，不采用冲突旧摘要`6/18/30/12/6`。默认走production `execute_root`、runtime/coordinator、storage/publication与真实`reduce_run()`；唯一fake边界为provider `_open_response`，真实provider/network=`0/0`，fake HTTP=`86`，未运行Lean/lake。恰好发布11文件：summary与Exp1–5各JSONL/CSV，五表行数=`3/20/16/108/4`。storage closure修复只允许Exp1 coverage tail，非Exp1禁tail规则不变。E2E=`1 passed in 548.10s`；fresh spec=`SPEC_COMPLIANT`、quality=`APPROVED`、C/I/M/OOS=`0/0/0/0`。
+- **Owner 2 最终 fresh 验证**：`test_reducer_golden.py -q`=`31 passed in 10.91s`；`test_schema.py + test_runtime_resume.py -q`=`35 passed in 17.17s`；`test_cli_e2e.py -q`=`26 passed in 637.23s`；完整`tests/experiments/slim_v2 -q`=`177 passed in 917.87s`；Slim源码/测试`compileall` exit 0；`git diff --check` exit 0，仅有既有LF/CRLF warning。provider/network真实调用=`0/0`；未运行真实provider、真实Representative/Full、LeanAudit、Lean suite/catalog、`lake`或`lean`；未stage、commit或创建worktree。
+- **当前下一步**：Owner 3 thread=`01a028eb-386f-7fe2-b1ff-867c40209b36` 从同一dirty tree开始新的真实Representative；必须完成其自身credentials、Lean environment与零调用preflight，使用全新v2 run ID/目录并从头运行，不迁移/读取v1或复用旧run。同一v2 run若中断只能按已持久化result/trace/call事实resume。Owner 2不启动真实调用。
+
+## Slim V2 旧状态：Stage 4 representative曾启动但命中credential强制停止
 
 - **接力身份与checkpoint**：`stage=4`、`run_scope=representative_only`、branch=`codex/slim-v2-baseline`，Stage 4 Task=`01a026aa-cece-7391-9815-65a3487d87cb`，`previous_task_id=01a02577-5180-7c53-8472-eb7e517b0c4f`；启动HEAD=`5e9eab24a23ee7fc11075fc741c581923bd58678`，implementation parent=`d6e5610c10782add73f70397aca88ec79fc79145`。本条所在提交是Stage 4强制停止证据checkpoint，不是representative完成checkpoint。
 - **仓库事实**：启动时branch/HEAD/parent精确匹配接力输入；工作树只有受保护`M AGENTS.md`，SHA256=`382A2DC37F01C25DE5156569FBC7027C3FE725DD5D5F99A5D5F7FAF0A752FAED`，未reset/revert/stash/delete/edit或提交；固定reference tag解析为`3489533e79cde05d6ae2a0c9f139785249f60f09`。
@@ -14,6 +28,31 @@
 - **正式CLI证据**：仅执行一次`conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.slim_v2.cli representative --run-id slim-v2-representative-20260822-stage4`，exit code=`1`，失败点为provider preflight的`missing provider secret/API key env var: SILICONFLOW_API_KEY`；失败发生在写run inventory和调用`execute_root`之前。
 - **进程/results/trace/journal核对**：启动前无Slim V2 CLI/GUI遗留进程，目标run目录不存在；失败后目标run目录仍不存在，因此results/traces/calls/responses均为0，provider/network=`0/0`，没有未知终态或可盲目重试的attempt。credential外部可用后应再次先核对进程与该run目录；若仍不存在，使用同一run ID不带`--resume`重新执行同一`representative`命令。
 - **禁止项**：未运行full、Lean专项suite、LeanAudit、全量catalog、`lake`/`lean`回归，未push/merge/PR。Stage 4没有满足设施通过标准，不能标记representative完成，也不能关闭heartbeat或创建Stage 5。
+
+### Slim V2 跨域失败语义与 Lean 有效性修复（2026-08-22）
+
+- **直因与修复**：representative Lean 的5/6 parser失败由模型把冻结`schema_version="lean_proof.proof_candidate.v1"`缩写为`v1/1.0`引起；Lean prompt现给出完整JSON skeleton与禁止缩写规则。唯一parse成功候选进入checker后命中缺失`LemmaGraphOracle.olean`；checker现区分proof rejection与environment/timeout/helper error，不再把全部非零退出压为rejected。
+- **环境闭环**：新增独立`lean-environment-test`，补齐Cases/Oracle构建并以oracle proof实测全部checker-backed节点；165 cases/690 nodes中135/570 checker-backed全部accepted，30/120为预注册`structured_blocked`且不冒充通过。仅全过后原子写持久pass；实验启动只轻量校验pass、关键输入与两份`.olean`哈希，不运行Lean/lake。pass失效只阻断pending Lean ordinary/reference roots，Factorization继续，fixed-source closure排除Lean-invalid keys。
+- **跨域终态与指标**：Factorization/Lean的parse、正常verification、provider-only与mixed耗尽结构化返回有效`no_final`并保留`failure_origin`；checker环境错误立即停止并投影`infrastructure_invalid`；未知runtime/store/ledger故障fail closed。Reducer保留固定库存，缺committed result计`missing_committed_root_result`设施无效；三项mandatory inventory diagnostics满足valid+infra=preregistered且不扩展153 formal occurrences；infra cell的Exp1–5相关科学率/interval为null，pair/quadruple不接纳。
+- **coverage tail全路径**：有效`no_final`仍按冻结`unscheduled_ai_unit_ids`原顺序执行/恢复tail，只有condition/runtime/infra terminal阻断；execute/resume/projector/CLI共用同一predicate。Lean缺canonical依赖生成带真实`lemma_node_id/dependency_path`且不调用provider的typed pre-dispatch trace；snapshot同时冻结protocol projection/traces、tail requests和已知pre-dispatch traces并校验集合闭包；Exp2–4 fixed replay可直接消费，tail资源只统计真实provider calls。
+- **范围保持**：Lean题库、pure leaf/root DAG、induction单节点、retry次数、provider policy与实验矩阵均未修改；未覆盖工作区已有Factorization prompt v2改动。未调用provider，未运行representative/full/LeanAudit。
+- **最终focused证据**：跨层Lean/Factorization runtime、projector、schema、reducer、CLI、prompt/checker/validator、环境pass测试=`140 passed in 94.68s`；完整Exp2–4场景与真实Process worker-death=`18 passed in 249.76s`；权威/初始化合同=`25 passed in 1.73s`；轻量`validate_lean_environment_pass()`成功并返回pass digest=`sha256:12003b4021d0fc493c358cfee1cd750e19ab0c8c20eb5bae2a616e46355f97b3`；相关源码`compileall`与`git diff --check`通过。
+
+### Factorization B prompt v2统一修订（2026-08-22）
+
+- **用户决定**：后续Slim V2 `representative`与`full`统一使用B方案新提示词`factorization.bounded_range_prompt.v2`；旧v1 representative结果只作诊断，不与v2 Full或Exp2–4来源混用。
+- **实现边界**：仅修改`src/tokenshare/plugins/factorization/prompt_builder.py`及focused test；保留`factorization.range_result.v1`、14字段`RangeResult`、result kinds、parser、verifier、runtime adapter、execution bridge和trace schema。四份冻结前置权威无需修改；设计规格、实施蓝图和code map已同步实验身份与兼容边界。
+- **提示词行为**：单一canonical JSON skeleton；目标数只出现一次且输出前重新加载；删除候选枚举和双结果模板；按精确`a_start/a_end`路由bounded Fermat；wheel只能用满足`N % p != 0`的prime筛倍数；`no_factor_in_range`必须完备覆盖；factor必须通过range、modulo、quotient、product和逐位目标比较。
+- **静态缩减证据**：代表性`N=718034459,[16748,20096]` prompt由3154降至2336字符（减少818，约25.9%），目标数出现次数由4降至1。prompt/profile测试分别完成可解释RED→GREEN；最终合并的Factorization plugin、Phase 6 flow与Slim answer-path focused regression=`80 passed in 34.58s`，compileall、五份修改文档严格UTF-8读取和`git diff --check`均PASS。provider/network=`0/0`，未运行representative/full或Lean。
+
+### Slim V2 Full 性能与资源专项审查（2026-08-22）
+
+- **审查结论**：没有发现随全部roots线性常驻的内存泄漏；完整7,554-root inventory实测峰值`11.339 MiB`，bootstrap单次峰值低于`0.5 MiB`。但Full当前**不可资源安全放行**：84,618个fixed attempts会把完整来源provider response复制进每个下游response artifact，并在同一artifact内再次保存completion。
+- **磁盘风险证据**：生产`ArtifactStore.save_json()`合成测量显示1/4 MiB completion分别写出约2/8 MiB artifact；若来源response平均1 MiB，仅fixed artifacts约`165.27 GiB`，4 MiB时约`661.08 GiB`，显著高于当前Full plan的`28.879 GiB` estimate。`profiles.py`每个fixed attempt只估`12 KiB`，逐root preflight只估`64 KiB`，因此现有磁盘复检可通过后仍在中途耗尽磁盘。
+- **卡顿风险证据**：Full source closure对565个唯一来源键执行31,665次完整response读取（`56.04×`放大）；reducer约有4,897次有效10,000-replicate bootstrap，本机估计需约6–10分钟CPU且缺少细粒度进度；provider 600秒参数是socket I/O timeout而非严格总墙钟deadline。未发现明确死锁，但三处都可能呈现长时间无响应。
+- **既有保护**：roots串行、当前root worker/semaphore有界、单response 16 MiB硬上限且关闭、reducer按experiment/slice读取并排除raw/system、bootstrap内存有界。这些机制降低全局OOM概率；主要OOM残余是同一root并发fixed serialization的数百MiB级瞬时峰值。
+- **放行条件**：先让fixed path只保存checker/plugin所需最小输出和来源引用，去除完整envelope/重复completion；同步修正Full与逐root磁盘估算并加一个synthetic focused test。随后再做source closure唯一键验证、bootstrap复用/进度和provider总墙钟截止。全部可保持在Slim目录内，当前无shared接口缺口证据。
+- **验证**：离线`plan --profile full`得到论文roots=`7,554`、execution roots=`7,660`、provider upper=`10,902`、estimate=`28.879 GiB`、hard upper=`428.122 GiB`；focused保护测试`3 passed in 1.97s`。未运行representative/full、Lean专项suite、LeanAudit或全量catalog，provider/network=`0/0`。完整证据与计算见`Doc/SlimV2/slim_v2_full_performance_audit_20260822.md`；本审查未修改实现代码，不改变上方Stage 4 credential blocked状态。
 
 ## Slim V2 旧Stage 3 provenance：已暂停并由六Task重规划取代
 

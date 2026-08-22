@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+from collections import Counter
+import csv
 import json
 import os
 from pathlib import Path
@@ -14,7 +16,7 @@ from tokenshare.experiments.slim_v2.schema import (
     AttemptResultV1,
     ProviderEntryViewV1,
     RootInventoryV1,
-    RootResultV1,
+    RootResultV2,
     UnitTraceV1,
 )
 
@@ -26,13 +28,13 @@ def _nullable_reasons(record_type: type[Any]) -> dict[str, str]:
     }
 
 
-def _success(inventory: RootInventoryV1, challenge: object | None) -> RootResultV1:
+def _success(inventory: RootInventoryV1, challenge: object | None) -> RootResultV2:
     challenge_family = getattr(challenge, "challenge_family", None)
     target_rule = getattr(challenge, "attempt_rule", None)
     is_exp1 = inventory.experiment_id == "exp1"
     is_exp2 = inventory.experiment_id == "exp2"
     is_exp34 = inventory.experiment_id in {"exp3", "exp4"}
-    result = RootResultV1(
+    result = RootResultV2(
         experiment_id=inventory.experiment_id,
         condition_id=inventory.condition_id,
         case_id=inventory.case_id,
@@ -114,7 +116,7 @@ def _success(inventory: RootInventoryV1, challenge: object | None) -> RootResult
             for name in inventory.disabled_mechanisms
         ],
         missing_reason={},
-        not_applicable_reason=_nullable_reasons(RootResultV1),
+        not_applicable_reason=_nullable_reasons(RootResultV2),
     )
     result.validate()
     return result
@@ -273,6 +275,193 @@ def _fake_services(cli, calls: list[tuple[str, str, Path | None]]):
         reduce_run=lambda run_dir: {"run_dir": str(run_dir), "reduced": True},
         provider_preflight=lambda experiment_ids, roots: {},
         disk_free_bytes=lambda path: 1 << 50,
+        lean_environment_preflight=lambda _root: {"status": "passed"},
+    )
+
+
+def test_provider_condition_failure_blocks_later_roots_by_failure_origin(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    calls: list[tuple[str, str]] = []
+    blocked_condition: str | None = None
+    services = _fake_services(cli, [])
+
+    def execute(context):
+        nonlocal blocked_condition
+        identity = (
+            str(context.inventory.condition_id),
+            str(context.inventory.case_id),
+        )
+        calls.append(identity)
+        if blocked_condition is None:
+            blocked_condition = identity[0]
+            return cli._invalid_root_result(
+                context.inventory,
+                context.challenge_plan,
+                failure_origin="provider_configuration_invalid",
+            )
+        assert identity[0] != blocked_condition, (
+            "provider condition fail-stop reached a later root"
+        )
+        return _success(context.inventory, context.challenge_plan)
+
+    services = replace(services, execute_root=execute)
+    assert cli.main(
+        [
+            "run",
+            "--experiment",
+            "exp1",
+            "--profile",
+            "representative",
+            "--run-id",
+            "condition-fail-stop",
+            "--output-root",
+            str(tmp_path),
+        ],
+        _services=services,
+    ) == 0
+    assert blocked_condition is not None
+    assert sum(condition == blocked_condition for condition, _case in calls) == 1
+    blocked_results = [
+        result
+        for inventory, result in RunStore(
+            tmp_path / "condition-fail-stop"
+        ).iter_inventory_results("roots")
+        if str(inventory.condition_id) == blocked_condition
+    ]
+    assert len(blocked_results) > 1
+    assert all(result is not None for result in blocked_results)
+    assert {
+        result.failure_origin for result in blocked_results if result is not None
+    } == {"provider_configuration_invalid"}
+
+
+def test_invalid_lean_environment_is_recorded_before_provider_without_blocking_factorization(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.lean_environment import LeanEnvironmentInvalid
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    executed: list[str] = []
+    provider_domains: list[set[str]] = []
+    services = _fake_services(cli, [])
+    services = replace(
+        services,
+        execute_root=lambda context: (
+            executed.append(str(context.inventory.domain))
+            or _success(context.inventory, context.challenge_plan)
+        ),
+        provider_preflight=lambda _experiments, roots: (
+            provider_domains.append({str(root.domain) for root in roots}) or {}
+        ),
+        lean_environment_preflight=lambda _root: (_ for _ in ()).throw(
+            LeanEnvironmentInvalid("missing pass")
+        ),
+    )
+
+    assert cli.main(
+        [
+            "run",
+            "--experiment",
+            "exp1",
+            "--profile",
+            "representative",
+            "--run-id",
+            "invalid-lean-environment",
+            "--output-root",
+            str(tmp_path),
+        ],
+        _services=services,
+    ) == 0
+
+    assert executed and set(executed) == {"factorization"}
+    assert provider_domains == [{"factorization"}]
+    results = [
+        result
+        for inventory, result in RunStore(
+            tmp_path / "invalid-lean-environment"
+        ).iter_inventory_results("roots")
+        if inventory.domain == "lean"
+    ]
+    assert results
+    assert all(result is not None for result in results)
+    assert {result.failure_stage for result in results if result is not None} == {
+        "preflight"
+    }
+    assert {result.failure_kind for result in results if result is not None} == {
+        "infrastructure_invalid"
+    }
+    assert {result.failure_origin for result in results if result is not None} == {
+        "lean_environment_invalid"
+    }
+
+
+def test_invalid_lean_environment_excludes_lean_roots_from_shared_source_closure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.lean_environment import LeanEnvironmentInvalid
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    closure_groups: list[tuple[str, ...]] = []
+    executed: list[str] = []
+
+    def record_source_closure(roots, _source_run_dir, _cases) -> None:
+        closure_groups.append(tuple(str(root.domain) for root in roots))
+
+    monkeypatch.setattr(cli, "_source_closure", record_source_closure)
+    services = replace(
+        _fake_services(cli, []),
+        execute_root=lambda context: (
+            executed.append(str(context.inventory.domain))
+            or _success(context.inventory, context.challenge_plan)
+        ),
+        lean_environment_preflight=lambda _root: (_ for _ in ()).throw(
+            LeanEnvironmentInvalid("missing pass")
+        ),
+    )
+
+    assert cli.main(
+        [
+            "run",
+            "--experiment",
+            "exp4",
+            "--profile",
+            "representative",
+            "--run-id",
+            "invalid-lean-fixed-source",
+            "--source-run-dir",
+            str(tmp_path / "source"),
+            "--output-root",
+            str(tmp_path),
+        ],
+        _services=services,
+    ) == 0
+
+    assert len(closure_groups) == 11
+    assert sum(len(group) for group in closure_groups) == 22
+    assert all(set(group) == {"factorization"} for group in closure_groups)
+    assert executed and set(executed) == {"factorization"}
+    results = list(
+        RunStore(tmp_path / "invalid-lean-fixed-source").iter_inventory_results(
+            "roots"
+        )
+    )
+    assert sum(
+        result is not None
+        and result.failure_origin == "lean_environment_invalid"
+        for inventory, result in results
+        if inventory.domain == "lean"
+    ) == 22
+    assert all(
+        result is not None and result.verified_correct is True
+        for inventory, result in results
+        if inventory.domain == "factorization"
     )
 
 
@@ -811,7 +1000,29 @@ def test_generic_protocol_resume_uses_runtime_seam_without_provider_preflight(
     assert preflights == []
 
 
-def test_condition_failure_protocol_resume_never_requires_exp1_secret(
+@pytest.mark.parametrize(
+    ("run_id", "blocked_summary"),
+    [
+        ("condition-failure-resume", {"slim_condition_failure": {"failure_kind": "x"}}),
+        (
+            "runtime-failure-resume",
+            {"slim_runtime_failure": {"failure_origin": "unexpected_runtime_error"}},
+        ),
+        (
+            "checker-infra-resume",
+            {
+                "terminal_failure": {
+                    "failure_stage": "candidate_verification",
+                    "failure_origin": "checker_environment_error",
+                    "infrastructure_invalid": True,
+                }
+            },
+        ),
+    ],
+)
+def test_blocked_protocol_resume_never_requires_exp1_secret_or_provider(
+    run_id: str,
+    blocked_summary: dict[str, object],
     tmp_path: Path,
 ) -> None:
     from tokenshare.experiments.slim_v2 import cli
@@ -826,7 +1037,7 @@ def test_condition_failure_protocol_resume_never_requires_exp1_secret(
     rows = project_root_inventory_rows(inventory)
     roots = [root for root in rows.roots if root.experiment_id == "exp1"]
     root = roots[0]
-    store = RunStore(tmp_path / "condition-failure-resume")
+    store = RunStore(tmp_path / run_id)
     store.write_frozen_inventories(
         conditions=inventory.conditions,
         roots=rows.roots,
@@ -836,7 +1047,7 @@ def test_condition_failure_protocol_resume_never_requires_exp1_secret(
     store.write_run_config(
         asdict(
             SlimRunConfigV1(
-                run_id="condition-failure-resume",
+                run_id=run_id,
                 profile_id="representative",
                 experiment_ids=["exp1"],
                 source_run_dir=None,
@@ -845,7 +1056,7 @@ def test_condition_failure_protocol_resume_never_requires_exp1_secret(
     )
     store.write_root_protocol_snapshot(
         root.experiment_id, root.condition_id, root.case_id, root.repeat_id,
-        protocol_result={"summary": {"slim_condition_failure": {"failure_kind": "x"}}},
+        protocol_result={"summary": blocked_summary},
         traces=[],
         tail_requests={},
         protocol_projection=_success(root, None),
@@ -856,6 +1067,7 @@ def test_condition_failure_protocol_resume_never_requires_exp1_secret(
     preflights: list[object] = []
     services = replace(
         _fake_services(cli, []),
+        execute_root=lambda context: pytest.fail("blocked resume reran root/provider"),
         resume_root=lambda context, protocol: _success(
             context.inventory, context.challenge_plan
         ),
@@ -864,7 +1076,7 @@ def test_condition_failure_protocol_resume_never_requires_exp1_secret(
     assert cli.main(
         [
             "run", "--experiment", "exp1", "--profile", "representative",
-            "--run-id", "condition-failure-resume", "--output-root", str(tmp_path),
+            "--run-id", run_id, "--output-root", str(tmp_path),
             "--resume",
         ],
         _services=services,
@@ -1032,6 +1244,50 @@ def test_next_root_disk_bound_is_dynamic_and_preflight_writes_no_run_dir(
     assert not (tmp_path / ".no-empty-run.slim-v2.lock").exists()
 
 
+@pytest.mark.parametrize("source_root_state", ["missing", "v1"])
+def test_source_closure_rejects_non_v2_source_root(
+    source_root_state: str,
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.profiles import (
+        build_inventory,
+        project_root_inventory_rows,
+    )
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    inventory = build_inventory("representative")
+    rows = project_root_inventory_rows(inventory)
+    target = next(root for root in rows.roots if root.experiment_id == "exp2")
+    source_root = next(
+        root
+        for root in rows.roots
+        if root.experiment_id == "exp1" and root.case_id == target.case_id
+    )
+    source = RunStore(tmp_path / source_root_state)
+    source.write_frozen_inventories(
+        conditions=inventory.conditions,
+        roots=rows.roots,
+        exp3_references=rows.exp3_references,
+        exp4_challenges=inventory.challenges,
+    )
+    _write_factor_source(source, target)
+    if source_root_state == "v1":
+        document = asdict(_success(source_root, None))
+        document["schema_version"] = "tokenshare.slim_v2.root_result.v1"
+        path = source.root_result_path(
+            source_root.experiment_id,
+            source_root.condition_id,
+            source_root.case_id,
+            source_root.repeat_id,
+        )
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="source Exp1 root result"):
+        cli._source_closure([target], source.run_dir, cli._case_inputs())
+
+
 def test_source_closure_failure_is_scoped_to_condition(tmp_path: Path) -> None:
     from tokenshare.experiments.slim_v2 import cli
     from tokenshare.experiments.slim_v2.profiles import (
@@ -1040,10 +1296,22 @@ def test_source_closure_failure_is_scoped_to_condition(tmp_path: Path) -> None:
     )
     from tokenshare.experiments.slim_v2.storage import RunStore
 
-    rows = project_root_inventory_rows(build_inventory("representative")).roots
+    inventory = build_inventory("representative")
+    projected = project_root_inventory_rows(inventory)
+    rows = projected.roots
     exp2 = [row for row in rows if row.experiment_id == "exp2"]
     omitted_case = exp2[0].case_id
     source = RunStore(tmp_path / "source")
+    source.write_frozen_inventories(
+        conditions=inventory.conditions,
+        roots=rows,
+        exp3_references=projected.exp3_references,
+        exp4_challenges=inventory.challenges,
+    )
+    reusable_case_ids = {root.case_id for root in exp2 if root.case_id != omitted_case}
+    for source_root in rows:
+        if source_root.experiment_id == "exp1" and source_root.case_id in reusable_case_ids:
+            source.write_root_result(_success(source_root, None))
     for root in exp2:
         if root.case_id != omitted_case:
             _write_factor_source(source, root)
@@ -1322,3 +1590,158 @@ def test_offline_factorization_and_lean_use_the_real_protocol_vertical(
     ) == 0
     assert domains == ["factorization", "factorization", "lean", "lean"]
     assert not os.environ.get("TASK6_SHOULD_NOT_EXIST")
+
+
+def test_representative_fake_transport_uses_production_runtime_and_reducer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """74 次离线执行只能替换外部 HTTP 边界，其余均走生产接线。"""
+
+    from tokenshare.experiments.slim_v2 import cli, provider
+    from tokenshare.experiments.slim_v2.reducer import reduce_run
+    from tokenshare.experiments.slim_v2.storage import RunStore
+    from tests.experiments.slim_v2.test_answer_paths import _FakeResponse
+
+    services = cli._default_services()
+    assert services.execute_root is cli._production_execute_root
+    assert services.reduce_run is reduce_run
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "task6-offline-deepseek")
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "task6-offline-siliconflow")
+    fake_responses: list[_FakeResponse] = []
+    requested_models: list[str] = []
+
+    def fake_open(request: object, _timeout_seconds: float) -> _FakeResponse:
+        request_data = getattr(request, "data", None)
+        assert isinstance(request_data, bytes)
+        request_body = json.loads(request_data.decode("utf-8"))
+        model = request_body["model"]
+        assert isinstance(model, str)
+        requested_models.append(model)
+        response = _FakeResponse(
+            json.dumps(
+                {
+                    "id": f"task6-fake-{len(fake_responses)}",
+                    "model": model,
+                    # 两领域都形成真实 parser failure；不会启动 Lean/lake。
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "{}",
+                                "reasoning_content": "",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 2,
+                        "prompt_cache_hit_tokens": 0,
+                        "prompt_cache_miss_tokens": 2,
+                        "completion_tokens": 1,
+                        "total_tokens": 3,
+                        "completion_tokens_details": {"reasoning_tokens": 0},
+                    },
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        fake_responses.append(response)
+        return response
+
+    monkeypatch.setattr(provider, "_open_response", fake_open)
+    run_id = "representative-production-reducer"
+    assert cli.main(
+        [
+            "representative",
+            "--run-id",
+            run_id,
+            "--output-root",
+            str(tmp_path),
+        ]
+    ) == 0
+
+    run_dir = tmp_path / run_id
+    store = RunStore(run_dir)
+    paper_results = list(store.iter_inventory_results("roots"))
+    reference_results = list(store.iter_inventory_results("exp3_references"))
+    assert len(paper_results) == 72
+    assert len(reference_results) == 2
+    assert all(result is not None for _inventory, result in paper_results)
+    assert all(result is not None for _inventory, result in reference_results)
+    assert Counter(
+        inventory.experiment_id for inventory, _result in paper_results
+    ) == Counter({"exp1": 4, "exp2": 12, "exp3": 8, "exp4": 44, "exp5": 4})
+    assert {inventory.experiment_id for inventory, _result in reference_results} == {
+        "exp3"
+    }
+
+    # 每次 execution 都留下生产 coordinator 的 protocol snapshot 与 event ledger。
+    assert len(list((run_dir / "roots").rglob("protocol.json"))) == 74
+    assert len(list((run_dir / "system").rglob("events.jsonl"))) == 74
+
+    summary_path = run_dir / "metrics" / "summary.json"
+    table_dir = run_dir / "metrics" / "tables"
+    expected_publication = {summary_path} | {
+        table_dir / f"exp{number}.{suffix}"
+        for number in range(1, 6)
+        for suffix in ("jsonl", "csv")
+    }
+    assert {path for path in (run_dir / "metrics").rglob("*") if path.is_file()} == (
+        expected_publication
+    )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["schema_version"] == "tokenshare.slim_v2.reducer_summary.v1"
+    assert summary["formal_metric_id_count"] == 153
+    assert summary["paper_root_inventory_counts"] == {
+        "exp1": 4,
+        "exp2": 12,
+        "exp3": 8,
+        "exp4": 44,
+        "exp5": 4,
+    }
+    assert summary["exp3_reference_inventory_count"] == 2
+    assert summary["provider_calls_observed"] == {
+        "exp1": 54,
+        "exp2": 0,
+        "exp3": 0,
+        "exp4": 0,
+        "exp5": 32,
+    }
+
+    for experiment_id in ("exp1", "exp2", "exp3", "exp4", "exp5"):
+        jsonl_path = table_dir / f"{experiment_id}.jsonl"
+        csv_path = table_dir / f"{experiment_id}.csv"
+        jsonl_rows = [
+            json.loads(line)
+            for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        with csv_path.open("r", encoding="utf-8", newline="") as handle:
+            csv_rows = list(csv.DictReader(handle))
+        assert len(jsonl_rows) == summary["tables"][experiment_id]["row_count"]
+        assert len(csv_rows) == len(jsonl_rows)
+        assert jsonl_rows
+        assert all(row["table_id"] == experiment_id for row in jsonl_rows)
+        assert all(
+            {"row_kind", "slice", "missing_reasons", "table_metadata"}
+            <= row.keys()
+            for row in jsonl_rows
+        )
+
+    # 89 是冻结上界；当前确定性 parser-failure 路径实际产生 86 次 fake HTTP。
+    assert len(requested_models) == len(fake_responses) == 86
+    assert set(requested_models) == {
+        "deepseek-v4-pro",
+        "zai-org/GLM-5.2",
+        "Qwen/Qwen3-14B",
+        "MiniMaxAI/MiniMax-M2.5",
+        "Pro/deepseek-ai/DeepSeek-V3",
+    }
+    assert all(response.closed for response in fake_responses)
+    persisted_text = "".join(
+        path.read_text(encoding="utf-8")
+        for path in run_dir.rglob("*.json")
+    )
+    assert "task6-offline-deepseek" not in persisted_text
+    assert "task6-offline-siliconflow" not in persisted_text

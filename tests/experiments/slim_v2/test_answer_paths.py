@@ -409,18 +409,52 @@ def test_started_exp1_configuration_failure_projects_incorrect_root(
         projected.verified_correct,
         projected.failure_stage,
         projected.failure_kind,
+        projected.failure_origin,
     ) == (
         True,
         "failed",
         False,
         False,
         "provider_call",
+        "infrastructure_invalid",
         "provider_configuration_invalid",
     )
     assert adapter.attempts == []
     assert len(adapter.outcomes) == 1
     assert len(scan_resume(store.run_dir).terminal_call_keys) == 1
     assert transport_calls == []
+
+    runtime_protocol_result = replace(
+        protocol_result,
+        summary={
+            **{
+                key: value
+                for key, value in protocol_result.summary.items()
+                if key not in {"slim_condition_failure", "terminal_failure"}
+            },
+            "slim_runtime_failure": {
+                "failure_stage": "protocol_runtime",
+                "failure_kind": "infrastructure_invalid",
+                "error_kind": "UnexpectedRuntimeFailure",
+                "engine_root_status": "failed",
+            },
+        },
+    )
+    runtime_projected = project_root_result(
+        inventory=inventory,
+        assembly=assembly,
+        protocol_result=runtime_protocol_result,
+        provider_family="deepseek",
+        requested_model=model,
+        resolved_model=None,
+        reasoning_mode="thinking",
+        attempts=adapter.attempts,
+    )
+    assert runtime_projected.failure_kind == "infrastructure_invalid"
+    assert runtime_projected.failure_origin == "unexpected_runtime_error"
+    assert runtime_protocol_result.summary["slim_runtime_failure"]["error_kind"] == (
+        "UnexpectedRuntimeFailure"
+    )
 
 
 @pytest.mark.parametrize(
@@ -468,11 +502,10 @@ class _PromptResponseFactory:
         self.request_bodies.append(request_body)
         self.timeout_seconds.append(timeout_seconds)
         prompt = request_body["messages"][-1]["content"]
-        if "factorization bounded range task" in prompt:
+        if "IMMUTABLE TASK AND RESPONSE SKELETON" in prompt:
             match = re.search(
-                r"Use these exact protocol-bound JSON field values:\n(\{.*?\n\})\nFor found_factor",
+                r"IMMUTABLE TASK AND RESPONSE SKELETON:\n(\{[^\n]+\})",
                 prompt,
-                flags=re.DOTALL,
             )
             assert match is not None
             bound = json.loads(match.group(1))

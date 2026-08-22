@@ -4,15 +4,25 @@ document: slim_v2_implementation_plan
 scope: Slim V2 system assembly and offline focused verification
 owner: Stage 2 blueprint rewrite owner
 created: 2026-08-21
-last_updated: 2026-08-21
+last_updated: 2026-08-22
 run_scope: representative_only
 ---
 
 # TokenShare Slim V2 实施蓝图
 
+> **当前获批修复覆盖（2026-08-22）**：用户已批准 `slim_v2_final_summary_lightweight_repair_plan.md`。该计划以六个轻量 Task 修复最终汇总阻断并覆盖本文件此前“实施完成/直接 Representative”的过时结论；冲突时以该计划及同步更新的三份权威/规格为准。Exp4 route evidence 实现、v1 迁移、shared code、安全/门禁和新增指标均不在本轮范围。六项完成并通过离线真实 reducer E2E 后，才用全新 run ID/目录启动真实 AI Representative。
+
 本计划取代旧横向微任务工作分解。实施以六个风险驱动纵向里程碑推进，每个里程碑都交付一条可运行切片；测试只证明高风险业务行为和跨模块合同，不为内部 helper、DTO、配置或覆盖率制造施工步骤。
 
 冻结勘误已经纳入本计划：Representative Experiment 1 为 19 planned units、真实调用上限 57，Experiment 5 上限 32，总上限 89。Full Experiment 3 为 rate 13,920、worker death 2,808、合计 16,728 planned units，attempt upper 为 `3×13,920 + 4×2,808 = 52,992`；其 106 个辅助 references 的 planned/upper 固定为 468/1,404。Full Experiment 4 每 mode/repeat 293 units、合计 9,669，attempt upper 为 15,822。其余 case IDs、root/condition 数、153 个 metric IDs、实验变量和 `run_scope` 不变。所有 planned/upper 值在运行时仍必须由逐 root inventory 求和，不用这些摘要常量覆盖实际 profile。
+
+### 2026-08-22 post-representative prompt修订
+
+用户批准Factorization B方案作为后续`representative`与`full`的唯一提示词。实施只修改`src/tokenshare/plugins/factorization/prompt_builder.py`与其focused test，并把profile标识升级为`factorization.bounded_range_prompt.v2`；不修改output schema、parser、verifier、runtime adapter、execution bridge或trace格式。代表性大区间静态样本的prompt从3154字符降至2336字符，`target_n`出现次数从4降至1。四份冻结权威无需同步；设计规格、code map与`progress.md`记录实验身份边界。任何v2正式运行必须重建Exp1 traces，Exp2–4只消费同一v2来源；旧v1 representative结果不得与v2 Full合并。
+
+### 2026-08-22 跨域失败语义与 Lean 有效性修复
+
+用户另行批准一次最小shared修复：Lean prompt冻结完整schema字面量；checker区分proof rejection与environment/timeout/helper error；Factorization/Lean共享coordinator以结构化`terminal_failure`返回parser、verification、provider-only和mixed retry exhaustion；Slim schema/projector/reducer以顶层三分类加`failure_origin`闭合固定分母、cell null与pair eligibility。有效`no_final`仍完成Exp1 coverage tail，只有设施终态阻断；Lean依赖不可用的未调度节点写typed pre-dispatch trace。独立`lean-environment-test`覆盖所有checker-backed nodes并持久化pass；实验启动只读pass和hash，不重复运行Lean/lake。题库、split、retry次数、provider policy与实验矩阵不变。精确实施与验证证据见`2026-08-22-lean-validity-repair-plan.md`。
 
 ## 1. 目标、范围和非目标
 
@@ -104,7 +114,7 @@ TokenShareData/outputs/slim_v2/<run_id>/
     └── summary.json
 ```
 
-`system/` 是现有系统本体自己的 event/artifact 存储，不是 Slim journal，reducer 不读取。`protocol.json`必须包含从公共结果/ledger/store投影出的全部 protocol-origin unit 普通attempt与领域语义快照，使resume可以幂等重建缺失trace文件；它不是协议checkpoint或第二状态。Slim 不创建 `state/` 状态机目录、checkpoint 父链、CURRENT/PENDING、receipt 或 database。
+`system/` 是现有系统本体自己的 event/artifact 存储，不是 Slim journal，reducer 不读取。`protocol.json`必须包含从公共结果/ledger/store投影出的protocol result/projection、全部protocol-origin unit普通attempt与领域语义快照；Exp1在tail material准备后还包含确定性tail request snapshots及已知pre-dispatch coverage-tail failure traces，使resume可以幂等重建全部已知trace并只执行剩余requests；它不是协议checkpoint或第二状态。Slim 不创建 `state/` 状态机目录、checkpoint 父链、CURRENT/PENDING、receipt 或 database。
 
 最终 CLI：
 
@@ -230,8 +240,8 @@ CLI/profile/case
 1. CLI解析唯一 DeepSeek entry并在condition开始前验证model/secret；root开始前不发请求。
 2. worker执行 AI unit 时，`ProviderSubmissionAdapter` 才调用 `call_provider_once()`；caller一次请求无内部retry，协议`max_retries=2`决定是否产生下一自然ordinal。
 3. 每个调用先写intent，返回后写response与terminal，再生成`ExecutionSubmission`交给现有runtime；parser/verifier/checker/canonical/merge均走既有边界。
-4. `run_root()` terminal 后先原子保存不可变`protocol.json`；该文件内含重建全部protocol-origin traces所需的普通attempt和领域语义快照，再幂等物化各trace文件。
-5. `run_coverage_tail()`只处理`unscheduled_ai_unit_ids - committed_trace_keys`，沿同一provider/parser/checker路径取得trace；最多三个自然attempt，Factorization verifier或Lean checker首次接受即停止。Tail attempt的`canonical_accepted`固定为null/false并带`not_applicable`，不得作为tail success条件。
+4. `run_root()` terminal 后先原子保存不可变`protocol.json`；该文件内含protocol projection、全部protocol-origin trace素材、确定性tail requests和已知pre-dispatch tail traces，再幂等物化全部已知trace文件。
+5. `run_coverage_tail()`保持`unscheduled_ai_unit_ids`冻结顺序，只处理尚无trace的剩余requests；有效`no_final`仍执行，只有condition/runtime/infra terminal阻断。每个可执行request沿同一provider/parser/checker路径取得trace，最多三个自然attempt，Factorization verifier或Lean checker首次接受即停止；Lean canonical依赖不可用写不调用provider的typed pre-dispatch trace。Tail attempt的`canonical_accepted`固定为null/false并带`not_applicable`，不得作为tail success条件。
 6. tail完成后写`result.json`。tail不提交到已终止协议，不改变root status、correctness或runtime；下一个root在tail terminal后才开始。
 
 外部调用时点只有步骤2和tail的实际目标。Full硬上限为5,910；Representative为57。恢复命中terminal call或committed trace时不重复调用。
@@ -295,14 +305,14 @@ writer/reader分工：
 
 1. caller接收`ProviderCallContextV1(call_key,root_key,planned_ai_unit_id,attempt_ordinal)`和注入的`RunStore`，provider send前由该store原子写intent；caller不创建第二个store；
 2. 收到或捕获terminal后先由同一store写response（如有），再写terminal；
-3. `run_root`返回后写含完整protocol-origin trace重建素材的`protocol.json`；
-4. Exp1先由protocol投影幂等物化全部protocol-origin traces，再补真正unscheduled的tail traces，最后写`result.json`；其他实验直接写`result.json`；
+3. `run_root`返回后写含protocol projection、完整protocol-origin trace素材、确定性tail requests和已知pre-dispatch tail traces的`protocol.json`；
+4. Exp1先由snapshot幂等物化全部已知traces，再执行剩余tail requests，最后写`result.json`；其他实验直接写`result.json`；
 5. 每个文件使用同目录temporary file、UTF-8 flush/close后replace；冲突主键不覆盖。
 
 Resume只扫描：
 
 - committed `result.json`：跳过整个root；
-- Exp1 `protocol.json`但final result缺失：不重跑`run_root`；先从protocol投影幂等重建缺失的protocol-origin traces，再只对真正unscheduled且缺key的unit运行tail，最后提交result；
+- Exp1 `protocol.json`但final result缺失：不重跑`run_root`；先从snapshot幂等重建缺失的protocol-origin与pre-dispatch tail traces，再只执行剩余tail request keys，最后提交result；
 - committed trace key：不重复取得回答；
 - terminal call：复用结果，不再次发请求；
 - intent存在、terminal缺失：先检查当前进程；response存在时从已存response完成terminal；确认无活跃owner且无response时写`unknown_transport_outcome`，同一ordinal不重调。协议若仍允许replacement，只能由engine请求下一自然ordinal；
@@ -468,7 +478,7 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.p
 
 #### 6. 关键控制流/实现逻辑
 
-caller签名显式接收call context与`RunStore`，在send前经该store写intent，最多读取16MiB+1并在所有路径关闭response，写response/terminal且无内部retry；它不创建或拥有第二个store。价格按authority 1.4纯投影。fixed adapter只有trace选择，不包含transport。Exp1先原子commit含完整protocol-origin trace素材的`protocol.json`，再幂等物化protocol traces，tail只补真正未调度且缺key的unit；Exp5四entry走同caller、零replacement。
+caller签名显式接收call context与`RunStore`，在send前经该store写intent，最多读取16MiB+1并在所有路径关闭response，写response/terminal且无内部retry；它不创建或拥有第二个store。价格按authority 1.4纯投影。fixed adapter只有trace选择，不包含transport。Exp1先原子commit含protocol projection、protocol traces、tail requests及已知pre-dispatch tail traces的`protocol.json`，再幂等物化全部已知traces并执行剩余requests；Exp5四entry走同caller、零replacement。
 
 #### 7. 状态真值owner与失败作用域变化
 
@@ -494,7 +504,7 @@ fake transport下Exp1/5两领域均完成生产路径；每个Exp1 planned unit�
 
 - 新增`provider.py/execution.py`并校准`runtime.py/storage.py/projector.py`：DeepSeek与SiliconFlow共用显式`ProviderCallContextV1 + RunStore`的single-attempt caller，send前写intent，response最多读取16 MiB+1且全路径关闭；response/terminal、model/usage与冻结价格均为普通事实，没有内部retry、第二store、selector或transport fallback。Exp1控制固定为`600s/300000`，Exp5按用户后续覆盖固定为`600s/100000`；三个thinking entry的`thinking_budget=32768`保持不变。
 - `ProviderSubmissionAdapter`经公共`ExecutionSubmission`、Factorization/Lean parser与真实bridge/checker跑完整root；`FixedTraceSubmissionAdapter`只消费typed Exp1 trace并实现exact/last-natural-attempt fallback，transport spy保持0。配置、模型身份或journal条件错误sticky后不重复caller/provider/journal；若root已经启动，现有coordinator仍返回terminal failed result，projector必须落`protocol_started=true, final_result_present=false, verified_correct=false`的失败行，保证任何已启动但无结果的题仍进入固定正确率分母。停止后续condition roots留给Task 6编排。
-- Exp1先原子写包含完整protocol-origin trace重建素材的`protocol.json`，再幂等物化protocol traces；coverage tail强制读取terminal `ProtocolRunResult`的typed `unscheduled_ai_unit_ids`，只调用缺trace key的unit。tail attempt时间写入既有typed trace，resume从全部已落coverage-tail traces重建完整target、recorded、success/failure、attempt/token/cost与原始时间边界，不创建checkpoint或第二状态。正文root status、正确性、runtime与protocol bytes不受tail影响。Exp5四个冻结SiliconFlow entry走同一caller，`max_retries=0`、零replacement且不运行tail。
+- Exp1先原子写包含protocol projection、完整protocol-origin trace素材、确定性tail requests和已知pre-dispatch tail traces的`protocol.json`，再幂等物化全部已知traces；coverage tail强制读取terminal `ProtocolRunResult`的typed `unscheduled_ai_unit_ids`并保持原顺序，只执行剩余request keys。有效`no_final`仍补tail，只有统一设施blocker阻断；Lean依赖不可用保存typed pre-dispatch trace且不调用provider。tail attempt时间写入既有typed trace，资源只累计真实provider calls；resume从snapshot与已落traces重建完整target、recorded、success/failure、attempt/token/cost与原始时间边界，不创建checkpoint或第二状态。正文root status、正确性、runtime与protocol bytes不受tail影响。Exp5四个冻结SiliconFlow entry走同一caller，`max_retries=0`、零replacement且不运行tail。
 - 风险驱动fail-first依次捕获缺provider/execution模块、配置错误越过condition边界、tail语义/恢复target不一致、冻结controls缺失、tail timing未持久化及已启动失败root不可投影；所有范围内Critical/Important均由原实现者修复。`test_system_vertical.py`仅把Task 1 Factorization fixture改为第三range终止，使无tail纵链诚实保持`unscheduled=[]`；Task 3的91/8..9 tail fixture独立拥有自身语义。
 - 用户覆盖Exp5 response上限前，spec reviewer独立复跑为`22 passed in 26.61s`、`SPEC_COMPLIANT`且`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；implementation-quality reviewer为`22 passed in 28.88s`、`APPROVED`且`Critical/Important/Minor=0/0/0`；owner fresh为`22 passed in 26.63s`。这些结果只作为Task 3主体纵链基线，不替代下述`max_tokens=100000`覆盖后的fresh证据。
 - 用户随后明确把Exp5 response `max_tokens`由`32768`提高到`100000`，并要求代码与文档同步后才能交棒；A/B/C的`thinking_budget=32768`不变。四个Exp5参数用例先取得预期RED，随后targeted=`4 passed in 8.60s`、实现者双文件fresh=`22 passed in 26.82s`。参数覆盖首轮re-audit中，spec reviewer=`22 passed in 28.44s`、quality reviewer=`22 passed in 27.92s`，两者均确认代码、四endpoint与design/metrics authority参数一致且provider/network=`0/0`；各自唯一`Important=1`都是本段fresh证据当时尚未写入计划/progress。补录后原spec reviewer短复核=`SPEC_COMPLIANT`、原quality reviewer短复核=`APPROVED`，最终`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；owner post-override fresh=`22 passed in 26.79s`。
@@ -700,7 +710,8 @@ Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Ex
 
 | 失败 | 捕获者 | 作用域 | 落盘/后续 |
 |---|---|---|---|
-| provider timeout/HTTP/envelope、parse/checker rejection、retry用尽 | execution/runtime | 当前root的实验结果 | 写attempt/root，继续下一root |
+| provider timeout/HTTP/envelope、parse或环境正常的verifier/checker rejection、retry用尽 | execution/runtime | 当前root的有效`no_final`实验结果 | 写attempt/root和`failure_origin`，继续下一root |
+| Lean checker environment/timeout/helper error，或Lean pass缺失/失效 | checker/独立环境preflight | 当前Lean root的设施无效结果 | 不继续模型retry；写infra-invalid，受影响cell科学指标为null |
 | Exp3 fault/death未恢复、Exp4 protocol-start后stuck/incorrect/root checker rejection | existing engine/plugin + projector | 当前root实验结果 | 固定分母保留，继续 |
 | source缺键/重复/语义错、Exp2–4 transport attempt | fixed adapter/CLI | 当前condition | 当前及剩余root写infra-invalid后停止condition |
 | provider resolved model错、secret/entry配置错 | preflight/provider | 当前model condition；共享配置错可升级run | 不换model，不隐式fallback |

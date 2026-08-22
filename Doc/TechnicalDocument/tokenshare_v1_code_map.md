@@ -21,23 +21,26 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 ## Slim V2 精简实验路径
 
-Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokenshare/experiments/slim_v2/`，不得import旧`paper_*`/formal runner。Task 4–6的主要归属如下：
+Slim V2 当前入口与权威只在`Doc/SlimV2/`；运行代码位于`src/tokenshare/experiments/slim_v2/`，不得import旧`paper_*`/formal runner。主要模块职责如下。本次最终汇总轻量修复 Tasks 4–6 的实际改动只归入`schema.py/storage.py/projector.py/runtime.py/cli.py/reducer.py`及`test_schema.py/test_runtime_resume.py/test_cli_e2e.py/test_reducer_golden.py`；表中其他既有职责与 dirty-tree shared 改动不归因于本轮。
 
 | 文件 | 职责 |
 |---|---|
 | `experiments/slim_v2/scenarios.py` | 组装Exp2六worker logical replay、Exp3 ordinal-0 fault/真实Process death/reference与Exp4 mode-blind 11-mode结构旁路；普通路径使用现有Thread/Sequential，death继续由真实`ProcessWorkerBackend`产生PID/exit/progress事实。 |
 | `experiments/slim_v2/execution.py` | Exp1/provider与fixed-trace submission边界；Task 4增加parser前P route、Lean normalize/checker前Slim bridge以及Process结果透明prepare/export/ingest。 |
-| `experiments/slim_v2/runtime.py` | 把scenario scheduler/policy/hooks/backend注入同一个`ProtocolRunCoordinator.run_root`；Task 6增加生产root装配、全实验typed protocol投影、Exp1 coverage tail/fresh resume与按root共享provider permit，不建立第二runner或状态机。 |
-| `experiments/slim_v2/projector.py` | 从同一次system result、ledger、worker facts、plugin/checker与Slim route artifacts投影Exp2–4字段；只认actual evidence，未到达checker为`false/null/0`。 |
-| `experiments/slim_v2/schema.py` | Slim root/attempt/fault/recovery/death/challenge/ablation typed schema与跨字段不变量。 |
-| `experiments/slim_v2/storage.py` | 普通run文件与resume事实；Task 5增加逐行root/reference inventory-result join、独立Exp3 reference路径和Exp4 challenge inventory只读行；Task 6增加typed protocol/terminal/response恢复、公开run/reference writer与单层system root路径。 |
+| `experiments/slim_v2/runtime.py` | 把scenario scheduler/policy/hooks/backend注入同一个`ProtocolRunCoordinator.run_root`；生产root装配与全实验strict-v2 protocol投影共用同一路径。Exp1 fresh/resume都从protocol snapshot attempts与当前root全部已持久化coverage-tail traces重建最终attempts，顺序为protocol原顺序再按冻结tail target/自然ordinal；已有trace和terminal call不重复。有效`no_final`继续tail，tail资源只计真实provider calls，不建立第二runner或状态机。 |
+| `experiments/slim_v2/projector.py` | 从同一次system result、ledger、worker facts、plugin/checker与Slim route artifacts投影唯一`RootResultV2`；`failure_origin`始终出现且可null，root顶层只用三分类。最终attempts统一合并protocol snapshot与已持久化tail事实，使fresh/resume对相同事实生成相同typed结果。 |
+| `experiments/slim_v2/schema.py` | Slim root/attempt/fault/recovery/death/challenge/ablation typed schema与跨字段不变量；ordinary root唯一生产schema为`tokenshare.slim_v2.root_result.v2`，`failure_origin`必现可null，v1明确拒绝且无migration/compat/dual reader；`verified_correct`与`failure_kind`双向互斥。 |
+| `experiments/slim_v2/storage.py` | 普通run文件与resume事实；只读写strict-v2 root result与embedded protocol projection。Exp1 snapshot冻结protocol projection/traces、deterministic tail requests及已知pre-dispatch tail traces；resume从当前root已持久化trace闭合缺失tail。Task 6的closure放宽仅限Exp1，非Exp1仍禁止tail字段/trace。 |
 | `experiments/slim_v2/provider.py` | single-entry 16MiB bounded provider调用、usage/model/cost普通投影和intent/response/typed-terminal journal；恢复只读既有事实，dead intent写unknown且不重复同ordinal。 |
-| `experiments/slim_v2/reducer.py` | 唯一Exp1–5离线统计内核；按table/slice流式归约，拥有153 occurrence/evidence合同、固定分母、pair/quadruple、type-7、sample variance、固定bootstrap、null finalizer及五表/summary staged atomic publish；不得导入runtime/checker/provider或读取raw/system目录。 |
-| `experiments/slim_v2/cli.py` | 唯一实验编排入口；实现`plan/run/run-all/reduce/representative`、串行roots、原子单实验inventory、typed resume、显式source与语义closure、run lock、调用/磁盘安全preflight和condition失败作用域。 |
+| `experiments/slim_v2/reducer.py` | 唯一Exp1–5离线统计内核，只接受strict `RootResultV2`。按table/slice流式归约，拥有固定分母、153 formal occurrences之外的三项mandatory root库存计数、pair/quadruple、type-7、sample variance、固定bootstrap与null finalizer。正式point ratio由统一value/reason路径写入，零分母固定`null + zero_denominator`；三类failure breakdown只按committed `failure_kind`直接分组，`failure_origin`仅作诊断；infra-invalid仍保留输入完整的精确计数与资源事实，只使相关科学rate/effect/interval为null。生产`reduce_run()`同时服务真实运行与Representative fake E2E，不存在mock/第二reducer。 |
+| `experiments/slim_v2/lean_environment.py` | 独立构建并以oracle实测全部checker-backed Lean nodes；仅全accepted后原子写持久pass。实验启动路径只读pass、关键输入和两份`.olean`哈希，不调用Lean/lake。 |
+| `experiments/slim_v2/cli.py` | 唯一实验编排入口；实现`plan/run/run-all/reduce/representative/lean-environment-test`、串行roots、strict-v2 typed resume、显式source与condition失败作用域。Exp2–4 source run必须具有strict-v2 committed Exp1 roots，v1/旧run不兼容也不迁移；`representative`按冻结profile走production execute/runtime/storage与真实`reduce_run()`，不是独立runner。 |
 | `experiments/slim_v2/gui.py`、仓库根`run_slim_v2.cmd` | Windows薄参数窗口与双击入口；只把profile/experiment/run/source/resume确定性映射为同一CLI argv，并监督一个CLI子进程，不承载runner、preflight或恢复逻辑。 |
 | `tests/experiments/slim_v2/test_scenarios.py` | 风险驱动覆盖Thread双域事实、Exp2六worker、Exp3五fault与12-cell真实Process death、Exp4四family×11 modes、default-zero与零provider/transport。 |
-| `tests/experiments/slim_v2/test_reducer_golden.py` | 单一golden run风险驱动覆盖153/153、fixed denominator、tail、独立pair eligibility、六组四端、Exp5四端分类、bootstrap/null阈值、读取边界和晚失败/replace失败发布事务。 |
-| `tests/experiments/slim_v2/test_cli_e2e.py`、`test_runtime_resume.py` | 全离线覆盖原子命令、source/failure scope、run lock、动态磁盘、全实验protocol、fresh resume、terminal/intent防重复与Exp5 provider permit。 |
+| `tests/experiments/slim_v2/test_schema.py` | 覆盖唯一生产`RootResultV2` literal、`failure_origin`必现可null、v1 reader/writer/projection/source明确拒绝，以及`verified_correct`与`failure_kind`双向互斥。 |
+| `tests/experiments/slim_v2/test_reducer_golden.py` | 单一golden run风险驱动覆盖153/153、fixed denominator、tail、独立pair eligibility、六组四端、Exp5四端分类、bootstrap/null阈值与发布事务；另覆盖strict-v2读取、Exp2 stale reason清理、Exp3/4/5正式零分母reason、committed failure taxonomy，以及infra cell保留精确事实和pair reason传播。 |
+| `tests/experiments/slim_v2/test_runtime_resume.py` | 覆盖从protocol snapshot与当前root全部持久化coverage-tail traces稳定重建attempts；fresh/resume typed结果相等，完整tail调用`3→3`、部分tail`2→3→3`，不重复已有trace或terminal ordinal。 |
+| `tests/experiments/slim_v2/test_cli_e2e.py` | 全离线覆盖原子命令、source/failure scope、run lock、strict-v2 source/resume及生产Representative fake E2E；冻结profile提交72 paper roots+2 references，唯一fake网络边界为provider `_open_response`，真实`reduce_run()`发布summary与Exp1–5 JSONL/CSV共11文件。 |
 | `tests/experiments/slim_v2/test_gui_launcher.py` | 覆盖2 profiles × Exp1–5/all参数映射、必要source、一个CLI子进程、零provider和launcher精确目标；不测试控件像素。 |
 
 Task 4获批的shared例外仍保持最小：`local_runtime/contracts.py`定义optional`RecoveryMergeContext`，`local_runtime/coordinator.py`只在真实recovery记录后/replacement前调用capability并记录固定synthetic-V provenance；`plugins/contracts.py`的`IncompleteMergeInputError(ValueError)`只替换Factorization/Lean adapter原有incomplete-required-input异常分支。P、Lean-V、mode/challenge、premature-v2和projector全部留在Slim-local。
@@ -85,11 +88,11 @@ Task 4获批的shared例外仍保持最小：`local_runtime/contracts.py`定义o
 | 文件 | 职责 |
 |---|---|
 | `contracts.py` | `ProtocolRunRequest`、execution scope、plugin hooks、worker/backend 等稳定接口；`ProtocolRunLedgerBinding` 把 run/task/root 绑定到 verified ledger snapshot；`RuntimeHookObservationV1` 是三 variant 的 closed typed envelope；Task 9 增加 typed logical schedule/checkpoint contract；Task 10 增加 `PreparedTraceDelivery`、`ParentCommitStores` 与 `TraceDeliveryAttempt`；Task 11 增加 `ParentTraceDeliveryStageContext`、`ParentStagedTraceDelivery` 与 core-neutral `ParentTraceDeliveryStager`。 |
-| `coordinator.py` | 组装 scheduler/lease/executor/plugin/engine，推进完整本地协议生命周期；Task 9 由 frozen queue pop 统一推进 logical clock；Task 10 校验 delivery/lease/request/store binding 后由 parent 唯一 commit trace delivery；Task 11 注入 parent-only domain stager、验证 current artifact refs，并把 trace consumption 规范化为零 current provider spend 的普通 engine submission。 |
+| `coordinator.py` | 组装scheduler/lease/executor/plugin/engine并推进完整本地协议生命周期；正常retry exhaustion返回结构化`terminal_failure`而非普通异常，Lean checker设施状态首次出现即停止root；既有logical schedule、trace delivery与parent staging职责保持不变。 |
 | `logical_scheduler.py` | Task 9 deterministic logical source-latency event queue、stable tie-break、checkpoint/resume 与六类 completion 闭合。 |
 | `workers.py` | sequential/thread/process worker、liveness、真实 process death 与 capacity；Task 9 worker completion 返回 scheduled event；Task 10 worker 只返回 prepared delivery，不能写 parent stores。 |
 | `process_worker_child.py` | Windows 独立子解释器 worker 的原子文件 handshake/result sidecar；Task 9 透传 typed scheduled completion；Task 10 透传 typed prepared delivery。 |
-| `projection.py` | 从同一次 verified ledger snapshot 派生通用 run/unit/attempt 只读视图，并把 `ProtocolRunLedgerBinding` 放入正式 `ProtocolRunResult`；Task 10 投影 `TRACE_DELIVERY_COMMITTED.v1`。 |
+| `projection.py` | 从同一次verified ledger snapshot派生通用run/unit/attempt视图；Factorization/Lean共享归纳parse、verification、provider-only或mixed耗尽的`terminal_failure`，预注册worker-death耗尽保留`child_execution/worker_death_exhausted`，未知worker/runtime异常fail closed为设施来源。 |
 
 worker backend 只报告执行和死亡事实；是否 retry/requeue 由协议规则决定。不要把 Windows process 退回 multiprocessing spawn pipe/Event 路径。
 
@@ -101,7 +104,8 @@ worker backend 只报告执行和死亡事实；是否 retry/requeue 由协议�
 |---|---|
 | `descriptor.py`、`schemas.py`、`models.py` | 插件版本、I/O schema 和领域对象。 |
 | `split_strategy.py` | 确定性候选因子范围拆分；Exp2 的 20-way profile 也由版本化规则约束。 |
-| `prompt_builder.py`、`validator.py` | AI request payload 与候选结果验证。 |
+| `prompt_builder.py` | AI request prompt package；Slim V2 representative/full自2026-08-22统一使用`factorization.bounded_range_prompt.v2`（canonical单skeleton、bounded Fermat、sound wheel、目标重载与精确final gate），不改变`RangeResult`输出schema。 |
+| `validator.py` | 严格结构化parser与确定性factor/no-factor重检；prompt v2继续使用既有`factorization.range_result.v1`和14字段合同。 |
 | `merge_policy.py` | factor witness OR-join；无 witness 的 prime/no-factor 结论要求完整 coverage。 |
 | `runtime_adapter.py` | 把领域行为接入 local runtime contract。 |
 | `fixtures.py` | 回归 fixture，不是论文正式结果。 |
@@ -110,11 +114,11 @@ worker backend 只报告执行和死亡事实；是否 retry/requeue 由协议�
 
 | 文件组 | 职责 |
 |---|---|
-| `environment.py`、`checker.py`、`preflight.py` | 固定 Lean/lake/toolchain/library 环境与真实 checker。Task 33 的 environment ref 明确分开历史 authority、当前 runtime 与跨 checkout semantic digest，并在需要 authority bridge 时校验当前 fixture project。 |
+| `environment.py`、`checker.py`、`preflight.py` | 固定Lean/lake/toolchain/library环境与真实checker；checker先识别缺`.olean`、unknown/invalid import、toolchain/project不可用等环境诊断，再把其余非零退出归为proof rejection。 |
 | `semantic_authority.py` | Task 33 的版本化跨 checkout/EOL authority：先逐字节验证既有 v1 direct/graph/preflight authority，再按 `utf8_lf.v1` 验证当前 Lean fixture/checker 语义投影；真实内容漂移仍 fail closed。tracked sidecar 是 `benchmarks/paper/lean_environment_semantic_authority.v1.json`。 |
 | `fixed_plan.py`、`split_strategy.py` | 校验预注册 fixed lemma-DAG；不从任意 theorem 自动发现完整引理图。Task 33 只在历史 plan authority 与当前 runtime digest 不同时写显式 `environment_authority_bridge` certificate，不改写旧 v1 authority。 |
-| `child_proof.py`、`prompt_builder.py`、`validator.py` | proof unit request、候选 proof 与 checker-backed 验证。 |
-| `merge_policy.py`、`runtime_adapter.py` | dependency-aware proof assembly、root recheck 与 runtime bridge。 |
+| `child_proof.py`、`prompt_builder.py`、`validator.py` | proof unit request、候选proof与checker-backed验证；prompt给出完整JSON skeleton并冻结`lean_proof.proof_candidate.v1`，validator不再把checker设施状态压成rejected。 |
+| `merge_policy.py`、`runtime_adapter.py` | dependency-aware proof assembly、root recheck与runtime bridge；verification event保留validator真实`passed/rejected/error`状态；公开只读dependency path seam并以typed异常报告coverage-tail缺canonical依赖。 |
 | `replay_evidence.py` | Lean evidence 重放检查。 |
 | `descriptor.py`、`schemas.py`、`models.py` | 版本化描述与领域数据对象。 |
 

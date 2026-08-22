@@ -18,7 +18,7 @@ from statistics import median
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
 
-from .schema import AttemptResultV1, RootInventoryV1, RootResultV1
+from .schema import AttemptResultV1, RootInventoryV1, RootResultV2
 from .storage import RunStore
 
 
@@ -163,7 +163,8 @@ _FORMAL_METRIC_OCCURRENCE_BASES = tuple(
 
 
 _COMMON_METRICS = (
-    "preregistered_root_count", "final_result_root_count",
+    "preregistered_root_count", "scientifically_valid_root_count",
+    "infrastructure_invalid_root_count", "final_result_root_count",
     "verified_correct_root_count", "completion_rate",
     "end_to_end_verified_success_rate", "no_final_failure_count",
     "incorrect_final_failure_count", "infra_invalid_failure_count",
@@ -367,7 +368,7 @@ _FORMAL_METRIC_OCCURRENCES = tuple(
 @dataclass(frozen=True, slots=True)
 class _Observation:
     inventory: RootInventoryV1
-    result: RootResultV1 | None
+    result: RootResultV2 | None
     planned_challenge_family: str | None = None
 
 
@@ -585,6 +586,12 @@ def _materialize_null_evidence(
         metadata["missing_reason"] = reason
 
 
+def _set_value(row: dict[str, Any], name: str, value: Any) -> None:
+    row[name] = value
+    row["missing_reasons"].pop(name, None)
+    row["not_applicable_reasons"].pop(name, None)
+
+
 def _set_missing(row: dict[str, Any], name: str, reason: str) -> None:
     row[name] = None
     row["missing_reasons"][name] = reason
@@ -597,6 +604,20 @@ def _set_not_applicable(row: dict[str, Any], name: str, reason: str = "not_appli
     row["missing_reasons"].pop(name, None)
     row["not_applicable_reasons"][name] = reason
     _materialize_null_evidence(row, name, reason)
+
+
+def _set_ratio(
+    row: dict[str, Any],
+    name: str,
+    numerator: float | int,
+    denominator: float | int,
+) -> None:
+    if not _finite(numerator) or not _finite(denominator):
+        raise ValueError(f"ratio inputs must be finite: {name}")
+    if float(denominator) == 0:
+        _set_missing(row, name, "zero_denominator")
+        return
+    _set_value(row, name, float(numerator) / float(denominator))
 
 
 def _identity(observation: _Observation) -> tuple[str, str, str, int]:
@@ -743,31 +764,60 @@ def _group(
     return sorted(grouped.items(), key=lambda item: repr(item[0]))
 
 
+def _is_infrastructure_invalid(result: RootResultV2) -> bool:
+    """统一识别不允许进入科学指标的 root 终态。"""
+
+    return result.failure_kind == "infrastructure_invalid"
+
+
 def _common(row: dict[str, Any], observations: Sequence[_Observation]) -> None:
     row["preregistered_root_count"] = len(observations)
     missing_results = [item for item in observations if item.result is None]
-    if missing_results:
-        for name in _COMMON_METRICS[1:]:
-            _set_missing(row, name, "missing_committed_root_result")
-        return
     results = [item.result for item in observations]
-    assert all(result is not None for result in results)
     committed = [result for result in results if result is not None]
     final_count = sum(result.final_result_present is True for result in committed)
     correct_count = sum(result.verified_correct is True for result in committed)
+    committed_invalid = sum(_is_infrastructure_invalid(result) for result in committed)
+    invalid = committed_invalid + len(missing_results)
     no_final = sum(result.failure_kind == "no_final" for result in committed)
     incorrect = sum(result.failure_kind == "incorrect_final" for result in committed)
-    invalid = sum(result.failure_kind == "infrastructure_invalid" for result in committed)
+    failure_origins = Counter(
+        result.failure_origin or "unspecified_failure_origin"
+        for result in committed
+        if result.failure_kind is not None
+    )
+    if missing_results:
+        failure_origins["missing_committed_root_result"] += len(missing_results)
+    row.update(
+        scientifically_valid_root_count=len(committed) - committed_invalid,
+        infrastructure_invalid_root_count=invalid,
+        failure_origin_counts=dict(sorted(failure_origins.items())),
+        no_final_failure_count=no_final,
+        incorrect_final_failure_count=incorrect,
+        infra_invalid_failure_count=committed_invalid,
+        failure_root_count=no_final + incorrect + committed_invalid,
+    )
+    if missing_results:
+        for name in ("final_result_root_count", "verified_correct_root_count"):
+            _set_missing(row, name, "missing_committed_root_result")
+        for name in ("completion_rate", "end_to_end_verified_success_rate"):
+            _set_missing(row, name, "infrastructure_invalid_root_present")
+        return
     row.update(
         final_result_root_count=final_count,
         verified_correct_root_count=correct_count,
-        completion_rate=_ratio(final_count, len(observations)),
-        end_to_end_verified_success_rate=_ratio(correct_count, len(observations)),
-        no_final_failure_count=no_final,
-        incorrect_final_failure_count=incorrect,
-        infra_invalid_failure_count=invalid,
-        failure_root_count=no_final + incorrect + invalid,
     )
+    _set_ratio(row, "completion_rate", final_count, len(observations))
+    _set_ratio(
+        row,
+        "end_to_end_verified_success_rate",
+        correct_count,
+        len(observations),
+    )
+    if invalid:
+        for name in ("completion_rate", "end_to_end_verified_success_rate"):
+            _set_missing(row, name, "infrastructure_invalid_root_present")
+        return
     raw_rows = [
         {
             "case_id": str(result.case_id),
@@ -799,7 +849,7 @@ def _common(row: dict[str, Any], observations: Sequence[_Observation]) -> None:
 
 
 def _result_attempt_sum(
-    result: RootResultV1,
+    result: RootResultV2,
     field: str,
     *,
     protocol_only: bool = False,
@@ -822,15 +872,15 @@ def _result_attempt_sum(
     return _sum_nullable(values)
 
 
-def _source_consumption(result: RootResultV1) -> int:
+def _source_consumption(result: RootResultV2) -> int:
     return sum(item.source_response_consumed is True for item in result.attempts)
 
 
-def _source_sum(result: RootResultV1, field: str) -> float | int | None:
+def _source_sum(result: RootResultV2, field: str) -> float | int | None:
     return _result_attempt_sum(result, field, source_consumed_only=True)
 
 
-def _simulated_tokens(result: RootResultV1) -> float | int | None:
+def _simulated_tokens(result: RootResultV2) -> float | int | None:
     attempts = [item for item in result.attempts if item.source_response_consumed is True]
     return _sum_nullable(item.simulated_total_tokens for item in attempts)
 
@@ -866,7 +916,7 @@ def _simulated_attempt_cost(attempt: AttemptResultV1) -> float | None:
     ) / 1_000_000
 
 
-def _simulated_cost(result: RootResultV1) -> float | None:
+def _simulated_cost(result: RootResultV2) -> float | None:
     attempts = [item for item in result.attempts if item.source_response_consumed is True]
     return _sum_nullable(_simulated_attempt_cost(item) for item in attempts)
 
@@ -993,7 +1043,7 @@ def _reduce_exp1(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
     return rows
 
 
-def _worker_utilization(result: RootResultV1) -> float | None:
+def _worker_utilization(result: RootResultV2) -> float | None:
     if not _finite(result.runtime_wall_clock_ms) or result.runtime_wall_clock_ms == 0:
         return None
     if not isinstance(result.worker_count, int) or result.worker_count <= 0:
@@ -1024,6 +1074,10 @@ def _pair_reason(
         return "missing_baseline_inventory_arm"
     if baseline.result is None or treatment.result is None:
         return "missing_committed_root_result"
+    if _is_infrastructure_invalid(baseline.result) or _is_infrastructure_invalid(
+        treatment.result
+    ):
+        return "infrastructure_invalid_root_present"
     if require_correct and (
         baseline.result.verified_correct is not True
         or treatment.result.verified_correct is not True
@@ -1040,12 +1094,16 @@ def _pair_fields(
     reasons: Counter[str],
     *,
     use_mean: bool = False,
+    missing_reason: str | None = None,
 ) -> None:
     prefix = metric
     row[f"{prefix}_planned_pair_count"] = planned
     row[f"{prefix}_eligible_pair_count"] = len(values)
     row[f"{prefix}_ineligible_pair_count"] = planned - len(values)
     row[f"{prefix}_ineligible_reason_counts"] = dict(sorted(reasons.items()))
+    if missing_reason is not None:
+        _set_missing(row, metric, missing_reason)
+        return
     if use_mean:
         row[metric] = _mean([float(item["value"]) for item in values])
         interval = stratified_case_cluster_bootstrap(
@@ -1292,10 +1350,17 @@ def _reduce_exp2(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
                     _set_missing(row, name, "missing_repeat_pair_summary")
                 continue
             numeric = [float(value) for value in values]
-            row["trace_replay_paired_speedup_repeat_min"] = min(numeric)
-            row["trace_replay_paired_speedup_repeat_max"] = max(numeric)
-            row["trace_replay_paired_speedup_relative_difference"] = _ratio(
-                max(numeric) - min(numeric), sum(numeric) / 2
+            _set_value(
+                row, "trace_replay_paired_speedup_repeat_min", min(numeric)
+            )
+            _set_value(
+                row, "trace_replay_paired_speedup_repeat_max", max(numeric)
+            )
+            _set_ratio(
+                row,
+                "trace_replay_paired_speedup_relative_difference",
+                max(numeric) - min(numeric),
+                sum(numeric) / 2,
             )
     rows.extend(pair_rows)
     return rows
@@ -1308,6 +1373,9 @@ def _exp3_cell_metrics(row: dict[str, Any], group: Sequence[_Observation]) -> No
             _set_missing(row, name, "missing_committed_root_result")
         return
     results = [item.result for item in group if item.result is not None]
+    infrastructure_invalid_present = any(
+        _is_infrastructure_invalid(result) for result in results
+    )
     faults = [observation for result in results for observation in result.fault_observations]
     recoveries = [
         observation for result in results for observation in result.recovery_observations
@@ -1326,25 +1394,36 @@ def _exp3_cell_metrics(row: dict[str, Any], group: Sequence[_Observation]) -> No
     row["controlled_wrong_candidate_interception_count"] = sum(
         item.verifier_intercepted is True for item in wrong
     )
-    row["controlled_wrong_candidate_interception_rate"] = _ratio(
-        row["controlled_wrong_candidate_interception_count"], len(wrong)
-    )
+    if not infrastructure_invalid_present:
+        _set_ratio(
+            row,
+            "controlled_wrong_candidate_interception_rate",
+            row["controlled_wrong_candidate_interception_count"],
+            len(wrong),
+        )
     row["controlled_wrong_candidate_escape_count"] = sum(
         item.escaped_to_canonical_or_root is True for item in wrong
     )
-    row["controlled_wrong_candidate_escape_rate"] = _ratio(
-        row["controlled_wrong_candidate_escape_count"], len(wrong)
-    )
+    if not infrastructure_invalid_present:
+        _set_ratio(
+            row,
+            "controlled_wrong_candidate_escape_rate",
+            row["controlled_wrong_candidate_escape_count"],
+            len(wrong),
+        )
     row["started_replacement_attempt_count"] = sum(
         item.replacement_started is True for item in recoveries
     )
     row["successful_replacement_attempt_count"] = sum(
         item.replacement_succeeded is True for item in recoveries
     )
-    row["replacement_attempt_success_rate"] = _ratio(
-        row["successful_replacement_attempt_count"],
-        row["started_replacement_attempt_count"],
-    )
+    if not infrastructure_invalid_present:
+        _set_ratio(
+            row,
+            "replacement_attempt_success_rate",
+            row["successful_replacement_attempt_count"],
+            row["started_replacement_attempt_count"],
+        )
     row["reassignment_count"] = sum(item.reassigned is True for item in recoveries)
     per_root_discarded: list[dict[str, Any]] = []
     for result in results:
@@ -1366,9 +1445,13 @@ def _exp3_cell_metrics(row: dict[str, Any], group: Sequence[_Observation]) -> No
                 "value": _sum_nullable(values),
             }
         )
-    row["discarded_simulated_trace_tokens"] = _sum_nullable(
+    discarded_total = _sum_nullable(
         item["value"] for item in per_root_discarded
     )
+    if discarded_total is None:
+        _set_missing(row, "discarded_simulated_trace_tokens", "usage_missing")
+    else:
+        row["discarded_simulated_trace_tokens"] = discarded_total
     _add_distribution(
         row, "discarded_simulated_trace_tokens_per_root", per_root_discarded
     )
@@ -1393,10 +1476,13 @@ def _exp3_cell_metrics(row: dict[str, Any], group: Sequence[_Observation]) -> No
         row["preregistered_required_slots"] = sum(
             int(result.required_slot_count) for result in results
         )
-        row["result_completeness_rate"] = _ratio(
-            row["recovered_valid_canonical_required_slots"],
-            row["preregistered_required_slots"],
-        )
+        if not infrastructure_invalid_present:
+            _set_ratio(
+                row,
+                "result_completeness_rate",
+                row["recovered_valid_canonical_required_slots"],
+                row["preregistered_required_slots"],
+            )
     else:
         for metric in (
             "recovered_valid_canonical_required_slots",
@@ -1482,8 +1568,27 @@ def _exp3_cell_metrics(row: dict[str, Any], group: Sequence[_Observation]) -> No
                     "denominator": result.required_slot_count,
                 }
             )
+    if infrastructure_invalid_present:
+        for metric in (
+            "controlled_wrong_candidate_interception_rate",
+            "controlled_wrong_candidate_escape_rate",
+            "replacement_attempt_success_rate",
+            "result_completeness_rate",
+        ):
+            if metric not in row["not_applicable_reasons"]:
+                _set_missing(
+                    row, metric, "infrastructure_invalid_root_present"
+                )
+                metadata = row["metric_metadata"].get(metric)
+                if isinstance(metadata, dict):
+                    metadata["missing_reason"] = (
+                        "infrastructure_invalid_root_present"
+                    )
     for metric, raw in rate_specs.items():
-        if metric not in row["not_applicable_reasons"]:
+        if (
+            not infrastructure_invalid_present
+            and metric not in row["not_applicable_reasons"]
+        ):
             _add_rate_interval(row, metric, raw)
     if errors:
         error_rows = [
@@ -1553,15 +1658,28 @@ def _reduce_exp3(
         _common(pair, group)
         values_by_metric: dict[str, list[dict[str, Any]]] = defaultdict(list)
         reasons_by_metric: dict[str, Counter[str]] = defaultdict(Counter)
-        extractors: dict[str, Callable[[RootResultV1], float | int | None]] = {
+        extractors: dict[str, Callable[[RootResultV2], float | int | None]] = {
             "simulated_wall_clock_overhead_ms": lambda result: result.runtime_wall_clock_ms,
             "simulated_token_overhead": _simulated_tokens,
             "simulated_trace_attributed_cost_overhead": _simulated_cost,
         }
+        infrastructure_invalid_present = any(
+            item.result is not None
+            and _is_infrastructure_invalid(item.result)
+            for item in group
+        )
         for treatment in group:
             reference = reference_index.get(
                 (str(treatment.inventory.case_id), int(treatment.inventory.repeat_id))
             )
+            if (
+                reference is not None
+                and (
+                    reference.result is None
+                    or _is_infrastructure_invalid(reference.result)
+                )
+            ):
+                infrastructure_invalid_present = True
             for metric, extractor in extractors.items():
                 reason = _pair_reason(reference, treatment)
                 value = None
@@ -1591,6 +1709,10 @@ def _reduce_exp3(
             _pair_fields(
                 pair, metric, len(group), values_by_metric[metric],
                 reasons_by_metric[metric],
+                missing_reason=(
+                    "infrastructure_invalid_root_present"
+                    if infrastructure_invalid_present else None
+                ),
             )
         rows.append(_apply_template(pair, _EXP3_METRICS))
     return rows
@@ -1616,7 +1738,7 @@ def _pair_mode(first: str, second: str) -> str:
     return "__".join(ordered)
 
 
-def _plan_signature(result: RootResultV1) -> tuple[Any, ...]:
+def _plan_signature(result: RootResultV2) -> tuple[Any, ...]:
     return (
         result.challenge_plan_id, result.challenge_family,
         tuple(result.challenge_target_planned_ai_unit_ids or ()),
@@ -1634,14 +1756,14 @@ def _exp4_family(observation: _Observation) -> str | None:
     )
 
 
-def _exp4_runtime_reason(results: Sequence[RootResultV1 | None]) -> str | None:
+def _exp4_runtime_reason(results: Sequence[RootResultV2 | None]) -> str | None:
     if any(result is None for result in results):
         return "missing_committed_root_result"
     committed = [result for result in results if result is not None]
+    if any(_is_infrastructure_invalid(result) for result in committed):
+        return "infrastructure_invalid_root_present"
     if any(result.protocol_started is not True for result in committed):
         return "preflight_blocked_invalid_ablation_path"
-    if any(result.failure_kind == "infrastructure_invalid" for result in committed):
-        return "infrastructure_invalid"
     signatures = {_plan_signature(result) for result in committed}
     if len(signatures) != 1:
         return "challenge_plan_mismatch"
@@ -1654,7 +1776,7 @@ def _exp4_runtime_reason(results: Sequence[RootResultV1 | None]) -> str | None:
     return None
 
 
-def _exp4_special_metrics(row: dict[str, Any], results: Sequence[RootResultV1]) -> None:
+def _exp4_special_metrics(row: dict[str, Any], results: Sequence[RootResultV2]) -> None:
     challenges = [item for result in results for item in result.challenge_observations]
     ablations = [item for result in results for item in result.ablation_observations]
     family = row["slice"].get("challenge_family")
@@ -1670,8 +1792,11 @@ def _exp4_special_metrics(row: dict[str, Any], results: Sequence[RootResultV1]) 
     row["wrong_canonical_acceptance_count"] = sum(
         item.wrong_canonical_accepted is True for item in ablations
     )
-    row["wrong_canonical_acceptance_rate"] = _ratio(
-        row["wrong_canonical_acceptance_count"], len(invalid)
+    _set_ratio(
+        row,
+        "wrong_canonical_acceptance_rate",
+        row["wrong_canonical_acceptance_count"],
+        len(invalid),
     )
     row["root_checker_rejection_after_wrong_canonical_count"] = sum(
         any(
@@ -1686,8 +1811,11 @@ def _exp4_special_metrics(row: dict[str, Any], results: Sequence[RootResultV1]) 
     )
     row["raw_only_exposure_count"] = sum(item.raw_only_exposed is True for item in ablations)
     row["raw_only_acceptance_count"] = sum(item.raw_only_accepted is True for item in ablations)
-    row["raw_only_acceptance_rate"] = _ratio(
-        row["raw_only_acceptance_count"], row["raw_only_exposure_count"]
+    _set_ratio(
+        row,
+        "raw_only_acceptance_rate",
+        row["raw_only_acceptance_count"],
+        row["raw_only_exposure_count"],
     )
     injected_roots = sum(any(item.injected is True for item in result.challenge_observations) for result in results)
     no_return_roots = sum(
@@ -1707,14 +1835,17 @@ def _exp4_special_metrics(row: dict[str, Any], results: Sequence[RootResultV1]) 
         and any(item.injected is True for item in result.challenge_observations)
         for result in results
     )
-    row["valid_final_after_challenge_rate"] = _ratio(
-        row["valid_final_after_challenge_count"], injected_roots
+    _set_ratio(
+        row,
+        "valid_final_after_challenge_rate",
+        row["valid_final_after_challenge_count"],
+        injected_roots,
     )
     row["stuck_task_count"] = sum(
         any(item.stuck_due_to_no_requeue is True for item in result.ablation_observations)
         for result in results
     )
-    row["stuck_task_rate"] = _ratio(row["stuck_task_count"], no_return_roots)
+    _set_ratio(row, "stuck_task_rate", row["stuck_task_count"], no_return_roots)
     row["merge_gate_unsatisfied_observation_count"] = sum(
         item.merge_gate_satisfied is False and bool(item.missing_required_slot_ids)
         for item in ablations
@@ -1725,8 +1856,11 @@ def _exp4_special_metrics(row: dict[str, Any], results: Sequence[RootResultV1]) 
     row["premature_merge_failure_count"] = sum(
         item.premature_merge_failed is True for item in ablations
     )
-    row["premature_merge_failure_rate"] = _ratio(
-        row["premature_merge_failure_count"], row["premature_merge_attempt_count"]
+    _set_ratio(
+        row,
+        "premature_merge_failure_rate",
+        row["premature_merge_failure_count"],
+        row["premature_merge_attempt_count"],
     )
     applicability = {
         "invalid": family == "INVALID_PARSED_CANDIDATE",
@@ -1798,7 +1932,7 @@ def _exp4_cell(
     started = sum(result.protocol_started is True for result in results)
     row["protocol_started_root_count"] = started
     row["preflight_blocked_root_count"] = len(group) - started
-    row["protocol_start_coverage"] = _ratio(started, len(group))
+    _set_ratio(row, "protocol_start_coverage", started, len(group))
     challenges = [item for result in results for item in result.challenge_observations]
     opportunities = sum(item.opportunity is True for item in challenges)
     injections = sum(item.injected is True for item in challenges)
@@ -1809,14 +1943,21 @@ def _exp4_cell(
         any(item.injected is True for item in result.challenge_observations)
         for result in results
     )
-    row["challenge_application_coverage"] = _ratio(injections, opportunities)
+    _set_ratio(
+        row, "challenge_application_coverage", injections, opportunities
+    )
     row["challenge_plan_mismatch_count"] = sum(
         (str(item.inventory.case_id), int(item.inventory.repeat_id)) in mismatch_keys
         for item in group
     )
-    row["no_final_rate"] = _ratio(row.get("no_final_failure_count"), len(group))
-    row["incorrect_final_rate"] = _ratio(
-        row.get("incorrect_final_failure_count"), len(group)
+    _set_ratio(
+        row, "no_final_rate", row["no_final_failure_count"], len(group)
+    )
+    _set_ratio(
+        row,
+        "incorrect_final_rate",
+        row["incorrect_final_failure_count"],
+        len(group),
     )
     slot_inputs_complete = all(
         _finite(result.recovered_valid_canonical_slot_count)
@@ -1831,18 +1972,20 @@ def _exp4_cell(
         sum(int(result.required_slot_count) for result in results)
         if slot_inputs_complete else None
     )
-    row["required_slot_completion_rate"] = _ratio(recovered, required)
     if not slot_inputs_complete:
         _set_missing(
             row, "required_slot_completion_rate", "missing_required_slot_input"
         )
-    elif required == 0:
-        _set_missing(row, "required_slot_completion_rate", "zero_denominator")
+    else:
+        assert recovered is not None and required is not None
+        _set_ratio(row, "required_slot_completion_rate", recovered, required)
     row["actual_execution_attempt_count"] = sum(len(result.attempts) for result in results)
     row["source_response_slot_consumption"] = sum(
         _source_consumption(result) for result in results
     )
     valid = (
+        row["infrastructure_invalid_root_count"] == 0
+        and
         row["preflight_blocked_root_count"] == 0
         and row["challenge_plan_mismatch_count"] == 0
         and row["missed_challenge_opportunity_count"] == 0
@@ -1850,6 +1993,8 @@ def _exp4_cell(
     row["scientifically_valid_ablation_cell"] = valid
     if not valid:
         reason = (
+            "infrastructure_invalid_root_present"
+            if row["infrastructure_invalid_root_count"] else
             "preflight_blocked_invalid_ablation_path"
             if row["preflight_blocked_root_count"] else
             "challenge_plan_mismatch" if row["challenge_plan_mismatch_count"] else
@@ -1939,8 +2084,8 @@ def _exp4_cell(
 
 def _exp4_pair_value(
     metric: str,
-    full: RootResultV1,
-    ablation: RootResultV1,
+    full: RootResultV2,
+    ablation: RootResultV2,
 ) -> tuple[float | None, str | None]:
     if metric == "paired_end_to_end_success_loss_vs_full":
         return float(bool(full.verified_correct)) - float(bool(ablation.verified_correct)), None
@@ -2036,8 +2181,11 @@ def _reduce_exp4_pairs(
         row["full_success_ablation_failure"] = transitions[(True, False)]
         row["full_failure_ablation_success"] = transitions[(False, True)]
         row["full_failure_ablation_failure"] = transitions[(False, False)]
-        row["ablation_failure_given_full_success_rate"] = _ratio(
-            transitions[(True, False)], transitions[(True, True)] + transitions[(True, False)]
+        _set_ratio(
+            row,
+            "ablation_failure_given_full_success_rate",
+            transitions[(True, False)],
+            transitions[(True, True)] + transitions[(True, False)],
         )
         conditional_rows = [
             {
@@ -2095,7 +2243,7 @@ def _reduce_exp4_pairs(
 
 
 def _quadruple_values(
-    arms: Mapping[str, RootResultV1], first: str, second: str,
+    arms: Mapping[str, RootResultV2], first: str, second: str,
 ) -> tuple[dict[str, float | None], dict[str, str]]:
     full = arms["FULL"]
     one = arms[_MECHANISM_MODE[first]]
@@ -2294,22 +2442,30 @@ def _add_repeat_descriptions(rows: Sequence[dict[str, Any]]) -> None:
             complete = all(_finite(value) for value in values)
             for row in group:
                 for index, value in enumerate(values):
-                    row[f"{metric}_repeat{index}"] = value
+                    if _finite(value):
+                        _set_value(row, f"{metric}_repeat{index}", value)
+                    else:
+                        _set_missing(
+                            row, f"{metric}_repeat{index}", "missing_repeat_metric"
+                        )
                 if complete:
                     numeric = [float(value) for value in values]
-                    row[f"{metric}_repeat_median"] = float(median(numeric))
-                    row[f"{metric}_repeat_min"] = min(numeric)
-                    row[f"{metric}_repeat_max"] = max(numeric)
+                    _set_value(
+                        row, f"{metric}_repeat_median", float(median(numeric))
+                    )
+                    _set_value(row, f"{metric}_repeat_min", min(numeric))
+                    _set_value(row, f"{metric}_repeat_max", max(numeric))
                 else:
                     for suffix in ("repeat_median", "repeat_min", "repeat_max"):
-                        row[f"{metric}_{suffix}"] = None
-                        row["missing_reasons"][f"{metric}_{suffix}"] = (
-                            "missing_repeat_metric"
+                        _set_missing(
+                            row,
+                            f"{metric}_{suffix}",
+                            "missing_repeat_metric",
                         )
 
 
 def _first_attempt_classification(
-    result: RootResultV1,
+    result: RootResultV2,
 ) -> list[tuple[AttemptResultV1, bool, bool, str | None]]:
     classified = []
     for attempt in result.attempts:
@@ -2380,12 +2536,16 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
             rows.append(_apply_template(row, _EXP5_METRICS))
             continue
         results = [item.result for item in group if item.result is not None]
+        infrastructure_invalid_present = any(
+            _is_infrastructure_invalid(result) for result in results
+        )
         classified = [entry for result in results for entry in _first_attempt_classification(result)]
         actual = len(classified)
         nonpass = sum(not passed for _attempt, passed, _checkable, _reason in classified)
         row["actual_first_provider_attempt_count"] = actual
         row["first_attempt_without_verifier_accepted_candidate_count"] = nonpass
-        row["first_attempt_nonpass_rate"] = _ratio(nonpass, actual)
+        if not infrastructure_invalid_present:
+            _set_ratio(row, "first_attempt_nonpass_rate", nonpass, actual)
         row["first_attempt_provider_transport_failure_count"] = sum(
             reason == "transport" for _attempt, _passed, _checkable, reason in classified
         )
@@ -2399,10 +2559,19 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
         rejected = sum(entry[2] and not entry[1] for entry in classified)
         row["first_attempt_checkable_candidate_count"] = checkable
         row["first_attempt_explicitly_rejected_by_verifier_count"] = rejected
-        row["first_attempt_verification_rejection_rate"] = _ratio(rejected, checkable)
-        row["first_attempt_call_coverage"] = _ratio(
-            actual, row["planned_first_attempt_ai_unit_count"]
-        )
+        if not infrastructure_invalid_present:
+            _set_ratio(
+                row,
+                "first_attempt_verification_rejection_rate",
+                rejected,
+                checkable,
+            )
+            _set_ratio(
+                row,
+                "first_attempt_call_coverage",
+                actual,
+                row["planned_first_attempt_ai_unit_count"],
+            )
         raw_rates: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for observation, result in zip(group, results):
             root_classified = _first_attempt_classification(result)
@@ -2426,8 +2595,18 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
                 {**identity, "numerator": root_actual,
                  "denominator": len(observation.inventory.planned_ai_unit_ids)}
             )
-        for metric, raw in raw_rates.items():
-            _add_rate_interval(row, metric, raw)
+        if infrastructure_invalid_present:
+            for metric in (
+                "first_attempt_nonpass_rate",
+                "first_attempt_verification_rejection_rate",
+                "first_attempt_call_coverage",
+            ):
+                _set_missing(
+                    row, metric, "infrastructure_invalid_root_present"
+                )
+        else:
+            for metric, raw in raw_rates.items():
+                _add_rate_interval(row, metric, raw)
         root_tokens = [
             _result_attempt_sum(result, "total_tokens", first_only=True)
             for result in results
@@ -2436,8 +2615,15 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
             _result_attempt_sum(result, "cost_estimate_cny", first_only=True)
             for result in results
         ]
-        row["actual_total_tokens"] = _sum_nullable(root_tokens)
-        row["actual_cost_estimate_cny"] = _sum_nullable(root_costs)
+        for metric, values in (
+            ("actual_total_tokens", root_tokens),
+            ("actual_cost_estimate_cny", root_costs),
+        ):
+            total = _sum_nullable(values)
+            if total is None:
+                _set_missing(row, metric, "usage_missing")
+            else:
+                row[metric] = total
         for metric, values in (
             ("root_actual_total_tokens", root_tokens),
             ("root_actual_cost_estimate_cny", root_costs),
@@ -2453,7 +2639,11 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
             _add_distribution(row, metric, raw)
         repeat_values = [_repeat_wall(group, repeat_id) for repeat_id in (0, 1, 2)]
         for repeat_id, value in enumerate(repeat_values):
-            row[f"repeat{repeat_id}_wall_clock_ms"] = value
+            metric = f"repeat{repeat_id}_wall_clock_ms"
+            if value is None:
+                _set_missing(row, metric, "missing_repeat_wall_clock")
+            else:
+                row[metric] = value
         row["repeat_wall_clock_ms"] = repeat_values
         if all(_finite(value) for value in repeat_values):
             numeric = [float(value) for value in repeat_values]

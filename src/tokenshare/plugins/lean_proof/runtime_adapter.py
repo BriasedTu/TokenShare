@@ -124,6 +124,10 @@ class LeanRuntimeSplitBlocked(ValueError):
         self.split_report = split_report
 
 
+class LeanCanonicalDependencyUnavailableError(RuntimeError):
+    """planned Lean unit 的 canonical dependency 尚不可用于相同输入。"""
+
+
 class LeanRuntimeAdapter:
     """把固定 Lean 拆分、checker 与 merge 投影为 coordinator 行为。
 
@@ -381,7 +385,7 @@ class LeanRuntimeAdapter:
                         self._canonical_proof_refs_by_logical_key[source_key]
                     )
                 except KeyError as exc:
-                    raise RuntimeError(
+                    raise LeanCanonicalDependencyUnavailableError(
                         f"Lean dependency proof is not canonical: {source_key}"
                     ) from exc
             prompt = build_lean_proof_candidate_prompt_package(
@@ -579,7 +583,7 @@ class LeanRuntimeAdapter:
                 submission=submission,
                 required_output_names=[PROOF_ARTIFACT_OUTPUT_NAME],
                 output_contract_id=PROOF_ARTIFACT_CONTRACT_ID,
-                status="passed" if validation.accepted else "rejected",
+                status=validation.status,
                 layer_summary=validation.to_phase4_layer_summary(),
                 checker_report=report,
             )
@@ -589,7 +593,7 @@ class LeanRuntimeAdapter:
             submission=submission,
             required_output_names=list(self._merge_candidate_refs),
             output_contract_id=MERGE_RESULT_CONTRACT_ID,
-            status="passed" if validation.accepted else "rejected",
+            status=validation.status,
             layer_summary=validation.to_phase4_layer_summary(),
             checker_report=report,
         )
@@ -1428,6 +1432,21 @@ class LeanRuntimeAdapter:
         if not isinstance(logical_key, str) or unit.unit_type == "merge":
             return None
         return self._planned_ai_unit_id(logical_key)
+
+    def dependency_path_for_planned_unit(
+        self,
+        planned_ai_unit_id: str,
+    ) -> list[str]:
+        """只读返回 planned unit 的冻结 Lean dependency path。"""
+
+        if not isinstance(planned_ai_unit_id, str) or not planned_ai_unit_id:
+            raise ValueError("planned_ai_unit_id must be non-empty")
+        split_plan = self._require_split_plan()
+        for child_spec in split_plan.proposal.child_specs:
+            logical_key = str(child_spec["child_logical_key"])
+            if self._planned_ai_unit_id(logical_key) == planned_ai_unit_id:
+                return self._dependency_path(logical_key)
+        raise ValueError("Lean split plan is missing the planned unit")
 
     def evaluate_merge_readiness(
         self,

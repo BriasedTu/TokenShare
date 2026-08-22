@@ -45,6 +45,7 @@ from tokenshare.plugins.lean_proof.checker import (
 )
 from tokenshare.plugins.lean_proof.environment import LeanEnvironmentManifest
 from tokenshare.plugins.lean_proof.runtime_adapter import (
+    LeanCanonicalDependencyUnavailableError,
     LeanExecutionBridge,
     LeanRuntimeAdapter,
 )
@@ -61,14 +62,20 @@ from .provider import (
     recover_interrupted_call,
 )
 from .schema import (
+    AttemptResultV1,
     ProviderCallResultV1,
     ProviderEntryViewV1,
     ProviderRequestControlV1,
     RootInventoryV1,
-    RootResultV1,
+    RootResultV2,
     UnitTraceV1,
 )
-from .storage import RunStore, StorageConflictError, scan_resume
+from .storage import (
+    RunStore,
+    StorageConflictError,
+    coverage_tail_blocked,
+    scan_resume,
+)
 
 
 _REPO_ROOT = Path(__file__).parents[4]
@@ -272,7 +279,7 @@ def materialize_protocol_traces(
     submission_adapter: ProviderSubmissionAdapter,
     event_ledger: EventLedger,
     tail_requests: Mapping[str, Mapping[str, Any]] | None = None,
-    protocol_projection: RootResultV1 | None = None,
+    protocol_projection: RootResultV2 | None = None,
 ) -> tuple[UnitTraceV1, ...]:
     """终态后先冻结可重建 trace 的 protocol.json，再幂等物化 trace。"""
 
@@ -358,7 +365,9 @@ def run_coverage_tail(
         not isinstance(item, str) or not item for item in unscheduled
     ):
         raise ValueError("protocol result lacks typed unscheduled unit identities")
-    targets = sorted(set(unscheduled))
+    targets = list(unscheduled)
+    if len(targets) != len(set(targets)):
+        raise ValueError("protocol result has duplicate unscheduled identities")
     if not targets:
         return TailSummaryV1(None, None, 0, "not_needed", [], [], 0, 0, 0, 0, 0.0)
     traces: dict[str, UnitTraceV1] = {}
@@ -419,7 +428,7 @@ def run_coverage_tail(
         trace = submission_adapter.build_trace(unit_id, trace_origin="coverage_tail")
         store.write_trace(trace)
         traces[unit_id] = trace
-    recorded = sorted(traces)
+    recorded = [unit_id for unit_id in targets if unit_id in traces]
     success = sum(
         any(
             (attempt.verifier_result if trace.domain == "factorization" else attempt.checker_result)
@@ -430,6 +439,9 @@ def run_coverage_tail(
     )
     failure = len(recorded) - success
     tail_attempts = [attempt for trace in traces.values() for attempt in trace.attempts]
+    provider_attempts = [
+        attempt for attempt in tail_attempts if attempt.provider_call_made is True
+    ]
     if any(
         attempt.started_at_ms is None or attempt.ended_at_ms is None
         for attempt in tail_attempts
@@ -438,13 +450,15 @@ def run_coverage_tail(
     started = min(int(attempt.started_at_ms) for attempt in tail_attempts)
     terminal = max(int(attempt.ended_at_ms) for attempt in tail_attempts)
     tokens = (
-        sum(int(attempt.total_tokens) for attempt in tail_attempts)
-        if all(attempt.total_tokens is not None for attempt in tail_attempts)
+        sum(int(attempt.total_tokens) for attempt in provider_attempts)
+        if all(attempt.total_tokens is not None for attempt in provider_attempts)
         else None
     )
     cost = (
-        sum(float(attempt.cost_estimate_cny) for attempt in tail_attempts)
-        if all(attempt.cost_estimate_cny is not None for attempt in tail_attempts)
+        sum(float(attempt.cost_estimate_cny) for attempt in provider_attempts)
+        if all(
+            attempt.cost_estimate_cny is not None for attempt in provider_attempts
+        )
         else None
     )
     return TailSummaryV1(
@@ -456,7 +470,7 @@ def run_coverage_tail(
         recorded,
         success,
         failure,
-        len(tail_attempts),
+        len(provider_attempts),
         tokens,
         cost,
     )
@@ -822,7 +836,8 @@ def _tail_requests_from_assembly(
     assembly: RootAssembly,
     protocol_result: ProtocolRunResult,
     domain: str,
-) -> dict[str, ExecutionRequest]:
+    case_id: str,
+) -> tuple[dict[str, ExecutionRequest], dict[str, UnitTraceV1]]:
     observation = protocol_result.summary.get("runtime_observation")
     unscheduled = (
         observation.get("unscheduled_ai_unit_ids")
@@ -831,13 +846,14 @@ def _tail_requests_from_assembly(
     )
     if not isinstance(unscheduled, (list, tuple)):
         raise ValueError("protocol result lacks unscheduled identities")
-    targets = {
-        item for item in unscheduled if isinstance(item, str) and item
-    }
-    if len(targets) != len(unscheduled):
+    targets = list(unscheduled)
+    if any(not isinstance(item, str) or not item for item in targets):
         raise ValueError("protocol result has invalid unscheduled identities")
+    if len(targets) != len(set(targets)):
+        raise ValueError("protocol result has duplicate unscheduled identities")
     if not targets:
-        return {}
+        return {}, {}
+    target_set = set(targets)
     snapshots: dict[str, Mapping[str, Any]] = {}
     for event in assembly.event_ledger.read_all():
         if event.event_type != EventType.TASK_UNIT_CREATED:
@@ -846,12 +862,13 @@ def _tail_requests_from_assembly(
         if not isinstance(snapshot, Mapping):
             continue
         planned = _planned_from_unit_snapshot(snapshot, domain=domain)
-        if planned in targets:
+        if planned in target_set:
             if planned in snapshots:
                 raise ValueError("duplicate task unit for coverage-tail target")
             snapshots[planned] = snapshot
     requests: dict[str, ExecutionRequest] = {}
-    for planned in sorted(targets):
+    pre_dispatch_traces: dict[str, UnitTraceV1] = {}
+    for planned in targets:
         snapshot = snapshots.get(planned)
         if snapshot is None:
             raise ValueError(f"coverage-tail target lacks a TaskUnit: {planned}")
@@ -878,10 +895,15 @@ def _tail_requests_from_assembly(
                 attempt=attempt,
                 lease=lease,
             )
-        except RuntimeError as exc:
-            raise RuntimeError(
-                f"coverage-tail request cannot be built for {planned}: {exc}"
-            ) from exc
+        except LeanCanonicalDependencyUnavailableError:
+            pre_dispatch_traces[planned] = _lean_pre_dispatch_failure_trace(
+                assembly=assembly,
+                case_id=case_id,
+                planned=planned,
+                unit=unit,
+                identity=identity,
+            )
+            continue
         if not isinstance(request, ExecutionRequest):
             raise TypeError("plugin runtime must build an ExecutionRequest")
         hints = dict(request.soft_hints or {})
@@ -893,7 +915,78 @@ def _tail_requests_from_assembly(
             attempt_ordinal=0,
             soft_hints=hints,
         )
-    return requests
+    return requests, pre_dispatch_traces
+
+
+def _lean_pre_dispatch_failure_trace(
+    *,
+    assembly: RootAssembly,
+    case_id: str,
+    planned: str,
+    unit: TaskUnit,
+    identity: str,
+) -> UnitTraceV1:
+    adapter = assembly.submission_adapter
+    if not isinstance(adapter, ProviderSubmissionAdapter):
+        raise TypeError("Lean coverage-tail pre-dispatch trace requires provider adapter")
+    if not isinstance(assembly.plugin_runtime, LeanRuntimeAdapter):
+        raise TypeError("Lean runtime cannot expose canonical dependency semantics")
+    dependency_path = assembly.plugin_runtime.dependency_path_for_planned_unit(
+        planned
+    )
+    if not isinstance(dependency_path, list) or any(
+        not isinstance(item, str) or not item for item in dependency_path
+    ):
+        raise TypeError("Lean runtime returned invalid dependency semantics")
+    timestamp = _clock_ms()
+    present_nullable = {
+        "trace_origin",
+        "started_at_ms",
+        "ended_at_ms",
+        "parse_result",
+        "checker_result",
+    }
+    attempt = AttemptResultV1(
+        attempt_id=f"slim_tail_pre_dispatch:{identity}:0",
+        unit_id=unit.unit_id,
+        planned_ai_unit_id=planned,
+        attempt_ordinal=0,
+        trace_origin="coverage_tail",
+        started_at_ms=timestamp,
+        ended_at_ms=timestamp,
+        result_kind="pre_dispatch_failure",
+        provider_call_made=False,
+        raw_response_present=False,
+        parse_result="not_reached",
+        checker_result="not_reached",
+        canonical_accepted=False,
+        usage_status="not_available",
+        call_state="not_started",
+        missing_reason={
+            f"attempts[].{path}": "coverage_tail_pre_dispatch_failure"
+            for path in AttemptResultV1.nullable_leaf_paths()
+            if path not in present_nullable
+        },
+    )
+    attempt.validate(experiment_id="exp1")
+    entry = adapter.entry
+    trace = UnitTraceV1(
+        case_id=case_id,
+        source_repeat_id=0,
+        planned_ai_unit_id=planned,
+        domain="lean",
+        trace_origin="coverage_tail",
+        lemma_node_id=planned,
+        dependency_path=list(dependency_path),
+        provider_family=entry.provider_family,
+        provider_entry_id=entry.entry_id,
+        configured_model=entry.configured_model,
+        requested_model=entry.configured_model,
+        resolved_model=entry.configured_model,
+        attempts=[attempt],
+    )
+    trace.validate()
+    return trace
 
 
 def _execution_request_from_document(
@@ -1038,16 +1131,55 @@ def _evaluate_tail_submission(
     }
 
 
-def _with_tail(result: RootResultV1, tail: TailSummaryV1) -> RootResultV1:
+def _with_persisted_tail_attempts(
+    *,
+    result: RootResultV2,
+    tail: TailSummaryV1,
+    store: RunStore,
+    case_id: str,
+) -> RootResultV2:
+    """按冻结顺序把持久化 coverage-tail attempts 接到 protocol 投影之后。"""
+
+    targets = tail.trace_tail_target_ai_unit_ids
+    if tail.trace_tail_recorded_ai_unit_ids != targets:
+        raise ValueError("coverage-tail recorded identities differ from target order")
+    if any(attempt.trace_origin != "protocol" for attempt in result.attempts):
+        raise ValueError("Exp1 protocol projection contains a non-protocol attempt")
+    protocol_units = {
+        attempt.planned_ai_unit_id
+        for attempt in result.attempts
+        if attempt.planned_ai_unit_id is not None
+    }
+    if protocol_units.intersection(targets):
+        raise ValueError("coverage-tail target already appears in protocol attempts")
+
+    attempts = list(result.attempts)
+    for target in targets:
+        trace = store.read_trace(case_id, 0, target)
+        if (
+            trace.case_id != case_id
+            or trace.planned_ai_unit_id != target
+            or trace.trace_origin != "coverage_tail"
+        ):
+            raise ValueError(
+                f"persisted trace for coverage-tail target {target} has wrong identity"
+            )
+        trace.validate()
+        if any(attempt.planned_ai_unit_id != target for attempt in trace.attempts):
+            raise ValueError(
+                f"persisted trace attempts for coverage-tail target {target} have wrong identity"
+            )
+        attempts.extend(sorted(trace.attempts, key=lambda item: item.attempt_ordinal))
+
     values = {
         name: getattr(tail, name) for name in TailSummaryV1.__dataclass_fields__
     }
-    projected = replace(result, **values)
+    projected = replace(result, attempts=attempts, **values)
     projected.validate()
     return projected
 
 
-def execute_root_context(context: Any) -> RootResultV1:
+def execute_root_context(context: Any) -> RootResultV2:
     """CLI 生产 seam：唯一装配并运行一个 root，再冻结可恢复投影。"""
 
     assembly = _build_root_assembly(context)
@@ -1056,6 +1188,7 @@ def execute_root_context(context: Any) -> RootResultV1:
     experiment_id = str(inventory.experiment_id)
     scenario = assembly.scenario
     tail_summary: TailSummaryV1 | None = None
+    protocol_projection: RootResultV2 | None = None
     from .projector import project_root_result
 
     if isinstance(assembly.submission_adapter, ProviderSubmissionAdapter):
@@ -1075,28 +1208,24 @@ def execute_root_context(context: Any) -> RootResultV1:
                 submission_adapter=adapter,
                 event_ledger=assembly.event_ledger,
             )
-            condition_failure = protocol_result.summary.get(
-                "slim_condition_failure"
-            )
-            runtime_failure = protocol_result.summary.get("slim_runtime_failure")
-            acquisition_failure = (
-                condition_failure is not None or runtime_failure is not None
-            )
+            acquisition_failure = coverage_tail_blocked(protocol_result.summary)
             observation = protocol_result.summary.get("runtime_observation")
             unscheduled = (
                 observation.get("unscheduled_ai_unit_ids", [])
                 if isinstance(observation, Mapping)
                 else []
             )
-            target_requests = (
+            tail_preparation = (
                 _tail_requests_from_assembly(
                     assembly=assembly,
                     protocol_result=protocol_result,
                     domain=str(inventory.domain),
+                    case_id=str(inventory.case_id),
                 )
                 if not acquisition_failure and unscheduled
-                else {}
+                else ({}, {})
             )
+            target_requests, pre_dispatch_traces = tail_preparation
             placeholder = (
                 _placeholder_tail(protocol_result)
                 if not acquisition_failure
@@ -1113,17 +1242,18 @@ def execute_root_context(context: Any) -> RootResultV1:
                 attempts=adapter.attempts,
                 tail_summary=placeholder,
             )
+            snapshot_traces = (*traces, *pre_dispatch_traces.values())
             context.run_store.write_root_protocol_snapshot(
                 *_root_key(context),
                 protocol_result=asdict(protocol_result),
-                traces=traces,
+                traces=snapshot_traces,
                 tail_requests={
                     name: request.to_dict()
                     for name, request in target_requests.items()
                 },
                 protocol_projection=protocol_projection,
             )
-            for trace in traces:
+            for trace in snapshot_traces:
                 context.run_store.write_trace(trace)
             if not acquisition_failure and unscheduled:
                 tail_summary = run_coverage_tail(
@@ -1153,18 +1283,32 @@ def execute_root_context(context: Any) -> RootResultV1:
         reasoning_mode = "thinking"
         attempts = list(getattr(adapter, "attempts", ()))
 
-    result = project_root_result(
-        inventory=inventory,
-        assembly=assembly,
-        protocol_result=protocol_result,
-        provider_family=provider_family,
-        requested_model=requested_model,
-        resolved_model=resolved_model,
-        reasoning_mode=reasoning_mode,
-        attempts=attempts,
-        tail_summary=tail_summary,
-        scenario=scenario,
-    )
+    if experiment_id == "exp1":
+        if protocol_projection is None:
+            raise RuntimeError("Exp1 execution lacks a typed protocol projection")
+        result = (
+            _with_persisted_tail_attempts(
+                result=protocol_projection,
+                tail=tail_summary,
+                store=context.run_store,
+                case_id=str(inventory.case_id),
+            )
+            if tail_summary is not None
+            else protocol_projection
+        )
+    else:
+        result = project_root_result(
+            inventory=inventory,
+            assembly=assembly,
+            protocol_result=protocol_result,
+            provider_family=provider_family,
+            requested_model=requested_model,
+            resolved_model=resolved_model,
+            reasoning_mode=reasoning_mode,
+            attempts=attempts,
+            tail_summary=tail_summary,
+            scenario=scenario,
+        )
     if experiment_id != "exp1":
         context.run_store.write_root_protocol_snapshot(
             *_root_key(context),
@@ -1179,7 +1323,7 @@ def execute_root_context(context: Any) -> RootResultV1:
 def resume_exp1_root_context(
     context: Any,
     protocol: Mapping[str, Any],
-) -> RootResultV1:
+) -> RootResultV2:
     """仅凭 typed ordinary facts 恢复 protocol→result 的最后提交窗口。"""
 
     key = _root_key(context)
@@ -1194,7 +1338,7 @@ def resume_exp1_root_context(
     if base is None:
         raise RuntimeError("protocol snapshot lacks a typed base projection")
     summary = snapshot.protocol_result.get("summary")
-    if isinstance(summary, Mapping) and "slim_condition_failure" in summary:
+    if isinstance(summary, Mapping) and coverage_tail_blocked(summary):
         base.validate()
         return base
     protocol_result = _protocol_result_from_document(snapshot.protocol_result)
@@ -1260,14 +1404,19 @@ def resume_exp1_root_context(
             clock_ms=_clock_ms,
             protocol_result=protocol_result,
         )
-        result = _with_tail(base, tail)
+        result = _with_persisted_tail_attempts(
+            result=base,
+            tail=tail,
+            store=context.run_store,
+            case_id=str(context.inventory.case_id),
+        )
     if (
         result.experiment_id,
         result.condition_id,
         result.case_id,
         result.repeat_id,
     ) != key:
-        raise ValueError("resumed RootResultV1 identity differs from CLI context")
+        raise ValueError("resumed RootResultV2 identity differs from CLI context")
     result.validate()
     return result
 
@@ -1275,7 +1424,7 @@ def resume_exp1_root_context(
 def resume_root_context(
     context: Any,
     protocol: Mapping[str, Any],
-) -> RootResultV1:
+) -> RootResultV2:
     """从普通 typed snapshot 恢复最后的 root-result 提交窗口。"""
 
     key = _root_key(context)
@@ -1293,13 +1442,14 @@ def resume_root_context(
         projection.case_id,
         projection.repeat_id,
     ) != key:
-        raise ValueError("resumed RootResultV1 identity differs from CLI context")
+        raise ValueError("resumed RootResultV2 identity differs from CLI context")
     projection.validate()
     return projection
 
 
 __all__ = [
-    "RootAssembly", "TailSummaryV1", "execute_root_context",
+    "RootAssembly", "TailSummaryV1", "coverage_tail_blocked",
+    "execute_root_context",
     "materialize_protocol_traces", "resume_exp1_root_context",
     "resume_root_context",
     "run_coverage_tail", "run_root_slice",

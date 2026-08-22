@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from tokenshare.storage.events import EventType
 from tokenshare.plugins.factorization.schemas import (
     ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
@@ -188,14 +190,17 @@ def test_factorization_range_requests_include_plugin_owned_prompt_packages(tmp_p
         assert request.prompt_package_ref is not None
         assert request.prompt_package_ref.artifact_type == "PromptPackage"
         assert request.prompt_package_ref.artifact_schema_id == "phase3.prompt_package"
-        prompt_body = result.store.read_bytes(request.prompt_package_ref).decode("utf-8")
-        assert "Target integer: 91" in prompt_body
-        assert (
-            f"Search divisor range: {execution.range_input.range_start} "
-            f"to {execution.range_input.range_end} inclusive"
-        ) in prompt_body
-        assert "Do not search outside the assigned range" in prompt_body
-        assert "Do not create child tasks" in prompt_body
+        prompt_package = json.loads(
+            result.store.read_bytes(request.prompt_package_ref).decode("utf-8")
+        )
+        assert prompt_package["fixture_profile"] == "factorization.bounded_range_prompt.v2"
+        prompt_text = prompt_package["prompt_text"]
+        assert "IMMUTABLE TASK AND RESPONSE SKELETON" in prompt_text
+        assert '"target_n": "91"' in prompt_text
+        assert f'"range_start": "{execution.range_input.range_start}"' in prompt_text
+        assert f'"range_end": "{execution.range_input.range_end}"' in prompt_text
+        assert "Do not search outside the assigned range" in prompt_text
+        assert "Do not create child tasks" in prompt_text
 
 
 def test_factorization_semiprime_flow_waits_for_all_required_ranges_before_merge(

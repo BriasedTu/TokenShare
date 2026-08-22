@@ -95,6 +95,25 @@ def test_lean_v2_candidate_id_is_stable_across_attempts_and_v1_is_unchanged() ->
     assert "Do not return a split plan" in first.prompt_text
 
 
+def test_lean_prompt_spells_out_the_frozen_schema_literal_and_exact_json_shape() -> None:
+    payload = _payload()
+    prompt = build_lean_proof_candidate_prompt_package(
+        request_id="request_schema_contract",
+        task_id="task_lean",
+        unit_id="unit_lean",
+        theorem_payload=payload,
+        created_at=CREATED_AT,
+        planned_ai_unit_id="planned_lemma_schema",
+    )
+
+    expected_candidate_id = prompt.input_summary["expected_proof_candidate_id"]
+    assert '"schema_version": "lean_proof.proof_candidate.v1"' in prompt.prompt_text
+    assert f'"proof_candidate_id": "{expected_candidate_id}"' in prompt.prompt_text
+    assert f'"theorem_payload_digest": "{payload.payload_digest}"' in prompt.prompt_text
+    assert f'"created_at": "{CREATED_AT}"' in prompt.prompt_text
+    assert "Do not shorten schema_version to v1 or 1.0" in prompt.prompt_text
+
+
 def test_lean_parse_policy_maps_valid_json_to_proof_candidate() -> None:
     payload = _payload()
     raw_output_ref_summary = {

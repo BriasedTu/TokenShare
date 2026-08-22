@@ -75,6 +75,7 @@ def test_lean_validator_maps_rejected_checker_report_to_invalid_output(tmp_path:
     assert validation.failure_summary == {
         "failure_kind": "invalid_output",
         "failed_layer": "plugin_domain_check",
+        "checker_status": "proof_rejected",
         "message": "Lean checker rejected proof artifact",
         "evidence_refs": [
             checker_report.stdout_ref.artifact_id,
@@ -83,6 +84,32 @@ def test_lean_validator_maps_rejected_checker_report_to_invalid_output(tmp_path:
             checker_report.report_ref.artifact_id,
         ],
     }
+
+
+def test_lean_validator_preserves_non_scientific_checker_failures_as_errors(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    expected = {
+        LeanCheckerStatus.ENVIRONMENT_ERROR: (
+            "environment_error",
+            "lean_environment_invalid",
+        ),
+        LeanCheckerStatus.TIMEOUT: ("timeout", "lean_checker_timeout"),
+        LeanCheckerStatus.HELPER_ERROR: ("helper_error", "lean_checker_helper_error"),
+    }
+
+    for checker_status, (projected_status, failure_kind) in expected.items():
+        validation = verify_lean_checker_report(
+            _checker_report(store, status=checker_status)
+        )
+        assert validation.accepted is False
+        assert validation.status == "error"
+        assert validation.layer_summary["status"] == "error"
+        assert validation.layer_summary["details"]["checker_status"] == projected_status
+        assert validation.failure_summary is not None
+        assert validation.failure_summary["checker_status"] == projected_status
+        assert validation.failure_summary["failure_kind"] == failure_kind
 
 
 def test_lean_validator_requires_environment_ref_and_checker_log_refs(tmp_path: Path) -> None:

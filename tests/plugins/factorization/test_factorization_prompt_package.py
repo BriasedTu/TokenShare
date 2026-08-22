@@ -45,7 +45,7 @@ def test_factorization_builds_plugin_owned_prompt_package_for_bounded_range() ->
     assert body["request_id"] == "request_1"
     assert body["task_id"] == "task_factorization"
     assert body["unit_id"] == "unit_2"
-    assert body["fixture_profile"] == "factorization.bounded_range_prompt.v1"
+    assert body["fixture_profile"] == "factorization.bounded_range_prompt.v2"
     assert body["seed"] is None
     assert body["created_at"] == CREATED_AT
 
@@ -93,10 +93,14 @@ def test_factorization_builds_plugin_owned_prompt_package_for_bounded_range() ->
     ]
 
     prompt_text = body["prompt_text"]
-    assert "Target integer: 221" in prompt_text
-    assert "Search divisor range: 5 to 10 inclusive" in prompt_text
-    assert "Candidate divisors to test: 5, 6, 7, 8, 9, 10" in prompt_text
-    assert "Do not copy the no_factor_in_range template" in prompt_text
+    assert "IMMUTABLE TASK AND RESPONSE SKELETON" in prompt_text
+    assert "bounded Fermat" in prompt_text
+    assert "may be skipped only when N % p != 0" in prompt_text
+    assert "Reload N, L, and U" in prompt_text
+    assert "Candidate divisors to test:" not in prompt_text
+    assert "For no_factor_in_range, return exactly this JSON shape" not in prompt_text
+    assert prompt_text.count('"target_n": "221"') == 1
+    assert len(prompt_text) < 2500
     assert '"schema_version": "factorization.range_result.v1"' in prompt_text
     assert '"target_n": "221"' in prompt_text
     assert '"range_start": "5"' in prompt_text
@@ -104,8 +108,7 @@ def test_factorization_builds_plugin_owned_prompt_package_for_bounded_range() ->
     assert '"coverage_id": "coverage_1"' in prompt_text
     assert '"child_index": 1' in prompt_text
     assert '"partition_params_digest": "sha256:params"' in prompt_text
-    assert '"checked_divisor_count": 6' in prompt_text
-    assert '"checked_divisor_count": "<' not in prompt_text
+    assert '"checked_divisor_count": "<unquoted JSON integer>"' in prompt_text
     assert '"executor_summary": {' in prompt_text
     assert "Return only one JSON object" in prompt_text
     assert "Do not search outside the assigned range" in prompt_text

@@ -398,21 +398,27 @@ def test_false_negative_verification_binds_recorded_submission_and_request_artif
         now=clock,
     )
 
-    with pytest.raises(RuntimeError, match="child unit failed after retry limit"):
-        coordinator.run_root(
-            ProtocolRunRequest(
-                run_id="factor_runtime_rejected",
-                root_input=_case(),
-                plugin_runtime=adapter,
-                worker_backend=SequentialWorkerBackend(
-                    executor=FactorizationExecutionBridge(
-                        plugin_runtime=adapter,
-                        range_executor=_RangeExecutor(store, force_no_factor=True),
-                    ),
-                    submitted_at=clock,
+    result = coordinator.run_root(
+        ProtocolRunRequest(
+            run_id="factor_runtime_rejected",
+            root_input=_case(),
+            plugin_runtime=adapter,
+            worker_backend=SequentialWorkerBackend(
+                executor=FactorizationExecutionBridge(
+                    plugin_runtime=adapter,
+                    range_executor=_RangeExecutor(store, force_no_factor=True),
                 ),
-            )
+                submitted_at=clock,
+            ),
         )
+    )
+
+    assert result.status == "failed"
+    assert result.summary["terminal_failure"] == {
+        "failure_stage": "candidate_acquisition",
+        "failure_origin": "model_verification_exhausted",
+        "infrastructure_invalid": False,
+    }
 
     events = ledger.read_all()
     rejected = next(

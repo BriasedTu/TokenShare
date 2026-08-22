@@ -18,7 +18,7 @@ from .schema import (
     ProviderCallResultV1,
     RecoveryObservationV1,
     RootInventoryV1,
-    RootResultV1,
+    RootResultV2,
     UnitTraceV1,
     WorkerDeathObservationV1,
     WorkerExecutionFactV1,
@@ -67,7 +67,7 @@ class ProtocolSnapshotV1:
     protocol_result: Mapping[str, Any]
     traces: tuple[UnitTraceV1, ...]
     tail_requests: Mapping[str, Mapping[str, Any]]
-    protocol_projection: RootResultV1 | None
+    protocol_projection: RootResultV2 | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +110,88 @@ def _text(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be non-empty text")
     return value
+
+
+def coverage_tail_blocked(summary: Mapping[str, Any]) -> bool:
+    """仅设施/条件失败阻止 Exp1 coverage tail。"""
+
+    terminal_failure = summary.get("terminal_failure")
+    return (
+        summary.get("slim_condition_failure") is not None
+        or summary.get("slim_runtime_failure") is not None
+        or (
+            isinstance(terminal_failure, Mapping)
+            and terminal_failure.get("infrastructure_invalid") is True
+        )
+    )
+
+
+def _validate_protocol_snapshot_traces(
+    *,
+    experiment_id: str,
+    case_id: str,
+    protocol_result: Mapping[str, Any],
+    traces: Iterable[UnitTraceV1],
+    tail_request_keys: Iterable[str],
+    protocol_projection_present: bool,
+) -> None:
+    """校验 Exp1 snapshot 中 protocol 与已知 pre-dispatch tail 事实。"""
+
+    summary = protocol_result.get("summary")
+    observation = (
+        summary.get("runtime_observation")
+        if isinstance(summary, Mapping)
+        else None
+    )
+    unscheduled = (
+        observation.get("unscheduled_ai_unit_ids")
+        if isinstance(observation, Mapping)
+        else None
+    )
+    unscheduled_ids = set(unscheduled) if isinstance(unscheduled, list) else set()
+    request_keys = set(tail_request_keys)
+    if not request_keys.issubset(unscheduled_ids):
+        raise ValueError("protocol tail request is outside unscheduled identities")
+    seen: set[str] = set()
+    pre_dispatch_ids: set[str] = set()
+    for trace in traces:
+        if not isinstance(trace, UnitTraceV1):
+            raise TypeError("protocol snapshot traces must be UnitTraceV1")
+        trace.validate()
+        planned = trace.planned_ai_unit_id
+        if (
+            trace.case_id != case_id
+            or trace.source_repeat_id != 0
+            or planned in seen
+        ):
+            raise ValueError("protocol snapshot trace identity is invalid")
+        seen.add(str(planned))
+        if trace.trace_origin == "protocol":
+            continue
+        if (
+            trace.trace_origin != "coverage_tail"
+            or planned not in unscheduled_ids
+            or planned in request_keys
+            or any(
+                attempt.result_kind != "pre_dispatch_failure"
+                or attempt.provider_call_made is not False
+                for attempt in trace.attempts
+            )
+        ):
+            raise ValueError("protocol snapshot coverage-tail trace is invalid")
+        pre_dispatch_ids.add(str(planned))
+    tail_material_prepared = (
+        protocol_projection_present or bool(request_keys) or bool(pre_dispatch_ids)
+    )
+    if (
+        experiment_id == "exp1"
+        and tail_material_prepared
+        and not coverage_tail_blocked(
+            summary if isinstance(summary, Mapping) else {}
+        )
+        and (request_keys | pre_dispatch_ids) != unscheduled_ids
+    ):
+        raise ValueError("protocol tail material does not close unscheduled identities")
 
 
 def _segment(value: str) -> str:
@@ -229,22 +311,22 @@ def _read_object(path: Path) -> dict[str, Any]:
     return value
 
 
-def _root_result_from_document(document: Mapping[str, Any]) -> RootResultV1:
+def _root_result_from_document(document: Mapping[str, Any]) -> RootResultV2:
     values = dict(document)
     if values.pop("schema_version", None) != ROOT_RESULT_SCHEMA_VERSION:
-        raise ValueError("invalid RootResultV1 ordinary schema_version")
+        raise ValueError("invalid RootResultV2 ordinary schema_version")
     for name, record_type in _ROOT_NESTED_TYPES.items():
         nested = values.get(name)
         if not isinstance(nested, list):
-            raise ValueError(f"RootResultV1 {name} must be an array")
+            raise ValueError(f"RootResultV2 {name} must be an array")
         values[name] = [
             record_type(**_exact_values(record_type, item))
             for item in nested
             if isinstance(item, Mapping)
         ]
         if len(values[name]) != len(nested):
-            raise ValueError(f"RootResultV1 {name} entries must be objects")
-    result = RootResultV1(**_exact_values(RootResultV1, values))
+            raise ValueError(f"RootResultV2 {name} entries must be objects")
+    result = RootResultV2(**_exact_values(RootResultV2, values))
     result.validate()
     return result
 
@@ -340,7 +422,7 @@ class RunStore:
             raise ValueError(f"unknown Slim V2 inventory: {name}")
         return self.run_dir / "inventory" / f"{name}.jsonl"
 
-    def write_root_result(self, result: RootResultV1) -> WriteDisposition:
+    def write_root_result(self, result: RootResultV2) -> WriteDisposition:
         result.validate()
         key = (result.experiment_id, result.condition_id, result.case_id, result.repeat_id)
         document = asdict(result)
@@ -349,11 +431,11 @@ class RunStore:
 
     def read_root_result(
         self, experiment_id: str, condition_id: str, case_id: str, repeat_id: int,
-    ) -> RootResultV1:
+    ) -> RootResultV2:
         key = (experiment_id, condition_id, case_id, repeat_id)
         result = _root_result_from_document(_read_object(self.root_result_path(*key)))
         if (result.experiment_id, result.condition_id, result.case_id, result.repeat_id) != key:
-            raise ValueError("RootResultV1 identity differs from its ordinary path")
+            raise ValueError("RootResultV2 identity differs from its ordinary path")
         return result
 
     def write_root_protocol(
@@ -386,9 +468,9 @@ class RunStore:
         protocol_result: Mapping[str, Any] | Any,
         traces: Iterable[UnitTraceV1],
         tail_requests: Mapping[str, Mapping[str, Any]] | None = None,
-        protocol_projection: RootResultV1 | None = None,
+        protocol_projection: RootResultV2 | None = None,
     ) -> WriteDisposition:
-        """冻结可重建 protocol-origin traces 的 typed 普通快照。"""
+        """冻结 protocol traces 与不可 dispatch 的 typed tail facts。"""
 
         key = (experiment_id, condition_id, case_id, repeat_id)
         trace_rows = tuple(traces)
@@ -396,22 +478,9 @@ class RunStore:
         if experiment_id != "exp1" and (trace_rows or requests):
             raise ValueError("non-Exp1 protocol snapshot cannot contain tail material")
         if experiment_id != "exp1" and not isinstance(
-            protocol_projection, RootResultV1
+            protocol_projection, RootResultV2
         ):
             raise TypeError("non-Exp1 protocol snapshot requires a typed projection")
-        planned: set[str] = set()
-        for trace in trace_rows:
-            if not isinstance(trace, UnitTraceV1):
-                raise TypeError("protocol snapshot traces must be UnitTraceV1")
-            trace.validate()
-            if (
-                trace.case_id != case_id
-                or trace.source_repeat_id != 0
-                or trace.trace_origin != "protocol"
-                or trace.planned_ai_unit_id in planned
-            ):
-                raise ValueError("protocol snapshot trace identity is invalid")
-            planned.add(trace.planned_ai_unit_id)
         protocol_body = _jsonable(protocol_result)
         if not isinstance(protocol_body, Mapping):
             raise TypeError("protocol_result must be an object")
@@ -422,6 +491,14 @@ class RunStore:
             for key, value in requests.items()
         ):
             raise ValueError("protocol tail requests must be keyed objects")
+        _validate_protocol_snapshot_traces(
+            experiment_id=experiment_id,
+            case_id=case_id,
+            protocol_result=protocol_body,
+            traces=trace_rows,
+            tail_request_keys=requests,
+            protocol_projection_present=protocol_projection is not None,
+        )
         projection_body = None
         if protocol_projection is not None:
             protocol_projection.validate()
@@ -482,16 +559,14 @@ class RunStore:
         if raw_projection is not None and not isinstance(raw_projection, Mapping):
             raise ValueError("protocol snapshot projection must be an object or null")
         traces = tuple(_trace_from_document(item) for item in raw_traces)
-        seen: set[str] = set()
-        for trace in traces:
-            if (
-                trace.case_id != case_id
-                or trace.source_repeat_id != 0
-                or trace.trace_origin != "protocol"
-                or trace.planned_ai_unit_id in seen
-            ):
-                raise ValueError("protocol snapshot trace identity is invalid")
-            seen.add(trace.planned_ai_unit_id)
+        _validate_protocol_snapshot_traces(
+            experiment_id=experiment_id,
+            case_id=case_id,
+            protocol_result=protocol_result,
+            traces=traces,
+            tail_request_keys=raw_requests,
+            protocol_projection_present=raw_projection is not None,
+        )
         projection = (
             _root_result_from_document(raw_projection)
             if isinstance(raw_projection, Mapping)
@@ -617,7 +692,7 @@ class RunStore:
         return _read_object(self.run_config_path())
 
     def write_exp3_reference_result(
-        self, result: RootResultV1,
+        self, result: RootResultV2,
     ) -> WriteDisposition:
         result.validate()
         if result.experiment_id != "exp3":
@@ -691,7 +766,7 @@ class RunStore:
         name: Literal["roots", "exp3_references"] = "roots",
         *,
         experiment_id: str | None = None,
-    ) -> Iterator[tuple[RootInventoryV1, RootResultV1 | None]]:
+    ) -> Iterator[tuple[RootInventoryV1, RootResultV2 | None]]:
         """流式 join 冻结 inventory 与同主键 committed result。
 
         缺少 committed result 时仍产出 inventory identity 和 ``None``；这使
@@ -723,7 +798,7 @@ class RunStore:
                 result.repeat_id,
             )
             if result_key != key:
-                raise ValueError("RootResultV1 identity differs from its ordinary path")
+                raise ValueError("RootResultV2 identity differs from its ordinary path")
             yield inventory, result
 
     def iter_exp4_challenge_rows(self) -> Iterator[Exp4ChallengeInventoryRowV1]:
@@ -797,5 +872,5 @@ def scan_resume(run_dir: str | Path) -> ResumeView:
 __all__ = [
     "ProtocolSnapshotV1", "ResumeView", "RunStore", "SelectedTraceAttemptV1",
     "StorageConflictError",
-    "scan_resume", "select_trace_attempt",
+    "coverage_tail_blocked", "scan_resume", "select_trace_attempt",
 ]

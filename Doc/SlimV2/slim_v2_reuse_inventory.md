@@ -89,7 +89,7 @@ Slim 调度循环 ---- online 条件 ----> Slim AI 调用封装 ----> 真实 pro
 | 直接复用 | `src/tokenshare/local_runtime/contracts.py:882` `NoOpRuntimeHooks` | 关闭可选 runtime hook 行为 | 无额外输入 | 所有 hook 都不干预 | Slim V2 默认 hooks；只有权威实验明确需要 fault/ablation 时才换成最小场景 hook |
 | 直接复用（黑盒） | `src/tokenshare/local_runtime/coordinator.py:674` `ProtocolRunCoordinator`；`:699` `run_root` | 驱动一次完整 root 生命周期 | `ProtocolRunRequest` | `ProtocolRunResult` | 只调用 `run_root`。不调用 formal runner，不把 coordinator 内部 ledger/artifact 校验复制到实验室 |
 | 直接复用 | `src/tokenshare/local_runtime/contracts.py:199` `ProtocolTaskPluginRuntime` | 规定 plan、execution request、verify、merge、readiness 的插件边界 | root/unit/attempt/submission | 系统生命周期动作 | 系统接线文档应以此协议为底层事实，不为 Slim 再造第二套插件接口 |
-| 轻量适配 | `src/tokenshare/local_runtime/contracts.py:1807` `ProtocolRunResult` | 暴露 root 状态与派生摘要 | coordinator 运行结果 | `status`、`summary` 等 | 只抽取指标权威文档要求的字段；忽略 `event_refs`、`artifact_refs`、`ledger_binding` |
+| 轻量适配 | `src/tokenshare/local_runtime/contracts.py:1807` `ProtocolRunResult` | 暴露 root 状态与派生摘要 | coordinator 运行结果 | `status`、`summary` 等 | 正常retry exhaustion由`summary.terminal_failure`结构化返回；Slim只投影顶层三分类和`failure_origin`，忽略`ledger_binding`等非指标字段 |
 | 直接复用（系统插件） | `src/tokenshare/plugins/factorization/runtime_adapter.py:102` `FactorizationRuntimeAdapter`；`:1239` `FactorizationExecutionBridge` | 把 factorization 题目接入系统协议生命周期 | factorization case、artifact store、range executor | plugin runtime 与 worker execution bridge | 它属于系统/任务插件层，不属于旧实验设施。通过接线文档给出的构造函数使用，不从 `factorization_paper_adapter.py` 间接调用 |
 | 直接复用（系统插件） | `src/tokenshare/plugins/lean_proof/runtime_adapter.py:127` `LeanRuntimeAdapter`；`:1670` `LeanExecutionBridge` | 把 Lean 题目、拆分、检查与合并接入协议生命周期 | Lean case、固定 Lean 环境、proof executor | plugin runtime 与 worker execution bridge | 它属于系统/任务插件层。Lean checker 是实验语义的一部分，不是 paper publication gate |
 | 禁止复用 | `src/tokenshare/experiments/factorization_paper_adapter.py`（4200 行） | 同时承担 provider、trace、fault、worker death、evidence、metrics 等多种职责 | 大量 paper/formal 对象 | paper run result 与证据 | 不 import；需要的系统能力直接从 plugin runtime、coordinator 和小型场景组件接线 |
@@ -197,7 +197,7 @@ call_ai(entry, prompt, timeout_seconds, max_tokens, require_json_mode)
 |---|---|---|
 | 统一分母、失败、root timing | 指标权威第 1.2 节 | 固定预注册 root 分母；roots 串行；root start 在任何 AI unit 调度前，terminal 在 root 完成/失败后；缺失不是 0 |
 | 价格与 token | 指标权威第 1.4 节 | 固定 `slim_v2.pricing.2026-08-20`；DeepSeek 峰/谷、SiliconFlow 四模型平价表；reasoning 是 completion 子集，不重复计数 |
-| Experiment 1 | 指标权威第 2 节 | DeepSeek 真实调用；每个 root 的正常 `run_root()` 结束后立即对 unscheduled planned units 执行 Slim-local coverage tail。protocol 与 tail trace origin 分开，tail 资源单列且不延长 root runtime |
+| Experiment 1 | 指标权威第 2 节 | DeepSeek 真实调用；每个 root 的协议 `run_root()` 终态（包括有效`no_final`）后立即对 unscheduled planned units 执行 Slim-local coverage tail，只有统一设施blocker阻断。protocol 与 tail trace origin 分开，tail 资源单列且不延长 root runtime |
 | Experiment 2 | 指标权威第 3 节 | 取消独立 20-way split，完整继承 Exp1 plan；六个 worker 档用相同 source trace/latency 进逻辑调度器；repeat 离散口径以当前权威的 `(max-min)/mean` 为准 |
 | Experiment 3 | 指标权威第 4 节 | 五类 fault 只注入 ordinal 0；按稳定排序均匀选 target；固定 seed 的 token/latency 扰动；模拟资源不得称为真实 provider usage |
 | Experiment 4 | 指标权威第 5 节 | 11 modes、mode-blind challenge、pair/quadruple 与 interaction；五个正式 delta 名称无附加后缀 |
@@ -212,7 +212,7 @@ call_ai(entry, prompt, timeout_seconds, max_tokens, require_json_mode)
 | 字段族 | 必要字段 | 支持的指标 |
 |---|---|---|
 | 文本身份 | `experiment_id`、`condition_id`、`case_id`、`repeat_id`、domain、difficulty/topic、model、worker count、mode、fault type/rate | 分组、配对、恢复跳过 |
-| root 结果 | root status、是否产生最终结果、领域正确性判断、failure stage/kind | completion、端到端正确率、failure breakdown |
+| root 结果 | root status、是否产生最终结果、领域正确性判断、failure stage/kind/origin | completion、端到端正确率、设施无效cell、failure breakdown |
 | 时间 | `root_start_at_ms`、`root_terminal_at_ms`、`runtime_wall_clock_ms`；在线调用另存 `provider_request_started_at_utc` 与 `provider_latency_ms` | Exp1/5 真实时间、Exp2 speedup、Exp3/4 逻辑 delta、DeepSeek 峰/谷价格选择 |
 | usage/价格 | 每 attempt 的 prompt/cache-hit/cache-miss/completion/reasoning/total tokens、`pricing_version/pricing_tier/cost_estimate_cny`；reasoning 是 completion 子集；标记 `actual` 或 `simulated trace-attributed` | token/cost totals、paired multiplier/delta、discarded resources；禁止 reasoning 双算 |
 | unit/调度 | planned/executed/unscheduled unit count、observed peak concurrency、in-flight-at-witness、每 unit source latency | Exp2 解释性并发与自然早停 |

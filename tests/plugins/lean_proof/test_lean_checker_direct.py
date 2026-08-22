@@ -7,6 +7,7 @@ from tokenshare.plugins.lean_proof.checker import (
     LeanCheckerMode,
     LeanCheckerRequest,
     LeanCheckerStatus,
+    diagnostics_indicate_environment_failure,
     check_lean_proof,
 )
 from tokenshare.plugins.lean_proof.environment import (
@@ -19,6 +20,27 @@ from tokenshare.storage.artifacts import ArtifactStore
 
 
 CREATED_AT = "2026-06-29T00:00:00Z"
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "object file TokenShare/LemmaGraphOracle.olean does not exist",
+        "unknown module 'TokenShare.LemmaGraphOracle'",
+        "failed to load module TokenShare.LemmaGraphOracle",
+        "invalid import TokenShare.LemmaGraphOracle",
+        "Lean toolchain/project unavailable",
+    ],
+)
+def test_lean_checker_recognizes_environment_diagnostics(diagnostic: str) -> None:
+    assert diagnostics_indicate_environment_failure(diagnostic, "") is True
+
+
+def test_lean_checker_does_not_misclassify_an_invalid_proof_as_environment_failure() -> None:
+    assert diagnostics_indicate_environment_failure(
+        "TokenShareGeneratedCheck.lean:4:2: error: type mismatch",
+        "",
+    ) is False
 
 
 def test_lean_checker_accepts_valid_direct_proof_with_real_environment(tmp_path: Path) -> None:

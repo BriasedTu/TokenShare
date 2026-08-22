@@ -27,9 +27,10 @@ from .schema import (
     AblationObservationV1,
     ProviderEntryViewV1,
     RootInventoryV1,
-    RootResultV1,
+    RootResultV2,
     SlimRunConfigV1,
 )
+from .runtime import coverage_tail_blocked
 from .storage import RunStore, scan_resume
 
 
@@ -69,14 +70,15 @@ class _CliRootContext:
 class _CliServices:
     """CLI 只注入 root 装配、Exp1 tail 恢复与纯边界依赖。"""
 
-    execute_root: Callable[[_CliRootContext], RootResultV1]
-    resume_root: Callable[[_CliRootContext, Mapping[str, Any]], RootResultV1]
+    execute_root: Callable[[_CliRootContext], RootResultV2]
+    resume_root: Callable[[_CliRootContext, Mapping[str, Any]], RootResultV2]
     reduce_run: Callable[[str | Path], Any]
     provider_preflight: Callable[
         [Sequence[str], Sequence[RootInventoryV1]],
         Mapping[str, ProviderEntryViewV1],
     ]
     disk_free_bytes: Callable[[Path], int]
+    lean_environment_preflight: Callable[[Path], Mapping[str, Any]]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -104,6 +106,9 @@ def _parser() -> argparse.ArgumentParser:
     representative.add_argument("--run-id", required=True)
     representative.add_argument("--output-root")
     representative.add_argument("--resume", action="store_true")
+
+    lean_environment = commands.add_parser("lean-environment-test")
+    lean_environment.add_argument("--pass-path")
     return parser
 
 
@@ -167,7 +172,7 @@ def _plan_payload(plan: PlanV1, run_id: str) -> dict[str, Any]:
     }
 
 
-def _production_execute_root(context: _CliRootContext) -> RootResultV1:
+def _production_execute_root(context: _CliRootContext) -> RootResultV2:
     # Task 6B 在 runtime 中实现生产装配；延迟导入保持 plan/reduce 纯离线。
     from . import runtime
 
@@ -180,7 +185,7 @@ def _production_execute_root(context: _CliRootContext) -> RootResultV1:
 def _production_resume_root(
     context: _CliRootContext,
     protocol: Mapping[str, Any],
-) -> RootResultV1:
+) -> RootResultV2:
     from . import runtime
 
     resume = getattr(runtime, "resume_root_context", None)
@@ -198,6 +203,7 @@ def _disk_free_bytes(path: Path) -> int:
 
 def _default_services() -> _CliServices:
     from .reducer import reduce_run
+    from .lean_environment import validate_lean_environment_pass
 
     return _CliServices(
         execute_root=_production_execute_root,
@@ -205,6 +211,7 @@ def _default_services() -> _CliServices:
         reduce_run=reduce_run,
         provider_preflight=_preflight_provider_entries,
         disk_free_bytes=_disk_free_bytes,
+        lean_environment_preflight=lambda root: validate_lean_environment_pass(root),
     )
 
 
@@ -554,9 +561,32 @@ def _source_closure(
     source_run_dir: Path,
     cases: Mapping[str, Mapping[str, Any]],
 ) -> None:
-    """Exp2-4 只能消费显式 source 的 typed Exp1 traces。"""
+    """Exp2-4 只能消费显式 source 的 committed Exp1 V2 结果与 traces。"""
 
     source = RunStore(source_run_dir)
+    referenced_case_ids = tuple(dict.fromkeys(str(root.case_id) for root in roots))
+    try:
+        source_roots_by_case: dict[str, RootInventoryV1] = {}
+        for source_root in source.iter_root_inventory_rows("roots"):
+            if source_root.experiment_id != "exp1" or source_root.repeat_id != 0:
+                continue
+            case_id = str(source_root.case_id)
+            if case_id in source_roots_by_case:
+                raise ValueError(f"duplicate source Exp1 root inventory for {case_id}")
+            source_roots_by_case[case_id] = source_root
+        for case_id in referenced_case_ids:
+            source_root = source_roots_by_case.get(case_id)
+            if source_root is None:
+                raise ValueError(f"missing source Exp1 root inventory for {case_id}")
+            source.read_root_result(
+                "exp1",
+                str(source_root.condition_id),
+                case_id,
+                0,
+            )
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("source Exp1 root result is missing or invalid") from exc
+
     for root in roots:
         for planned in root.planned_ai_unit_ids:
             try:
@@ -655,7 +685,7 @@ def _protocol_tail_pending(store: RunStore, root: RootInventoryV1) -> bool:
     summary = snapshot.protocol_result.get("summary")
     if not isinstance(summary, Mapping):
         raise ValueError("protocol snapshot lacks typed summary")
-    if "slim_condition_failure" in summary:
+    if coverage_tail_blocked(summary):
         return False
     observation = summary.get("runtime_observation")
     if not isinstance(observation, Mapping):
@@ -680,7 +710,7 @@ def _protocol_tail_requires_provider(store: RunStore, root: RootInventoryV1) -> 
 
     snapshot = store.read_root_protocol_snapshot(*_root_key(root))
     summary = snapshot.protocol_result.get("summary")
-    if not isinstance(summary, Mapping) or "slim_condition_failure" in summary:
+    if not isinstance(summary, Mapping) or coverage_tail_blocked(summary):
         return False
     observation = summary.get("runtime_observation")
     targets = (
@@ -690,10 +720,17 @@ def _protocol_tail_requires_provider(store: RunStore, root: RootInventoryV1) -> 
     )
     if not isinstance(targets, list):
         return True
+    snapshot_tail_ids = {
+        trace.planned_ai_unit_id
+        for trace in snapshot.traces
+        if trace.trace_origin == "coverage_tail"
+    }
     for target in targets:
         if not isinstance(target, str) or not target:
             return True
         if store.trace_path(str(root.case_id), 0, target).is_file():
+            continue
+        if target in snapshot_tail_ids:
             continue
         request = snapshot.tail_requests.get(target)
         hints = request.get("soft_hints") if isinstance(request, Mapping) else None
@@ -733,7 +770,10 @@ def _journal_resume_entry(root: RootInventoryV1) -> ProviderEntryViewV1:
 def _invalid_root_result(
     root: RootInventoryV1,
     challenge: ChallengePlanV1 | None,
-) -> RootResultV1:
+    *,
+    failure_kind: str = "infrastructure_invalid",
+    failure_origin: str = "root_unavailable_before_protocol",
+) -> RootResultV2:
     """把死亡 root 固化为固定分母中的 early infra-invalid。"""
 
     exp1 = root.experiment_id == "exp1"
@@ -741,8 +781,8 @@ def _invalid_root_result(
     exp3 = root.experiment_id == "exp3"
     exp4 = root.experiment_id == "exp4"
     reasons = {
-        path: "infrastructure_invalid_before_protocol"
-        for path in RootResultV1.nullable_leaf_paths()
+        path: f"{failure_kind}_before_protocol"
+        for path in RootResultV2.nullable_leaf_paths()
     }
     reasons.update(
         {
@@ -756,7 +796,7 @@ def _invalid_root_result(
         AblationObservationV1(disabled_mechanism=name)
         for name in root.disabled_mechanisms
     ]
-    result = RootResultV1(
+    result = RootResultV2(
         experiment_id=root.experiment_id,
         condition_id=root.condition_id,
         case_id=root.case_id,
@@ -806,7 +846,8 @@ def _invalid_root_result(
         final_result_present=False,
         verified_correct=False,
         failure_stage="preflight",
-        failure_kind="infrastructure_invalid",
+        failure_kind=failure_kind,
+        failure_origin=failure_origin,
         planned_ai_unit_ids=list(root.planned_ai_unit_ids),
         dispatched_ai_unit_ids=[],
         completed_ai_unit_ids=[],
@@ -832,17 +873,17 @@ def _invalid_root_result(
 
 
 def _validate_result_identity(
-    result: RootResultV1,
+    result: RootResultV2,
     context: _CliRootContext,
 ) -> None:
-    if not isinstance(result, RootResultV1):
-        raise TypeError("root service must return RootResultV1")
+    if not isinstance(result, RootResultV2):
+        raise TypeError("root service must return RootResultV2")
     result.validate()
     if _root_key(result) != _root_key(context.inventory):
         raise RuntimeError("root result identity differs from dispatched inventory")
 
 
-def _commit_result(context: _CliRootContext, result: RootResultV1) -> None:
+def _commit_result(context: _CliRootContext, result: RootResultV2) -> None:
     _validate_result_identity(result, context)
     if not context.is_reference:
         context.run_store.write_root_result(result)
@@ -1074,6 +1115,23 @@ def _run_experiment_locked(
                 if not dead:
                     pending_roots.append(root)
 
+    lean_environment_invalid_keys: set[tuple[str, str, str, int]] = set()
+    pending_lean_roots = [root for root in pending_roots if root.domain == "lean"]
+    if pending_lean_roots:
+        from .lean_environment import LeanEnvironmentInvalid
+
+        try:
+            services.lean_environment_preflight(_REPO_ROOT)
+        except LeanEnvironmentInvalid:
+            lean_environment_invalid_keys = {
+                _root_key(root) for root in pending_lean_roots
+            }
+            pending_provider_roots = [
+                root
+                for root in pending_provider_roots
+                if _root_key(root) not in lean_environment_invalid_keys
+            ]
+
     if pending_write_roots:
         required_margin = _required_root_write_bytes(
             pending_write_roots[0], profile_id
@@ -1102,7 +1160,7 @@ def _run_experiment_locked(
     if not resume:
         _write_fresh_run_files(store, config, inventory)
 
-    blocked_conditions: set[str] = set()
+    blocked_condition_origins: dict[str, str] = {}
     pending_keys = {_root_key(root) for root in pending_roots}
     for experiment_id in experiment_ids:
         selected = selected_by_experiment[experiment_id]
@@ -1122,12 +1180,14 @@ def _run_experiment_locked(
                 raise RuntimeError(f"{experiment_id} requires an explicit source run dir")
             roots_by_condition: dict[str, list[RootInventoryV1]] = {}
             for root in fixed_roots:
+                if _root_key(root) in lean_environment_invalid_keys:
+                    continue
                 roots_by_condition.setdefault(str(root.condition_id), []).append(root)
             for condition_id, condition_roots in roots_by_condition.items():
                 try:
                     _source_closure(condition_roots, current_source, cases)
                 except RuntimeError:
-                    blocked_conditions.add(condition_id)
+                    blocked_condition_origins[condition_id] = "source_closure_invalid"
 
         for root, is_reference in selected:
             key = _root_key(root)
@@ -1166,22 +1226,39 @@ def _run_experiment_locked(
                 protocol_execution_attempt_upper=protocol_cap,
                 provider_call_upper=provider_cap,
             )
-            if str(root.condition_id) in blocked_conditions:
-                result = _invalid_root_result(root, challenge)
+            if key in lean_environment_invalid_keys:
+                result = _invalid_root_result(
+                    root,
+                    challenge,
+                    failure_kind="infrastructure_invalid",
+                    failure_origin="lean_environment_invalid",
+                )
+            elif str(root.condition_id) in blocked_condition_origins:
+                result = _invalid_root_result(
+                    root,
+                    challenge,
+                    failure_origin=blocked_condition_origins[str(root.condition_id)],
+                )
             elif resume_view is not None and key in resume_view.protocol_root_keys:
                 protocol = store.read_root_protocol(*key)
                 result = services.resume_root(context, protocol)
             elif resume and _started_without_protocol(store, root):
-                result = _invalid_root_result(root, challenge)
+                result = _invalid_root_result(
+                    root,
+                    challenge,
+                    failure_origin="resume_state_invalid",
+                )
             else:
                 result = services.execute_root(context)
             _commit_result(context, result)
-            if result.failure_kind in {
+            if result.failure_origin in {
                 "provider_configuration_invalid",
                 "provider_journal_conflict",
                 "provider_model_mismatch",
             }:
-                blocked_conditions.add(str(root.condition_id))
+                blocked_condition_origins[str(root.condition_id)] = str(
+                    result.failure_origin
+                )
 
     if reduce_after:
         services.reduce_run(run_dir)
@@ -1195,6 +1272,15 @@ def main(
 ) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == "lean-environment-test":
+        from .lean_environment import run_lean_environment_test
+
+        result = run_lean_environment_test(
+            repository_root=_REPO_ROOT,
+            pass_path=args.pass_path,
+        )
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
     if args.command == "plan":
         plan = build_plan(
             args.profile,

@@ -30,52 +30,73 @@ def verify_lean_checker_report(report: LeanCheckerReport) -> LeanValidationResul
             "lean_checker_rejected",
             "Lean checker rejected proof artifact",
             evidence_refs=_evidence_ref_ids(report),
+            checker_status="proof_rejected",
         )
     if report.status == LeanCheckerStatus.TIMEOUT:
-        return _rejected(
+        return _error(
             "lean_checker_timeout",
             "Lean checker timed out",
             evidence_refs=_evidence_ref_ids(report),
-            failure_kind="executor_timeout",
+            checker_status="timeout",
+            failure_kind="lean_checker_timeout",
         )
-    return _rejected(
+    if report.status == LeanCheckerStatus.HELPER_ERROR:
+        return _error(
+            "lean_checker_helper_error",
+            "Lean checker helper failed",
+            evidence_refs=_evidence_ref_ids(report),
+            checker_status="helper_error",
+            failure_kind="lean_checker_helper_error",
+        )
+    return _error(
         "lean_checker_environment_error",
-        "Lean checker environment or helper failed",
+        "Lean checker environment failed",
         evidence_refs=_evidence_ref_ids(report),
-        failure_kind="executor_error",
+        checker_status="environment_error",
+        failure_kind="lean_environment_invalid",
     )
 
 
 def _evidence_error(report: LeanCheckerReport) -> LeanValidationResult | None:
     if report.environment_ref is None:
-        return _rejected(
+        return _error(
             "missing_environment_ref",
             "Lean checker report is missing EnvironmentRef",
             evidence_refs=_evidence_ref_ids(report),
+            checker_status="helper_error",
+            failure_kind="lean_checker_helper_error",
         )
     if report.stdout_ref is None or report.stderr_ref is None or report.report_ref is None:
-        return _rejected(
+        return _error(
             "missing_checker_logs",
             "Lean checker report is missing stdout, stderr, or report artifact",
             evidence_refs=_evidence_ref_ids(report),
+            checker_status="helper_error",
+            failure_kind="lean_checker_helper_error",
         )
     if report.generated_source_ref is None:
-        return _rejected(
+        return _error(
             "missing_generated_source",
             "Lean checker report is missing generated Lean source artifact",
             evidence_refs=_evidence_ref_ids(report),
+            checker_status="helper_error",
+            failure_kind="lean_checker_helper_error",
         )
     if report.status == LeanCheckerStatus.ACCEPTED and report.proof_artifact_ref is None:
-        return _rejected(
+        return _error(
             "missing_proof_artifact",
             "Accepted Lean checker report is missing proof artifact",
             evidence_refs=_evidence_ref_ids(report),
+            checker_status="helper_error",
+            failure_kind="lean_checker_helper_error",
         )
     if report.status == LeanCheckerStatus.ACCEPTED and report.proof_digest is None:
-        return _rejected(
+        return _error(
             "missing_proof_digest",
             "Accepted Lean checker report is missing proof digest",
             evidence_refs=_evidence_ref_ids(report),
+            checker_status="helper_error",
+            failure_kind="lean_checker_helper_error",
         )
     return None
 
@@ -107,12 +128,13 @@ def _rejected(
     *,
     evidence_refs: list[str],
     failure_kind: str = "invalid_output",
+    checker_status: str = "proof_rejected",
 ) -> LeanValidationResult:
     layer = _layer(
         "rejected",
         reason_code,
         summary,
-        details={},
+        details={"checker_status": checker_status},
         evidence_refs=evidence_refs,
     )
     return LeanValidationResult(
@@ -122,6 +144,36 @@ def _rejected(
         failure_summary={
             "failure_kind": failure_kind,
             "failed_layer": "plugin_domain_check",
+            "checker_status": checker_status,
+            "message": summary,
+            "evidence_refs": evidence_refs,
+        },
+    )
+
+
+def _error(
+    reason_code: str,
+    summary: str,
+    *,
+    evidence_refs: list[str],
+    checker_status: str,
+    failure_kind: str,
+) -> LeanValidationResult:
+    layer = _layer(
+        "error",
+        reason_code,
+        summary,
+        details={"checker_status": checker_status},
+        evidence_refs=evidence_refs,
+    )
+    return LeanValidationResult(
+        accepted=False,
+        status="error",
+        layer_summary=layer,
+        failure_summary={
+            "failure_kind": failure_kind,
+            "failed_layer": "plugin_domain_check",
+            "checker_status": checker_status,
             "message": summary,
             "evidence_refs": evidence_refs,
         },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -257,6 +258,12 @@ def _project_protocol_run_from_verified_snapshot(
     }
     if runtime_observation is not None:
         summary["runtime_observation"] = dict(runtime_observation)
+    if status == "failed":
+        summary["terminal_failure"] = _candidate_terminal_failure(
+            events=events,
+            artifact_store=artifact_store,
+            runtime_observation=runtime_observation,
+        )
     ledger_binding = ProtocolRunLedgerBinding.from_verified_snapshot(
         run_id=run_id,
         task_id=task_id,
@@ -286,6 +293,106 @@ def _project_protocol_run_from_verified_snapshot(
         summary=summary,
         ledger_binding=ledger_binding,
     )
+
+
+def _candidate_terminal_failure(
+    *,
+    events,
+    artifact_store: ArtifactStore,
+    runtime_observation: Mapping[str, object] | None = None,
+) -> JsonObject:
+    """从共享 submission/verification/recovery 事实归纳候选取得失败来源。"""
+
+    origins: set[str] = set()
+    unexpected_runtime_error = False
+    worker_terminated_attempt_ids = {
+        str(fact["attempt_id"])
+        for fact in (
+            runtime_observation.get("worker_execution_facts", ())
+            if isinstance(runtime_observation, Mapping)
+            else ()
+        )
+        if isinstance(fact, Mapping)
+        and fact.get("result_kind") == "worker_terminated"
+        and isinstance(fact.get("attempt_id"), str)
+    }
+    submissions: dict[str, JsonObject] = {}
+    for event in events:
+        if event.event_type != EventType.EXECUTION_SUBMISSION_RECORDED:
+            continue
+        attempt_id = event.payload.get("attempt_id")
+        ref_body = event.payload.get("submission_ref")
+        if not isinstance(attempt_id, str) or not isinstance(ref_body, Mapping):
+            continue
+        ref = ArtifactRef.from_dict(dict(ref_body))
+        document = json.loads(artifact_store.read_bytes(ref).decode("utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError("execution submission artifact must be an object")
+        submissions[attempt_id] = document
+
+    for event in events:
+        if event.event_type == EventType.VERIFICATION_RECORDED:
+            if event.payload.get("status") == "rejected":
+                origins.add("model_verification_exhausted")
+            continue
+        if event.event_type != EventType.RECOVERY_ACTION_RECORDED:
+            continue
+        recovery = event.payload.get("recovery_action")
+        if not isinstance(recovery, Mapping):
+            continue
+        trigger = recovery.get("trigger")
+        attempt_id = recovery.get("attempt_id")
+        if trigger == "parser_failure":
+            origins.add("model_parse_exhausted")
+        elif trigger == "verification_rejected":
+            origins.add("model_verification_exhausted")
+        elif trigger == "executor_error":
+            submission = submissions.get(attempt_id) if isinstance(attempt_id, str) else None
+            error = submission.get("error") if isinstance(submission, Mapping) else None
+            if submission is None:
+                unexpected_runtime_error = True
+            elif (
+                isinstance(submission, Mapping)
+                and (
+                    submission.get("parse_failure_ref") is not None
+                    or (
+                        isinstance(error, Mapping)
+                        and error.get("kind") == "parse_rejected"
+                    )
+                )
+            ):
+                origins.add("model_parse_exhausted")
+            else:
+                origins.add("provider_transport_exhausted")
+        elif trigger == "lease_expired":
+            origins.add(
+                "worker_death_exhausted"
+                if isinstance(attempt_id, str)
+                and attempt_id in worker_terminated_attempt_ids
+                else "provider_transport_exhausted"
+            )
+
+    if unexpected_runtime_error or not origins:
+        return {
+            "failure_stage": "candidate_acquisition",
+            "failure_origin": "unexpected_runtime_error",
+            "infrastructure_invalid": True,
+        }
+
+    failure_origin = (
+        next(iter(origins))
+        if len(origins) == 1
+        else "mixed_candidate_acquisition_failure"
+    )
+    return {
+        "failure_stage": (
+            "child_execution"
+            if origins == {"worker_death_exhausted"}
+            else "candidate_acquisition"
+        ),
+        "failure_origin": failure_origin,
+        "infrastructure_invalid": False,
+    }
 
 
 def _unique_strings(values: Sequence[str], field_name: str) -> tuple[str, ...]:

@@ -4,7 +4,7 @@ document: slim_v2_design_spec
 scope: Slim V2 minimal executable experiment facility
 owner: Stage 1 design specification owner
 created: 2026-08-21
-last_updated: 2026-08-21
+last_updated: 2026-08-22
 run_scope: representative_only
 ---
 
@@ -59,7 +59,7 @@ Slim V2 只交付以下能力：
 
 - roots 严格串行；Experiment 1、3、4、5 固定 `worker_count=10`，Experiment 2 固定 `{1,3,7,10,30,50}`；
 - Experiment 1 每 root 是 `run_root()` 正常协议阶段后紧接 coverage tail，tail 完成前不能开始下一 root；
-- `root_terminal_at_ms` 在正常协议 terminal 冻结，tail 不延长正文 runtime，tail wall/token/cost 单列；
+- `root_terminal_at_ms` 在协议 terminal（包括有效`no_final`）冻结，tail 不延长正文 runtime，tail wall/token/cost 单列；
 - Experiment 2 完整继承 Experiment 1 的 split、unit、prompt 和依赖；
 - Experiment 2–4 只按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 取 trace；exact ordinal 缺失只回退同 trace 最后自然 attempt；
 - Experiment 2–4 `provider_call_made=false`，出现 transport attempt 即 condition 接线失败；
@@ -68,7 +68,7 @@ Slim V2 只交付以下能力：
 - Experiment 4 不运行三机制、四机制或`ALL_OFF`，也不新增fault/error rate；
 - Experiment 5 只使用四个冻结 SiliconFlow endpoint、零重试、真实 usage；
 - 成本固定为 `slim_v2.pricing.2026-08-20`；`reasoning_tokens` 是 `completion_tokens` 子集，不重复计价；
-- 单 root 失败、超时、未恢复、preflight block 或 infrastructure-invalid 均保留预注册身份和结果行；ratio 分母为 0、必需输入缺失或不适用时写 `null` 和原因，不写伪 0。
+- 单 root 失败、超时、未恢复、preflight block 或 infrastructure-invalid 均保留预注册身份和结果行；ratio 分母为 0 时写 `null + missing_reason=zero_denominator`，必需输入缺失或不适用时写 `null` 和对应原因，不写伪 0；数值写回必须清除同 metric 的模板旧原因。
 
 ## 2. 最小总体架构与模块树
 
@@ -85,7 +85,7 @@ src/tokenshare/experiments/slim_v2/
 ├── execution.py            # provider/fixed answer 到 ExecutionSubmission 的薄适配
 ├── scenarios.py            # Exp2 scheduler、Exp3 hooks/death、Exp4 policy/challenge
 ├── runtime.py              # 每 root 公共对象装配、唯一 run_root 调用、Exp1 tail
-├── projector.py            # event/store/plugin/hook 事实到 RootResultV1
+├── projector.py            # event/store/plugin/hook 事实到 RootResultV2
 ├── reducer.py              # 单 run 目录流式统计与 Exp1–5 表
 ├── cli.py                  # plan/run/run-all/reduce/representative 原子入口
 └── gui.py                  # Tkinter薄包装；窗口选择确定性映射为同一CLI argv
@@ -147,7 +147,7 @@ flowchart LR
 | `execution.py` / worker | `ExecutionRequest` + provider result或fixed trace | 公共 `ExecutionSubmission` | worker backend调用 | parser failure保留 raw；fixed path禁止 transport | 两领域成功/parse/provider/fixed失败 |
 | `storage.py` / 全部 | inventory/root/trace/call object | 普通原子文件、committed key集合和terminal-call facts | 每个持久化边界 | 冲突主键或写失败立即安全停 | root/trace/call键、crash窗口、resume/unknown |
 | `scenarios.py` / Exp2–4 | condition、plan、fixed source、seed、mechanism mode | scheduler/hooks/observations/reference projections | root adapter构造时 | 只执行冻结变换；mode不得进入challenge injector | 六worker、五fault、death、11 modes、四challenge |
-| `projector.py` / root | result、同一 ledger/store、plugin、hook、attempt journals | `RootResultV1`；临时内存仅当前 root | protocol/tail后 | 缺公共事实写null+reason；接线缺失分类 infrastructure-invalid | 与指标权威第8节叶字段集合、嵌套结构和必填/可空规则精确相等，另验领域正确性与failure taxonomy |
+| `projector.py` / root | result、同一 ledger/store、plugin、hook、attempt journals | `RootResultV2`；临时内存仅当前 root | protocol/tail后 | 缺公共事实写null+reason；接线缺失分类 infrastructure-invalid | 与指标权威第8节叶字段集合、嵌套结构和必填/可空规则精确相等，另验领域正确性与failure taxonomy |
 | `provider.py` 的纯价格投影 / projector | provider family/model、usage、request UTC | attempt cost、version、tier；随attempt/root记录 | 实际/模拟usage之后 | 必需cache split/time缺失则cost null，不阻止调用 | 峰谷边界、四endpoint、reasoning不双算 |
 | `reducer.py` / 离线 | 单个 run 目录 | `metrics/*.jsonl`、`*.csv`、`summary.json` | 单独命令或run-all末尾 | inventory-result缺口进入固定分母并标null/reason；绝不调用runtime/provider | 全指标、CI、pair/quadruple、流式内存边界 |
 | `gui.py` / 人工入口 | profile、Exp1–5/all、run ID、output、必要source、resume | 同一CLI argv和一个CLI子进程exit code；自身不持久化 | CLI之前 | 无效选择不启动；运行中不再启动第二进程 | 12种核心选择、Exp2–4 source、all→run-all、provider=0 |
@@ -177,6 +177,18 @@ flowchart LR
 - Factorization：case 保持完整 candidate domain；plugin 生成稳定 `range_<child_index>`、prompt 和 ranges；provider/fixed executor只执行 range unit；parser、`verify_range_result`、factor-witness/coverage merge 和独立 `target_n` 乘积检查决定结果。
 - Lean：case 保持固定 lemma DAG；AI 不决定拆分；proof unit携带 `planned_ai_unit_id/lemma_node_id/dependency_path`；每个 candidate 使用真实 checker；最终正确性必须同时满足 `merge_result.accepted` 与 root checker `ACCEPTED`。
 - `ProtocolRunResult.status=completed` 只表示协议终态，不替代领域正确性。
+
+#### 4.2.1 Factorization B prompt v2（2026-08-22用户批准）
+
+后续Slim V2 `representative`与`full`统一使用`factorization.bounded_range_prompt.v2`，不保留旧prompt的Slim运行入口。v2只修改`prompt_builder.py`生成的自然语言策略：用一个canonical JSON skeleton承载协议绑定值，删除候选整数枚举和found/no-factor双模板；加入不可变`N/L/U`、定量bounded Fermat路由、仅在`N % p != 0`时允许跳过`p`倍数的sound wheel规则、`no_factor_in_range`完备覆盖门，以及输出前从canonical输入重新加载目标并执行range/modulo/quotient/product/逐位比较。
+
+`RangeResult`的14个字段、`factorization.range_result.v1`、result kinds、parser、verifier、merge、trace schema和指标口径均不变。`checked_divisor_count`仍机械写为no-factor时`U-L+1`、found-factor时`d-L+1`，但prompt明确其为protocol coverage value而非自然语言运算步数。Experiment 2–4继续重建并核对同一当前plugin plan/prompt；旧representative的v1 traces只可作诊断，不得与v2 representative/full或其下游实验混用。四份前置权威不需要修改，因为实验矩阵、指标、provider、任务切分、输出schema和Exp1→Exp2–4继承关系均未改变。
+
+#### 4.2.2 跨域失败语义与 Lean 环境 pass（2026-08-22用户批准）
+
+Lean prompt必须给出完整proof-candidate JSON skeleton，并显式冻结`schema_version="lean_proof.proof_candidate.v1"`。Factorization与Lean共享结构化retry终态：parser、正常verifier/checker rejection、provider-only或混合耗尽均投影为顶层`no_final`，细因只写`failure_origin`；不得再由普通`RuntimeError`投影为设施失败。有效`no_final/incorrect_final`及其他非设施 terminal 仍执行 Exp1 coverage tail，只有 condition/runtime wiring failure 或 infrastructure-invalid terminal 阻断。Lean checker的`environment_error/timeout/helper_error`首次出现即停止root，顶层为`infrastructure_invalid`、`failure_origin=checker_environment_error`；预注册worker-death耗尽仍是有效`no_final`，保留`child_execution/worker_death_exhausted`。
+
+Lean环境验证是独立命令：覆盖全部checker-backed catalog nodes，全部accepted后才原子写持久pass。实验启动只校验pass、关键输入digest与`LemmaGraphCases.olean/LemmaGraphOracle.olean`哈希，不运行Lean/lake；pass缺失或失效时，只把全部pending Lean ordinary/reference roots在provider前写成`failure_stage=preflight`的infrastructure-invalid，Factorization继续且fixed-source closure排除这些Lean-invalid keys。Reducer保留固定预注册库存；任一cell含infrastructure-invalid时科学rate为null，任一配对端为infrastructure-invalid时pair不接纳。
 
 ### 4.3 projector读取边界
 
@@ -211,8 +223,8 @@ Projector忽略 `event_refs`、`artifact_refs` 的防伪含义和 `ledger_bindin
 2. condition在root loop前解析唯一entry `deepseek_v4_pro_exp1_baseline`；caller固定`deepseek-v4-pro`、thinking enabled、`reasoning_effort=high`、600秒、300000 max tokens。配置的provider全局上限为50，但root内只有10 workers，故实际有效in-flight上限为10。
 3. runner记录`root_start_at_ms`后运行一次`run_root()`；每自然协议attempt立即写call intent、response/result和raw response；provider caller每次只调用一次，协议`max_retries=2`决定最多三个自然attempts。
 4. coordinator terminal后立即冻结`root_terminal_at_ms`和`runtime_wall_clock_ms`，projector形成protocol结果和每个已执行unit的`trace_origin=protocol` trace。
-5. runner计算`tail_targets=unscheduled_ai_unit_ids - protocol_trace_ids`，按`planned_ai_unit_id`排序。Tail使用相同request、prompt、依赖、provider和控制；每unit从ordinal 0开始，首次accepted停止，最多三次；parser/checker只决定tail是否继续，不向已终止root提交。
-6. 所有target形成唯一trace后写tail summary和root result，随后才开始下一root。每个target由领域接受事实判定success：Factorization verifier accepted或Lean checker accepted；用尽三次或明确pre-dispatch/provider/parse/verifier/checker terminal failure且无领域接受事实算failure。coverage-tail attempt不创建协议canonical，其`canonical_accepted`固定为null/false并带`not_applicable`；`trace_tail_success_unit_count + trace_tail_failure_unit_count = |trace_tail_target_ai_unit_ids|`。
+5. runner计算`tail_targets=unscheduled_ai_unit_ids - protocol_trace_ids`，保持冻结runtime observation的原始顺序而不重新排序。Tail使用相同request、prompt、依赖、provider和控制；每unit从ordinal 0开始，首次accepted停止，最多三次；parser/checker只决定tail是否继续，不向已终止root提交。Lean依赖canonical不可用时不伪造依赖，而是写带真实`lemma_node_id/dependency_path`且`provider_call_made=false`的typed`pre_dispatch_failure`。
+6. 所有target形成唯一trace后写tail summary和root result，随后才开始下一root。每个target由领域接受事实判定success：Factorization verifier accepted或Lean checker accepted；用尽三次或明确pre-dispatch/provider/parse/verifier/checker terminal failure且无领域接受事实算failure。coverage-tail attempt不创建协议canonical，其`canonical_accepted`固定为null/false并带`not_applicable`；tail provider count/token/cost只累计真实`provider_call_made=true`的attempt；`trace_tail_success_unit_count + trace_tail_failure_unit_count = |trace_tail_target_ai_unit_ids|`。
 
 正常协议的completion/correctness/runtime/provider latency/token/cost不读取tail；tail资源只进入诊断字段。provider/parse/checker自然失败仍写trace/root；同键重复、tail target非法或tail写失败为接线错误并停止下一root。
 
@@ -423,11 +435,11 @@ TokenShareData/outputs/slim_v2/<run_id>/
 | Exp4 pair | `case_id × repeat_id × challenge_plan_id × mode` |
 | Exp4 quadruple | `case_id × repeat_id × challenge_plan_id × {FULL,NO_i,NO_j,NO_i__NO_j}` |
 
-路径段使用profile中已冻结的普通ID；不计算内容hash。每个root、trace和call terminal对象是一个原子JSON文件，避免JSONL尾部半行和跨文件提交协议。Inventory与最终metrics可用JSONL，因为它们可从profile和`roots/<experiment>/<root_key>/result.json`完整重建。`protocol.json`是`run_root`返回后的不可变普通投影，必须包含重建全部protocol-origin traces的普通attempt和领域语义快照；resume以它幂等物化缺失trace，它不是协议checkpoint或第二个root状态。
+路径段使用profile中已冻结的普通ID；不计算内容hash。每个root、trace和call terminal对象是一个原子JSON文件，避免JSONL尾部半行和跨文件提交协议。Inventory与最终metrics可用JSONL，因为它们可从profile和`roots/<experiment>/<root_key>/result.json`完整重建。`protocol.json`是`run_root`返回后的不可变普通投影：冻结protocol result/projection与全部protocol-origin trace素材；Exp1在tail material准备后还冻结确定性tail request snapshots及已知pre-dispatch `coverage_tail` failure traces，并要求它们与unscheduled集合闭合。resume以它幂等物化全部已知trace，再只执行剩余tail requests；最终 v2 result 的 attempts 从 snapshot protocol attempts 与全部已持久化 tail trace attempts 稳定合并，fresh/resume 投影相同。`protocol.json`不是协议checkpoint或第二个root状态。
 
 ### 8.2 写入和文件句柄
 
-每次写入在目标同目录创建唯一临时文件，UTF-8写完、flush/关闭，再`replace`；目标已存在且普通主键/内容不一致时停止，不覆盖。每次provider call先写intent，response存在时先写response，再写terminal；每次`run_root`返回后先写含完整protocol-origin trace重建素材的`protocol.json`，再幂等物化protocol traces，Exp1 tail完成后或非Exp1投影完成后写`result.json`。存在result即视为Slim调度已提交，resume跳过；它不重新解释协议状态。异常temporary file留在当前对象目录供人工检查，不递归删除、repair或形成abandoned-state系统。
+每次写入在目标同目录创建唯一临时文件，UTF-8写完、flush/关闭，再`replace`；目标已存在且普通主键/内容不一致时停止，不覆盖。每次provider call先写intent，response存在时先写response，再写terminal；每次`run_root`返回后先写上述`protocol.json`，再幂等物化其中的protocol与已知pre-dispatch traces，Exp1只运行剩余tail requests，tail完成后或非Exp1投影完成后写`result.json`。存在result即视为Slim调度已提交，resume跳过；它不重新解释协议状态。异常temporary file留在当前对象目录供人工检查，不递归删除、repair或形成abandoned-state系统。
 
 ## 9. Schema合同
 
@@ -435,16 +447,16 @@ TokenShareData/outputs/slim_v2/<run_id>/
 
 必须字段：`schema_version,experiment_id,condition_id,case_id,repeat_id,domain,difficulty,topic_family,position_stratum,worker_count,mode,disabled_mechanisms,fault_type,fault_rate,dead_worker_count,kill_progress_target_ratio,provider_entry_id,configured_model,planned_ai_unit_ids,challenge_plan_id`。不适用值为null或空数组。Inventory在任何root运行前完整写出，是reducer固定分母来源，不是资格gate。
 
-### 9.2 `RootResultV1`
+### 9.2 `RootResultV2`
 
-Root结果严格包含指标权威第8节全部叶字段，并按以下族组织；字段名不改名：
+Root结果的 `schema_version` 固定为 `tokenshare.slim_v2.root_result.v2`，严格包含指标权威第8节全部叶字段，并按以下族组织；字段名不改名。`failure_origin` 必须出现但可为 `null`。reader、protocol projection 与 reducer 不兼容或迁移 v1；新的正式运行使用全新 run ID/目录。v2 的同 run crash/resume 仍按第11节支持。
 
 | 字段族 | 字段 |
 |---|---|
 | identity | `experiment_id,condition_id,case_id,repeat_id,domain,difficulty,topic_family,position_stratum,mode,disabled_mechanisms,worker_count,fault_type,fault_rate,dead_worker_count,kill_progress_target_ratio` |
 | challenge identity | `challenge_plan_id,challenge_family,challenge_target_planned_ai_unit_ids,challenge_attempt_ordinal_rule` |
 | model | `provider_family,provider_entry_id,configured_model,requested_model,resolved_model,reasoning_mode` |
-| lifecycle | `root_start_at_ms,root_terminal_at_ms,runtime_wall_clock_ms,preflight_status,protocol_started,root_status,final_result_present,verified_correct,failure_stage,failure_kind` |
+| lifecycle | `root_start_at_ms,root_terminal_at_ms,runtime_wall_clock_ms,preflight_status,protocol_started,root_status,final_result_present,verified_correct,failure_stage,failure_kind,failure_origin` |
 | Exp1 tail | `trace_tail_started_at_ms,trace_tail_terminal_at_ms,trace_tail_wall_clock_ms,trace_tail_status,trace_tail_target_ai_unit_ids,trace_tail_recorded_ai_unit_ids,trace_tail_success_unit_count,trace_tail_failure_unit_count,trace_tail_provider_attempt_count,trace_tail_total_tokens,trace_tail_cost_estimate_cny` |
 | units | `planned_ai_unit_ids,dispatched_ai_unit_ids,completed_ai_unit_ids,unscheduled_ai_unit_ids,in_flight_ai_unit_ids_at_witness,observed_peak_concurrency` |
 | worker facts | `worker_execution_facts[].worker_id/started_at_ms/ended_at_ms/result_kind` |
@@ -529,9 +541,9 @@ Schema集合测试把以上inner names规范化成指标权威第8节的完整�
 | `verified_correct_root_count` | `verified_correct` | domain projector/checker | root result |
 | `completion_rate` | 上述两个count | reducer | `metrics/tables/*.jsonl/csv` |
 | `end_to_end_verified_success_rate` | verified count / inventory count | reducer | metrics |
-| `no_final_failure_count` | `failure_kind,final_result_present` | projector/reducer | root result→metrics |
-| `incorrect_final_failure_count` | `final_result_present,verified_correct,failure_kind` | projector/reducer | root result→metrics |
-| `infra_invalid_failure_count` | `failure_stage,failure_kind` | runner/projector | root result→metrics |
+| `no_final_failure_count` | `failure_kind == no_final` | reducer直接分组 | root result→metrics |
+| `incorrect_final_failure_count` | `failure_kind == incorrect_final` | reducer直接分组 | root result→metrics |
+| `infra_invalid_failure_count` | `failure_kind == infrastructure_invalid` | reducer直接分组 | root result→metrics |
 | `failure_root_count` | 三类互斥failure counts | reducer | metrics |
 
 ### 10.2 Experiment 1
@@ -749,15 +761,15 @@ Slim不定义root、task、attempt、retry、recovery、canonical、merge或sett
 ### 11.2 正常提交顺序
 
 1. provider caller使用显式call context与注入的`RunStore`，send前写intent；response或错误后写terminal；
-2. `run_root()`返回并产生现有协议终态后，projector写包含完整protocol-origin trace重建素材的不可变`protocol.json`；
-3. Exp1先从protocol投影幂等物化全部protocol-origin traces，再只对真正unscheduled的unit补tail traces；其他实验直接投影最终result；
-4. 所需trace/投影完整后写`result.json`；下一个root才能开始；
+2. `run_root()`返回并产生现有协议终态后，projector写包含protocol result/projection、全部protocol-origin trace素材、确定性tail requests及已知pre-dispatch tail traces的不可变`protocol.json`；
+3. Exp1先从snapshot幂等物化全部已知traces，再只执行剩余tail requests；有效`no_final`同样补tail，只有统一设施blocker阻断；其他实验直接投影最终result；
+4. 所需trace/投影完整后，以 protocol projection attempts 加全部已持久化 tail trace attempts 按冻结 target/ordinal 顺序重建最终 v2 `attempts[]`，再写`result.json`；下一个root才能开始；
 5. reducer只读取inventory、committed result和Exp3 reference，不读取system events作为报告输入。
 
 ### 11.3 Resume扫描与未知终态
 
 - `result.json`存在：跳过整个root；这只是Slim调度完成键，不是Slim重新宣布协议终态；
-- Exp1已有`protocol.json`但缺`result.json`：不重跑`run_root`；先按三元键从protocol投影重建缺失的protocol-origin traces，再只对真正unscheduled且缺key的unit运行tail并提交result；
+- Exp1已有`protocol.json`但缺`result.json`：不重跑`run_root`；先按三元键从snapshot重建缺失的protocol-origin与已知pre-dispatch tail traces，再只执行snapshot中剩余tail request keys，最后从snapshot protocol attempts与所有已持久化tail attempts稳定重建 v2 result 并提交；
 - trace存在：不再次取得该planned unit回答；
 - terminal call存在：复用原结果，不再次调用；
 - intent存在而terminal缺失：先检查当前进程和response。response存在时从已存response完成terminal；确认无活跃owner且无response时写`unknown_transport_outcome`，同一ordinal不重调；若现有engine后续请求replacement，只能使用下一自然ordinal；
@@ -853,6 +865,7 @@ Exp5只用`factor_v2_hard_145 × repeat0`，依次运行四个冻结entry，`wor
 - Exp5四entry的configured/requested/resolved model匹配；
 - reducer产生所有表；小cluster导致CI null必须带正确reason，不算设施失败；
 - 人为中断一次后`--resume`不重复任何terminal真实attempt且能完成缺失root/tail；
+- 同一 v2 run 在相同持久化事实下，fresh/resume 的 Exp1 `attempts[]`、tail summary、provider-call/token/cost 计数完全相同；
 - secret未出现在run目录；缺行、schema不完整、trace错配、错误provider调用、resume重复付费是设施失败。
 
 ## 14. CPU、内存、磁盘、文件句柄和并发控制
@@ -922,7 +935,7 @@ estimate = 1.25 × [
 | tail污染正文 | protocol/tail trace并集唯一；root status/runtime和正文token/cost不变 |
 | 并发事实缺失 | Factorization真实k>1 + Lean fake fixed-DAG先测Thread；worker death直接测现有Process事实 |
 | Exp3/4语义被Slim伪造 | 五fault/death/recovery与11-mode challenge均由hook + event + backend + checker join，不按condition ID反填 |
-| 统计口径漂移 | 单一golden fixture覆盖153 IDs、固定分母、pair/quadruple、10k bootstrap和null传播 |
+| 统计口径漂移 | 单一golden fixture覆盖153 formal IDs、固定分母、pair/quadruple、10k bootstrap和null传播；另校验三项mandatory inventory diagnostics恒等式 |
 | CLI恢复重复工作 | 原子source、roots串行、unknown transport、防重复fake call、89-call preflight和全离线E2E |
 | 启动脚本图形包装偏离CLI | 参数化覆盖2 profiles × Exp1–5/all、Exp2–4 source规则、all→run-all、单CLI子进程和launcher目标；打开窗口provider calls=0 |
 
@@ -935,10 +948,10 @@ review只在三个里程碑触发：现有系统本体闭环、全部实验场�
 | Task | 可运行切片 | 主要文件 | 依赖 | 验收标准 |
 |---|---|---|---|---|
 | 1 现有系统本体纵向闭环 | test-local fake submission分别让Factorization + Lean fixed-DAG真实经过公共`run_root`纵链并投影普通结果 | `runtime.py,projector.py,test_system_vertical.py` | 当前公共runtime/plugin | 第一Gate；Task 1当时范围内两领域verifier/checker/canonical/merge/root recheck真实且未发现shared gap；该结论不覆盖Task 4后来证明并获批的结构性旁路缺口，当前口径见§19.1；生产execution adapter留到Task3 |
-| 2 profile、最小schema与普通输出 | 保留并校准已完成schema/profile/case/plan；写Task1结果并resume扫描 | `schema.py,case_source.py,profiles.py,storage.py,cli.py` | Task1事实 | 153 metric IDs可由authority §8原始字段合同计算，冻结inventory闭合；没有第二状态机/通用framework |
+| 2 profile、最小schema与普通输出 | 保留并校准已完成schema/profile/case/plan；写Task1结果并resume扫描 | `schema.py,case_source.py,profiles.py,storage.py,cli.py` | Task1事实 | 153 formal metric IDs可由authority §8原始字段合同计算，三项额外mandatory inventory diagnostics闭合；没有第二状态机/通用framework |
 | 3 Exp1/5回答路径 | fake transport通过同一caller/bridge，Exp1 protocol+tail trace闭合，Exp5四endpoint | `provider.py,execution.py,runtime.py,storage.py,projector.py` | Task2 | 16MiB/close/journal/unknown、tail隔离、fixed path无transport |
 | 4 Exp2–4系统场景 | 六worker、五fault/death/reference、11-mode challenge全部真实进system/plugin | `scenarios.py,runtime.py,execution.py,projector.py` | Task3 traces | 0 provider calls；先证明Thread，death使用Process，Slim不生成系统真值 |
-| 5 统一reducer | 一个统计内核生成Exp1–5全部153-ID表 | `reducer.py` | Task4普通结果 | fixed denominator、pairs/quadruples/bootstrap/null、流式只读 |
+| 5 统一reducer | 一个统计内核生成Exp1–5全部153-ID表及三项mandatory inventory diagnostics | `reducer.py` | Task4普通结果 | fixed denominator、pairs/quadruples/bootstrap/null、流式只读 |
 | 6 CLI/启动脚本图形包装/resume/readiness | 原子命令、Windows双击参数窗口、preflight、串行roots、resume和全离线E2E | `cli.py,gui.py,run_slim_v2.cmd,runtime.py,storage.py,projector.py` | Tasks1–5 | 两profile与Exp1–5/all均映射同一CLI；Representative 72 roots/74 executions/cap89；通过后直接进入真实representative下一阶段 |
 
 Task顺序冻结。golden fixture准备、文档核对和只读审计在单个Task内部逻辑上可并行，但实际实现仍保持单一focus。既有schema/profile/plan代码只是Task 2的候选输入；在Task 1两领域纵向金丝雀闭合前，不得以其已存在为由跳过Task 1或宣称新Task 2完成。

@@ -2,6 +2,7 @@
 status: user_approved
 document: slim_v2_experiment_metrics_authority
 scope: TokenShare Slim V2 Experiment 1-5 experiments and metrics only
+last_updated: 2026-08-22
 ---
 
 # Slim V2 实验与指标权威
@@ -31,11 +32,13 @@ scope: TokenShare Slim V2 Experiment 1-5 experiments and metrics only
 - `preregistered_root_count = |R|`，预注册后固定；单个 root 失败、未返回、超时、worker death 未恢复或提前停止都不得从 `R` 删除。
 - `final_result_root_count = |{r∈R : r 有最终 root 结果}|`。
 - `verified_correct_root_count = |{r∈R : r 的最终结果经独立领域检查为正确}|`。
-- `completion_rate = final_result_root_count / preregistered_root_count`。
-- `end_to_end_verified_success_rate = verified_correct_root_count / preregistered_root_count`。
-- root 失败分为 `no_final`、`incorrect_final`、`infrastructure_invalid`，且 `failure_root_count` 是三类之和。实验性失败计入固定分母；接线或数据不完整不是 0，而是 `null` 并写明 `missing_reason`。
-- ratio 的 denominator 为 0 时写 `null`，不得写 0；sum/elapsed/delta 任一必需输入缺失时写 `null`，不得把缺失 token、cost 或时间当成 0。
-- 配对指标只接纳同一 `case_id × repeat_id` 且两端所需字段完整的 pair；未接纳 pair 保留在 `planned_pair_count` 和 `ineligible_pair_count` 中，并记录原因。
+- 每个报告 cell 必须同时给出三个库存计数：`preregistered_root_count`、`scientifically_valid_root_count` 与 `infrastructure_invalid_root_count`，并满足 `scientifically_valid_root_count + infrastructure_invalid_root_count = preregistered_root_count`。这三个计数都必须报告，不能通过删除无效 root 缩小预注册库存；预注册但缺少 committed root result 的成员在 reducer inventory 层计入 `infrastructure_invalid_root_count`，诊断为 `missing_committed_root_result`。
+- 仅当 `infrastructure_invalid_root_count=0` 时，`completion_rate = final_result_root_count / preregistered_root_count`，`end_to_end_verified_success_rate = verified_correct_root_count / preregistered_root_count`。cell 中只要存在一个 infrastructure-invalid root，两项 rate 及依赖该 cell 的相关科学 rate/effect 都写 `null`，`missing_reason=infrastructure_invalid_root_present`；不得改用 `scientifically_valid_root_count` 作为新分母。已经持久化且输入完整的精确事实仍必须报告，包括 inventory、attempt/fault/replacement 数量以及 token、cost、wall-clock 等资源事实；不得用整段 early return 把这些事实一并清空。只有依赖科学有效性的 rate/effect 和其区间传播该 reason，单个精确事实若自身必需输入缺失则仍按本节普通缺失规则写 `null`。
+- root 顶层失败分类保持且只允许 `no_final`、`incorrect_final`、`infrastructure_invalid`，`failure_root_count` 是三类之和。三个 breakdown count 必须直接按已提交 `failure_kind` 分组，禁止再从 `final_result_present`、`verified_correct` 或 `failure_origin` 反推分类；三类互斥且其和等于 `failure_root_count`。细分诊断写入独立 `failure_origin`，不得扩展顶层 taxonomy。Factorization 与 Lean 中的 parser 重试耗尽、环境正常时 verifier/checker 拒绝耗尽、provider/transport 耗尽或这些候选取得失败的混合耗尽都是有效实验 `no_final`，对应 `failure_origin` 分别为 `model_parse_exhausted`、`model_verification_exhausted`、`provider_transport_exhausted`、`mixed_candidate_acquisition_failure`，进入固定分母且成功值为 0。
+- Lean checker 的 `environment_error`、`timeout`、`helper_error` 是基础设施终态：首次出现即停止当前 root，不继续消耗模型 retry；root 投影为 `infrastructure_invalid`、`failure_origin=checker_environment_error`。独立 Lean environment pass 缺失/失效必须在 provider 前只把全部 pending Lean ordinary/reference roots 形成 `failure_stage=preflight` 的 infrastructure-invalid；同 run 的 Factorization roots 继续，fixed-source closure 排除这些 Lean-invalid keys。Lean import/toolchain/project/checker 环境、store/ledger、冻结接线或未知程序异常同属 infrastructure-invalid，不得伪装成模型失败。
+- ratio 的 denominator 为 0 时写 `null` 且同一 metric 写 `missing_reason=zero_denominator`，不得写 0；sum/elapsed/delta 任一必需输入缺失时写 `null`，不得把缺失 token、cost 或时间当成 0。metric 后续从 `null` 变为计算值时必须同步移除该 metric 的旧 `missing_reason/not_applicable_reason`，不能同时保留值和过期原因。
+- ordinary root result schema 从本次新实验 run 起固定为 `tokenshare.slim_v2.root_result.v2`：`failure_origin` 是必需出现、可为 `null` 的字段。v1 不做兼容读取、迁移或双版本 reducer；后续正式数据必须使用新的 run ID/目录从头执行。v2 仍必须支持同一 run 内的 crash/resume，这一运行恢复不等于旧 v1 数据迁移。
+- 配对指标只接纳同一 `case_id × repeat_id`、两端均非 infrastructure-invalid 且所需字段完整的 pair；任一端为 infrastructure-invalid 时必须记为 ineligible。未接纳 pair 保留在 `planned_pair_count`、`eligible_pair_count` 和 `ineligible_pair_count` 三个数量及原因分布中，不得删除或当成失败值 0。
 - Experiment 2–4 的来源键固定为 `case_id × source_repeat_id × planned_ai_unit_id`，其中 `source_repeat_id=0`。下游 root 的 `repeat_id` 是实验重复，不进入来源键；该键也不包含 `condition_id`、worker、fault、mode 或 attempt ordinal。同一键指向 Experiment 1 的唯一一条 per-unit trace；该 trace 可以来自正常协议阶段（`trace_origin=protocol`）或紧随该 root 的补齐阶段（`trace_origin=coverage_tail`）。
 - 下游请求的 `attempt_ordinal` 若在 per-unit trace 中存在，读取同 ordinal 的自然 attempt；若不存在，确定性读取该 trace 中最大、也就是最后一个已有自然 ordinal。`source_attempt_ordinal` 保存实际选中的自然 ordinal，`source_attempt_fallback_used` 标明是否回退；回答内容、source usage、source latency、source cost 和 source result kind 均保持选中 trace attempt 的原值。Experiment 3 的 token/latency 扰动身份仍使用下游当前 `attempt_ordinal`，而不是回退后的 `source_attempt_ordinal`。
 - 来源命中后必须比较普通语义字段：Factorization 比较 `candidate_start/candidate_end`，Lean 比较 `lemma_node_id/dependency_path`。字段不一致不得消费，也不得退回实时 API；这里不使用 hash、digest 或证据链。
@@ -135,30 +138,35 @@ generated_tokens = nonreasoning_completion_tokens + reasoning_tokens
 - **worker**：`worker_count=10`，不是新的实验维度。
 - **provider/model**：官方 DeepSeek；entry=`deepseek_v4_pro_exp1_baseline`，model=`deepseek-v4-pro`，thinking enabled，`reasoning_effort=high`，`timeout_seconds=600`，`max_tokens=300000`，每个实际执行的 AI unit 最多 3 次自然 provider attempts；provider 全局 in-flight 上限 50；成本按第 1.4 节冻结的 `slim_v2.pricing.2026-08-20` 计算。
 - **阶段一：正常协议阶段**：调用一次现有 `run_root()`。Factorization 找到第一个正确因数后按现有语义完成 root；Lean 按现有 proof/root 终态语义完成或失败。`root_terminal_at_ms` 在 `run_root()` 返回并形成协议终态时记录；正常协议阶段实际执行的 unit 写唯一 per-unit trace，`trace_origin=protocol`。正文正确性、完成率、协议时间、provider latency、token 与 cost 只消费这一阶段。
-- **阶段二：逐 root coverage tail**：`run_root()` 返回后，Slim runner 立即读取该 root 的 `unscheduled_ai_unit_ids`，按稳定的 `planned_ai_unit_id` 顺序，只对尚无 protocol trace 的 planned units 执行 Slim-local trace acquisition。每个 unit 使用与 Experiment 1 计划完全相同的 unit input、prompt、provider/model 与请求控制，写入同一题的唯一 per-unit trace，`trace_origin=coverage_tail`；不得重复调用任何已在正常协议阶段执行过的 unit，也不创建独立回答库。
-- **tail attempt 规则**：每个 coverage-tail unit 从自然 `attempt_ordinal=0` 开始，按 Experiment 1 相同的 parse/verifier/checker 接受规则，在失败或拒绝时继续取得下一自然 attempt，首次 accepted 后停止，最多三个 attempts。tail 只为决定是否继续 acquisition 而运行 parser/verifier/checker，不创建 protocol attempt、canonical、merge 或新的 root 终态，也不修改已经完成的 `ProtocolRunResult`。若合法 request 无法构造或 provider/transport 连续失败，仍保存真实失败 attempt/result kind，不伪造回答。
-- **阶段与串行边界**：coverage tail 在该 root 的 `root_terminal_at_ms` 之后开始，完成或按上限终止后才允许下一个 root 记录 `root_start_at_ms`。因此 roots 仍串行；tail 不延长该 root 的 `runtime_wall_clock_ms`。必须单独保存 `trace_tail_wall_clock_ms`、tail provider attempt count、tail tokens 与 tail cost；它们是实际 acquisition 诊断，不进入 Experiment 1 正文资源指标。
+- **阶段二：逐 root coverage tail**：`run_root()` 返回后，Slim runner 立即读取该 root 的 `unscheduled_ai_unit_ids`，保持该冻结 observation 中的原始顺序（不再按文本或数字重排），只对尚无 protocol trace 的 planned units 执行 Slim-local trace acquisition。有效 `no_final/incorrect_final` 或其他 `terminal_failure.infrastructure_invalid=false` 的协议终态仍必须执行 tail；只有 `slim_condition_failure`、`slim_runtime_failure` 或 `terminal_failure.infrastructure_invalid=true` 阻断。每个 unit 使用与 Experiment 1 计划完全相同的 unit input、prompt、provider/model 与请求控制，写入同一题的唯一 per-unit trace，`trace_origin=coverage_tail`；不得重复调用任何已在正常协议阶段执行过的 unit，也不创建独立回答库。
+- **tail attempt 规则**：每个 coverage-tail unit 从自然 `attempt_ordinal=0` 开始，按 Experiment 1 相同的 parse/verifier/checker 接受规则，在失败或拒绝时继续取得下一自然 attempt，首次 accepted 后停止，最多三个 attempts。tail 只为决定是否继续 acquisition 而运行 parser/verifier/checker，不创建 protocol attempt、canonical、merge 或新的 root 终态，也不修改已经完成的 `ProtocolRunResult`。Lean 依赖 canonical 不可用而无法构造合法 request 时，保存带真实 `lemma_node_id/dependency_path`、`provider_call_made=false` 的 typed `pre_dispatch_failure` trace；其他 provider/transport 连续失败同样保存真实失败 attempt/result kind，不伪造回答。
+- **阶段与串行边界**：coverage tail 在该 root 的 `root_terminal_at_ms` 之后开始，完成或按上限终止后才允许下一个 root 记录 `root_start_at_ms`。因此 roots 仍串行；tail 不延长该 root 的 `runtime_wall_clock_ms`。必须单独保存 `trace_tail_wall_clock_ms`、tail provider attempt count、tail tokens 与 tail cost；provider attempt count/tokens/cost 只聚合 `provider_call_made=true` 的 attempts，pre-dispatch record 不增加调用数，也不把已知 provider 汇总改成 null。它们是实际 acquisition 诊断，不进入 Experiment 1 正文资源指标。
 - **覆盖完成语义**：阶段二结束后，每个 planned unit 必须有且只有一条 per-unit trace，且至少有一个自然 attempt 记录；该记录可以是明确的 provider/pre-dispatch failure，而不保证一定存在可用回答。Experiment 2–4 可以同样消费 `protocol` 与 `coverage_tail` trace，并原样重放被选中的成功或失败 result kind。
+- **最终投影与恢复等价**：Exp1 最终 v2 root result 的 `attempts[]` 必须按冻结顺序由 protocol projection 中的 attempts 加上当前 root 全部已持久化 coverage-tail traces 的 attempts 重建。fresh 与同一 v2 run 的 resume 对相同持久化事实必须得到相同数组、tail summary 和 provider-call/resource 计数；resume 不重复任何已有 trace 或 terminal provider call。
 
 ### 2.2 必须指标
 
 | 指标 | 公式；numerator / denominator | grouping/slice | 缺失与失败 | 最小原始字段 |
 |---|---|---|---|---|
 | `preregistered_root_count` | `|R|`；num=`R`，无 denominator | domain、difficulty、Lean topic、repeat | 固定库存，任何 root 失败仍计数 | 身份/分层字段 |
+| `scientifically_valid_root_count` | `|{r∈R: failure_kind≠infrastructure_invalid}|` | 同上 | 实验性 `no_final/incorrect_final` 仍计入；不得作为成功率替代分母 | `failure_kind` |
+| `infrastructure_invalid_root_count` | `|{r∈R: failure_kind=infrastructure_invalid}|` | 同上 | 非 0 时本 cell 科学 rate 为 `null` | `failure_stage`,`failure_kind`,`failure_origin` |
 | `final_result_root_count` | `|F|`；num=有最终结果的 roots | 同上 | 无最终结果不进分子但留在 `R` | `final_result_present` |
 | `verified_correct_root_count` | `|C|`；num=最终结果独立检查正确的 roots | 同上 | 错误或无结果不进分子 | `verified_correct` |
-| `completion_rate` | `|F|/|R|`；num=`final_result_root_count`，den=`preregistered_root_count` | 同上 | 固定分母 | 上述两个 count |
-| `end_to_end_verified_success_rate` | `|C|/|R|`；num=`verified_correct_root_count`，den=`preregistered_root_count` | 同上 | 固定分母 | 上述两个 count |
-| `no_final_failure_count` | `|{r: failure_class=no_final}|` | 同上 | 失败必须分类 | `failure_stage`,`failure_kind`,`final_result_present` |
-| `incorrect_final_failure_count` | `|{r: failure_class=incorrect_final}|` | 同上 | 完成但错误计入 | `final_result_present`,`verified_correct`,`failure_kind` |
-| `infra_invalid_failure_count` | `|{r: failure_class=infrastructure_invalid}|` | 同上 | 接线/数据无效计入且相关资源值可为 `null` | `failure_stage`,`failure_kind` |
+| `completion_rate` | `|F|/|R|`；num=`final_result_root_count`，den=`preregistered_root_count` | 同上 | 固定分母；本 cell 有 infrastructure-invalid 时为 `null` | 上述两个 count、`infrastructure_invalid_root_count` |
+| `end_to_end_verified_success_rate` | `|C|/|R|`；num=`verified_correct_root_count`，den=`preregistered_root_count` | 同上 | 固定分母；本 cell 有 infrastructure-invalid 时为 `null` | 上述两个 count、`infrastructure_invalid_root_count` |
+| `no_final_failure_count` | `|{r: failure_kind=no_final}|` | 同上 | 失败必须分类 | `failure_stage`,`failure_kind`,`failure_origin`,`final_result_present` |
+| `incorrect_final_failure_count` | `|{r: failure_kind=incorrect_final}|` | 同上 | 完成但错误计入 | `final_result_present`,`verified_correct`,`failure_kind` |
+| `infra_invalid_failure_count` | `|{r: failure_kind=infrastructure_invalid}|`；数值必须等于本 cell 的 `infrastructure_invalid_root_count` | 同上 | 仅保留既有失败 breakdown 名称，不替代三项库存计数 | `failure_stage`,`failure_kind`,`failure_origin` |
 | `failure_root_count` | 上述三类之和 | 同上 | 三类必须互斥且覆盖所有非成功 root | 同上 |
 | `actual_end_to_end_wall_clock_ms` | `Σ runtime_wall_clock_ms`，只累计正常协议阶段 | 同上 | 任一 root 协议边界缺失则 `null`；不得用跨-root `max-min` 混入 coverage tail | `runtime_wall_clock_ms` |
 | `actual_provider_latency_ms` | 正常协议 `trace_origin=protocol` attempts 的 `Σ provider_latency_ms` | 同上 | 已调用但 latency 缺失则 `null`；tail 不进入 | `attempts[].trace_origin`,`attempts[].provider_call_made`,`attempts[].provider_latency_ms` |
 | `actual_total_tokens` | 正常协议 `trace_origin=protocol` attempts 的 `Σ total_tokens` | 同上 | 实际协议调用 usage 缺失则 `null`；tail 不进入 | `attempts[].trace_origin`,`attempts[].provider_call_made`,`attempts[].total_tokens`,`attempts[].usage_status` |
 | `actual_cost_estimate_cny` | 正常协议 `trace_origin=protocol` attempts 的 `Σ cost_estimate_cny` | 同上 | 协议 usage/价格输入缺失则 `null`；tail 不进入 | `attempts[].trace_origin`,`attempts[].cost_estimate_cny`,`attempts[].usage_status` |
 
-`failure_stage` 与 `failure_kind` 的分布是必须保存的诊断明细，不新增一个与上述失败计数重复的综合比例。`trace_tail_wall_clock_ms`、`trace_tail_provider_attempt_count`、`trace_tail_total_tokens`、`trace_tail_cost_estimate_cny` 与 tail success/failure counts 也必须单独保存为 acquisition 诊断；不得加进上表四项正文协议资源，也不得用 tail 的成功修正正常协议 root 的完成或正确性。
+`failure_stage`、`failure_kind` 与 `failure_origin` 的分布是必须保存的诊断明细，不新增一个与上述失败计数重复的综合比例。`trace_tail_wall_clock_ms`、`trace_tail_provider_attempt_count`、`trace_tail_total_tokens`、`trace_tail_cost_estimate_cny` 与 tail success/failure counts 也必须单独保存为 acquisition 诊断；不得加进上表四项正文协议资源，也不得用 tail 的成功修正正常协议 root 的完成或正确性。
+
+上述三个 root 库存计数是冻结 153 个 formal metric occurrences 之外的 mandatory inventory diagnostics；它们不重编号或扩展 153 集合，但必须随每个 cell 输出并满足库存恒等式。
 
 ### 2.3 方差与置信区间
 
@@ -313,7 +321,7 @@ attempt_ordinal
 
 ### 4.5 主矩阵必须指标
 
-除第 1.2 节五个 root 指标外，必须输出：
+除第 1.2 节统一 root 库存、完成、正确性与失败指标外，必须输出：
 
 | 指标 | 公式；numerator / denominator | 适用范围 | 缺失与失败 | 最小原始字段 |
 |---|---|---|---|---|
@@ -478,7 +486,7 @@ challenge plan 在展开 mode 之前，按 `(case_id, repeat_id)` 生成；`chal
 
 ### 5.8 必须指标：真实数值任务结果与资源下降
 
-本节指标只有在对应 cell 的 `scientifically_valid_ablation_cell=true` 时计算。除第 1.2 节五个 root 指标外，必须输出：
+本节指标只有在对应 cell 的 `scientifically_valid_ablation_cell=true` 时计算。除第 1.2 节统一 root 库存、完成、正确性与失败指标外，必须输出：
 
 | 指标 | 公式；numerator / denominator | grouping | 缺失与失败 | 最小原始字段 |
 |---|---|---|---|---|
@@ -583,7 +591,7 @@ Experiment 4 沿用已冻结的 11 个 modes、四类 mode-blind challenge、现
 
 ### 6.2 质量与最终结果表（必须）
 
-除第 1.2 节五个 root 指标外，必须输出：
+除第 1.2 节统一 root 库存、完成、正确性与失败指标外，必须输出：
 
 | 指标 | 公式；numerator / denominator | 缺失与失败 | 最小原始字段 |
 |---|---|---|---|
@@ -666,7 +674,7 @@ Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或
 | `root_start_at_ms`,`root_terminal_at_ms`,`runtime_wall_clock_ms` | 必填；三者必须满足 `runtime=root_terminal-root_start` | Exp1/5 真实 root wall-clock；Exp2/3/4 逻辑 root timing 与 overhead/delta；Exp5 repeat/model wall-clock |
 | `trace_tail_started_at_ms`,`trace_tail_terminal_at_ms`,`trace_tail_wall_clock_ms`,`trace_tail_status` | Exp1 必填；无 target 时 start/terminal 为 null、wall=0、status=`not_needed` | coverage tail 与 root 协议时间隔离；tail wall 只作 acquisition 诊断 |
 | `trace_tail_target_ai_unit_ids`,`trace_tail_recorded_ai_unit_ids`,`trace_tail_provider_attempt_count`,`trace_tail_total_tokens`,`trace_tail_cost_estimate_cny` | Exp1 必填/usage 可空且带 reason | 证明每个 unscheduled planned unit 形成唯一 trace；单独统计真实 tail 调用资源，不进入 Exp1 正文资源 |
-| `preflight_status`,`protocol_started`,`root_status`,`final_result_present`,`verified_correct`,`failure_stage`,`failure_kind` | 必填 | 所有 completion/success/failure counts；Exp2 speedup pair 接纳条件；Exp4 BLOCK 有效性、transition 与 interaction |
+| `preflight_status`,`protocol_started`,`root_status`,`final_result_present`,`verified_correct`,`failure_stage`,`failure_kind`,`failure_origin` | `failure_origin` 在存在结构化细因时必填，无独立细因或成功 root 为 null；其余字段按生命周期必填/可空 | 所有 completion/success/failure counts；三项 cell root 计数；Exp2 speedup pair 接纳条件；Exp4 BLOCK 有效性、transition 与 interaction；细分正常耗尽与基础设施来源 |
 | `planned_ai_unit_ids`,`dispatched_ai_unit_ids`,`completed_ai_unit_ids`,`unscheduled_ai_unit_ids` | 必填数组 | Exp2 planned/executed/unscheduled；Exp5 planned units/call coverage；其余运行完整性诊断 |
 | `in_flight_ai_unit_ids_at_witness` | Exp2 主矩阵必填 | `in_flight_at_witness` |
 | `observed_peak_concurrency` | Exp2 主矩阵必填 | `observed_peak_concurrency` |
@@ -722,7 +730,7 @@ Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或
 6. Experiment 4 每个 `case_id × repeat_id` 固定一个先于 mode 生成的 challenge plan；注入器不知道 mode，11 个 mode 接收完全相同的 target set、attempt rule 和变换，不做 fault-rate sweep。
 7. Experiment 4 的 mode-specific 配置/preflight BLOCK 使对应报告 cell 无效，不能当成任务失败或机制贡献；协议启动后的 no-final、stuck、incorrect-final 和 root checker rejection 才进入消融结果。
 8. Experiment 2 取消独立 `factorization.exp2_contiguous_20way.v1`，每道题完整继承 Experiment 1 的 split、unit、prompt 与依赖；worker count 是唯一改变。
-9. Experiment 1 每个 root 先正常 `run_root()`，再立即对该 root 的 `unscheduled_ai_unit_ids` 执行 Slim-local coverage tail；tail 只调用尚无 protocol trace 的 planned units，`trace_origin=coverage_tail`，完成或按上限终止后才开始下一个 root。tail 的 wall/token/cost 单独记录，不进入 Experiment 1 正文协议资源。
+9. Experiment 1 每个 root 先取得结构化 `run_root()` 协议终态，再立即对该 root 的 `unscheduled_ai_unit_ids` 执行 Slim-local coverage tail；有效`no_final`同样执行，只有统一设施blocker阻断。tail 只调用尚无 protocol trace 且具备合法request的 planned units；Lean pre-dispatch failure不调用provider但仍形成`trace_origin=coverage_tail`的typed trace。完成或按上限终止后才开始下一个 root，tail 的 wall/token/cost 单独记录，不进入 Experiment 1 正文协议资源。
 10. Experiment 3 的 fault target 分母、`ceil` 数量、稳定均匀选择、ordinal 0 单次注入、五类固定动作及 token/latency 扰动公式按第 4.2–4.4 节执行，不再留给设计 Agent选择。
 11. roots 在 runner 层串行；root timing 严格使用协议生命周期开始、终止与两者差值。Experiment 4 的五个 delta metric IDs 使用不带 `_median`/`_ms` 后缀的名称。
 12. 成本换算固定使用第 1.4 节的 `slim_v2.pricing.2026-08-20` 官方价格表；价格是普通 reducer/projector 常量，不是预算或门禁。DeepSeek/SiliconFlow 的 `reasoning_tokens` 都是 `completion_tokens` 子集，不得重复计入 token 或成本。

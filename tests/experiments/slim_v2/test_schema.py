@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 
@@ -8,11 +8,12 @@ import pytest
 
 from tokenshare.experiments.slim_v2.schema import (
     ACTUAL_PROVIDER_FIELDS,
+    ROOT_RESULT_SCHEMA_VERSION,
     SIMULATED_RESOURCE_FIELDS,
     SOURCE_TRACE_FIELDS,
     AttemptResultV1,
     FaultObservationV1,
-    RootResultV1,
+    RootResultV2,
     SchemaValidationError,
     SlimRunConfigV1,
     UnitTraceV1,
@@ -162,11 +163,11 @@ def _valid_root(
     *,
     experiment_id: str = "exp1",
     attempts: list[AttemptResultV1] | None = None,
-) -> RootResultV1:
+) -> RootResultV2:
     is_exp1 = experiment_id == "exp1"
     is_exp2 = experiment_id == "exp2"
     is_exp4 = experiment_id == "exp4"
-    return RootResultV1(
+    return RootResultV2(
         experiment_id=experiment_id,
         condition_id=f"{experiment_id}-condition",
         case_id="case-0",
@@ -235,7 +236,7 @@ def _valid_root(
     )
 
 
-def _preflight_blocked_root() -> RootResultV1:
+def _preflight_blocked_root() -> RootResultV2:
     reasons = _nullable_reasons()
     reasons.update(
         {
@@ -258,6 +259,7 @@ def _preflight_blocked_root() -> RootResultV1:
         verified_correct=False,
         failure_stage="preflight",
         failure_kind="infrastructure_invalid",
+        failure_origin="preflight_unavailable",
         missing_reason=reasons,
     )
 
@@ -266,9 +268,9 @@ def test_root_result_normalized_leaf_paths_equal_authority_contract() -> None:
     contract = _contract()
     expected = contract["metric_authority_leaf_paths"]
 
-    assert len(expected) == 168
+    assert len(expected) == 187
     assert len(expected) == len(set(expected))
-    assert set(RootResultV1.normalized_leaf_paths(authority_only=True)) == set(expected)
+    assert set(RootResultV2.normalized_leaf_paths(authority_only=True)) == set(expected)
     assert len(contract["formal_metric_ids"]) == 153
     assert {
         "resolved_model",
@@ -302,6 +304,25 @@ def test_root_result_normalized_leaf_paths_equal_authority_contract() -> None:
         ).validate()
 
 
+def test_failed_root_requires_frozen_kind_and_diagnostic_origin() -> None:
+    failed = replace(
+        _valid_root(),
+        root_status="failed",
+        final_result_present=False,
+        verified_correct=False,
+        failure_stage="candidate_acquisition",
+    )
+    with pytest.raises(SchemaValidationError, match="failure_kind"):
+        replace(failed, failure_kind=None, failure_origin=None).validate()
+    with pytest.raises(SchemaValidationError, match="failure_origin"):
+        replace(failed, failure_kind="no_final", failure_origin=None).validate()
+    with pytest.raises(SchemaValidationError, match="failure_origin"):
+        replace(
+            _preflight_blocked_root(),
+            failure_origin="   ",
+        ).validate()
+
+
 def test_full_schema_leaf_paths_equal_authority_plus_operational_contract() -> None:
     contract = _contract()
     authority = set(contract["metric_authority_leaf_paths"])
@@ -309,7 +330,7 @@ def test_full_schema_leaf_paths_equal_authority_plus_operational_contract() -> N
     expected = authority | operational
 
     assert authority.isdisjoint(operational)
-    assert set(RootResultV1.normalized_leaf_paths()) == expected
+    assert set(RootResultV2.normalized_leaf_paths()) == expected
 
     with pytest.raises(SchemaValidationError, match="precedes"):
         replace(
@@ -425,8 +446,8 @@ def test_nullable_fields_require_missing_or_not_applicable_reason() -> None:
     expected_required = set(contract["field_rules"]["required"])
     expected_nullable = set(contract["field_rules"]["nullable_with_reason"])
 
-    assert set(RootResultV1.required_leaf_paths()) == expected_required
-    assert set(RootResultV1.nullable_leaf_paths()) == expected_nullable
+    assert set(RootResultV2.required_leaf_paths()) == expected_required
+    assert set(RootResultV2.nullable_leaf_paths()) == expected_nullable
     with pytest.raises(SchemaValidationError, match="provider_latency_ms"):
         require_null_reason("attempts[].provider_latency_ms", None, {}, {})
 
@@ -549,7 +570,7 @@ def test_schema_contains_no_forbidden_authority_fields() -> None:
         "prepared_identity",
         "hard_deadline",
     }
-    leaf_paths = RootResultV1.normalized_leaf_paths()
+    leaf_paths = RootResultV2.normalized_leaf_paths()
 
     assert not {
         path
@@ -574,6 +595,16 @@ def test_schema_contains_no_forbidden_authority_fields() -> None:
         trace_tail_cost_estimate_cny=0.005,
     )
     exp1_with_tail.validate()
+    replace(
+        exp1_with_tail,
+        trace_tail_success_unit_count=0,
+        trace_tail_failure_unit_count=1,
+        trace_tail_provider_attempt_count=0,
+        trace_tail_total_tokens=0,
+        trace_tail_cost_estimate_cny=0.0,
+    ).validate()
+    with pytest.raises(SchemaValidationError, match="retry cap"):
+        replace(exp1_with_tail, trace_tail_provider_attempt_count=4).validate()
     with pytest.raises(SchemaValidationError, match="recorded"):
         replace(exp1_with_tail, trace_tail_recorded_ai_unit_ids=[]).validate()
     with pytest.raises(SchemaValidationError, match="success.*failure"):
@@ -626,7 +657,14 @@ def test_run_store_round_trips_and_scans_root_result_without_overwrite(
     assert store.write_root_result(result) == "skipped"
 
     with pytest.raises(StorageConflictError, match="conflicting ordinary file"):
-        store.write_root_result(replace(result, verified_correct=False))
+        store.write_root_result(
+            replace(
+                result,
+                verified_correct=False,
+                failure_stage="domain_root_recheck",
+                failure_kind="incorrect_final",
+            )
+        )
 
     assert store.write_root_protocol(*root_key, {"status": "completed"}) == "written"
     view = scan_resume(tmp_path)
@@ -637,6 +675,85 @@ def test_run_store_round_trips_and_scans_root_result_without_overwrite(
     )
     orphan_temp.write_text('{"partial":true}', encoding="utf-8")
     assert scan_resume(tmp_path) == view
+
+
+def test_root_result_writer_and_protocol_projection_emit_strict_v2(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    store = RunStore(tmp_path)
+    result = _valid_root(experiment_id="exp2")
+    root_key = ("exp2", "exp2-condition", "case-0", 0)
+
+    assert ROOT_RESULT_SCHEMA_VERSION == "tokenshare.slim_v2.root_result.v2"
+    assert result.failure_origin is None
+    store.write_root_result(result)
+    written = json.loads(
+        store.root_result_path(*root_key).read_text(encoding="utf-8")
+    )
+    assert written["schema_version"] == ROOT_RESULT_SCHEMA_VERSION
+    assert "failure_origin" in written
+    assert written["failure_origin"] is None
+    assert store.read_root_result(*root_key) == result
+
+    store.write_root_protocol_snapshot(
+        *root_key,
+        protocol_result={"summary": {"runtime_observation": {}}},
+        traces=[],
+        protocol_projection=result,
+    )
+    protocol = store.read_root_protocol(*root_key)
+    assert protocol["protocol_projection"]["schema_version"] == (
+        ROOT_RESULT_SCHEMA_VERSION
+    )
+    assert "failure_origin" in protocol["protocol_projection"]
+    assert protocol["protocol_projection"]["failure_origin"] is None
+
+
+def test_root_result_writer_rejects_verified_failure(tmp_path: Path) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    store = RunStore(tmp_path)
+    result = replace(_valid_root(), failure_kind="incorrect_final")
+    root_key = ("exp1", "exp1-condition", "case-0", 0)
+
+    with pytest.raises(SchemaValidationError, match="verified_correct"):
+        store.write_root_result(result)
+    assert not store.root_result_path(*root_key).exists()
+
+
+def test_root_result_reader_explicitly_rejects_v1(tmp_path: Path) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    store = RunStore(tmp_path)
+    result = _valid_root()
+    root_key = ("exp1", "exp1-condition", "case-0", 0)
+    document = asdict(result)
+    document["schema_version"] = "tokenshare.slim_v2.root_result.v1"
+    path = store.root_result_path(*root_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="RootResultV2 ordinary schema_version"):
+        store.read_root_result(*root_key)
+
+
+def test_root_result_reader_rejects_missing_failure_origin(tmp_path: Path) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    store = RunStore(tmp_path)
+    result = _valid_root()
+    root_key = ("exp1", "exp1-condition", "case-0", 0)
+    document = asdict(result)
+    document["schema_version"] = "tokenshare.slim_v2.root_result.v2"
+    document.pop("failure_origin")
+    path = store.root_result_path(*root_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="RootResultV2 ordinary fields"):
+        store.read_root_result(*root_key)
 
 
 def test_scan_resume_records_trace_terminal_and_intent_only_call_facts(

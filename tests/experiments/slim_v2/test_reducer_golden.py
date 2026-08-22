@@ -25,7 +25,7 @@ from tokenshare.experiments.slim_v2.schema import (
     FaultObservationV1,
     RecoveryObservationV1,
     RootInventoryV1,
-    RootResultV1,
+    RootResultV2,
 )
 from tokenshare.experiments.slim_v2.storage import RunStore
 
@@ -197,7 +197,7 @@ def _result(
     attempt: AttemptResultV1 | None = None,
     challenge_family: str = "INVALID_PARSED_CANDIDATE",
     tail_tokens: int = 0,
-) -> RootResultV1:
+) -> RootResultV2:
     failure_kind = None if verified else ("incorrect_final" if final else "no_final")
     failure_stage = None if verified else "protocol_runtime"
     challenge = []
@@ -261,7 +261,7 @@ def _result(
         ]
     if attempt is not None and inventory.experiment_id in {"exp2", "exp3", "exp4"}:
         attempt.source_case_id = inventory.case_id
-    result = RootResultV1(
+    result = RootResultV2(
         experiment_id=inventory.experiment_id,
         condition_id=inventory.condition_id,
         case_id=inventory.case_id,
@@ -312,6 +312,7 @@ def _result(
         verified_correct=verified,
         failure_stage=failure_stage,
         failure_kind=failure_kind,
+        failure_origin=("synthetic_no_final" if failure_kind == "no_final" else None),
         planned_ai_unit_ids=["range_0"],
         dispatched_ai_unit_ids=["range_0"],
         completed_ai_unit_ids=["range_0"] if final else [],
@@ -334,13 +335,13 @@ def _result(
         challenge_observations=challenge,
         ablation_observations=ablations,
         missing_reason={},
-        not_applicable_reason=_nullable_reasons(RootResultV1),
+        not_applicable_reason=_nullable_reasons(RootResultV2),
     )
     result.validate()
     return result
 
 
-def _preflight_blocked_result(inventory: RootInventoryV1) -> RootResultV1:
+def _preflight_blocked_result(inventory: RootInventoryV1) -> RootResultV2:
     result = _result(inventory)
     result.root_start_at_ms = None
     result.root_terminal_at_ms = None
@@ -352,6 +353,7 @@ def _preflight_blocked_result(inventory: RootInventoryV1) -> RootResultV1:
     result.verified_correct = False
     result.failure_stage = "preflight"
     result.failure_kind = "infrastructure_invalid"
+    result.failure_origin = "preflight_unavailable"
     result.dispatched_ai_unit_ids = []
     result.completed_ai_unit_ids = []
     result.recovered_valid_canonical_slot_count = 0
@@ -367,7 +369,27 @@ def _preflight_blocked_result(inventory: RootInventoryV1) -> RootResultV1:
     return result
 
 
-def _write_reference(store: RunStore, result: RootResultV1) -> None:
+def _infrastructure_invalid_result_with_facts(
+    inventory: RootInventoryV1,
+    *,
+    attempt: AttemptResultV1,
+    runtime_ms: int,
+) -> RootResultV2:
+    result = _result(inventory, attempt=attempt, runtime_ms=runtime_ms)
+    result.root_status = "failed"
+    result.final_result_present = False
+    result.verified_correct = False
+    result.failure_stage = "protocol_runtime"
+    result.failure_kind = "infrastructure_invalid"
+    result.failure_origin = "synthetic_runtime_infrastructure_failure"
+    result.completed_ai_unit_ids = []
+    if result.recovered_valid_canonical_slot_count is not None:
+        result.recovered_valid_canonical_slot_count = 0
+    result.validate()
+    return result
+
+
+def _write_reference(store: RunStore, result: RootResultV2) -> None:
     path = store.exp3_reference_result_path(
         str(result.condition_id), str(result.case_id), int(result.repeat_id)
     )
@@ -404,7 +426,7 @@ def _challenge_plan(
 def _materialize_golden(run_dir: Path) -> None:
     store = RunStore(run_dir)
     roots: list[RootInventoryV1] = []
-    results: list[RootResultV1] = []
+    results: list[RootResultV2] = []
 
     exp1_easy = _inventory("exp1", "exp1-easy", "exp1-easy", difficulty="easy")
     exp1_no_final = _inventory(
@@ -620,8 +642,20 @@ def test_reduce_run_golden_all_experiments_and_io_boundary(
     for key, value in GOLDEN["exp1_no_final"].items():
         assert no_final[key] == pytest.approx(value)
     assert hard["preregistered_root_count"] == 1
+    assert hard["scientifically_valid_root_count"] == 0
+    assert hard["infrastructure_invalid_root_count"] == 1
+    assert hard["infra_invalid_failure_count"] == 0
+    assert hard["failure_root_count"] == 0
+    assert hard["failure_origin_counts"] == {"missing_committed_root_result": 1}
+    assert (
+        hard["scientifically_valid_root_count"]
+        + hard["infrastructure_invalid_root_count"]
+        == hard["preregistered_root_count"]
+    )
     assert hard["completion_rate"] is None
-    assert hard["missing_reasons"]["completion_rate"] == GOLDEN["exp1_missing"]["missing_reason"]
+    assert hard["missing_reasons"]["completion_rate"] == (
+        "infrastructure_invalid_root_present"
+    )
 
     exp2 = _read_rows(tables / "exp2.jsonl")
     pair = next(
@@ -774,7 +808,7 @@ def test_exp4_quadruples_reject_blocked_mismatched_and_missing_arms(
         "NO_VERIFICATION__NO_PARSER_POLICY",
     )
     roots: list[RootInventoryV1] = []
-    results: list[RootResultV1] = []
+    results: list[RootResultV2] = []
     for case_id, invalid_kind in (
         ("blocked-case", "blocked"),
         ("mismatched-case", "mismatched"),
@@ -830,8 +864,8 @@ def test_exp4_quadruples_reject_blocked_mismatched_and_missing_arms(
     }
     assert reasons == {
         "challenge_plan_mismatch",
+        "infrastructure_invalid_root_present",
         "missing_committed_root_result",
-        "preflight_blocked_invalid_ablation_path",
     }
     missing_rows = [
         row
@@ -908,7 +942,7 @@ def test_exp5_first_attempt_taxonomy_uses_actual_boundaries(tmp_path: Path) -> N
     run_dir = tmp_path / "run"
     store = RunStore(run_dir)
     roots: list[RootInventoryV1] = []
-    results: list[RootResultV1] = []
+    results: list[RootResultV2] = []
     for index, kind in enumerate(("pass", "transport", "parse", "verification")):
         root = _inventory(
             "exp5", f"taxonomy-{index}", f"taxonomy-{index}",
@@ -938,6 +972,701 @@ def test_exp5_first_attempt_taxonomy_uses_actual_boundaries(tmp_path: Path) -> N
     assert row["first_attempt_verification_checker_rejection_count"] == 1
     assert row["first_attempt_without_verifier_accepted_candidate_count"] == 3
 
+
+def test_exp2_repeat_values_clear_placeholder_reasons(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "exp2-repeat-reasons")
+    roots: list[RootInventoryV1] = []
+    results: list[RootResultV2] = []
+    for repeat_id, baseline_ms, treatment_ms in ((0, 10, 5), (1, 12, 3)):
+        for worker_count, runtime_ms in ((1, baseline_ms), (10, treatment_ms)):
+            inventory = _inventory(
+                "exp2",
+                f"repeat-{repeat_id}-worker-{worker_count}",
+                "repeat-case",
+                repeat_id=repeat_id,
+                worker_count=worker_count,
+            )
+            roots.append(inventory)
+            results.append(
+                _result(
+                    inventory,
+                    runtime_ms=runtime_ms,
+                    attempt=_attempt("exp2"),
+                )
+            )
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=roots,
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    for result in results:
+        store.write_root_result(result)
+
+    reduce_run(store.run_dir)
+
+    pair_rows = [
+        row
+        for row in _read_rows(store.run_dir / "metrics" / "tables" / "exp2.jsonl")
+        if row["row_kind"] == "pair"
+    ]
+    expected = {
+        "trace_replay_paired_speedup_repeat_min": 2.0,
+        "trace_replay_paired_speedup_repeat_max": 4.0,
+        "trace_replay_paired_speedup_relative_difference": 2.0 / 3.0,
+    }
+    for row in pair_rows:
+        for metric, value in expected.items():
+            assert row[metric] == pytest.approx(value)
+            assert metric not in row["missing_reasons"]
+            assert metric not in row["not_applicable_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("experiment_id", "metric"),
+    (
+        ("exp3", "controlled_wrong_candidate_interception_rate"),
+        ("exp4", "raw_only_acceptance_rate"),
+        ("exp5", "first_attempt_nonpass_rate"),
+    ),
+)
+def test_formal_point_ratio_zero_denominator_has_reason(
+    tmp_path: Path,
+    experiment_id: str,
+    metric: str,
+) -> None:
+    store = RunStore(tmp_path / f"zero-denominator-{experiment_id}")
+    inventory_kwargs: dict[str, Any] = {}
+    challenge_rows: list[dict[str, Any]] = []
+    if experiment_id == "exp3":
+        inventory_kwargs["fault_type"] = "false_positive"
+    elif experiment_id == "exp4":
+        inventory_kwargs.update(
+            mode="NO_PARSER_POLICY",
+            challenge_plan_id="zero-denominator-plan",
+        )
+        challenge_rows.append(
+            _challenge_plan(
+                "zero-denominator-case",
+                plan_id="zero-denominator-plan",
+                family="PARSER_REQUIRED_CANONICAL_JSON",
+            )
+        )
+    elif experiment_id == "exp5":
+        inventory_kwargs["configured_model"] = "zai-org/GLM-5.2"
+    inventory = _inventory(
+        experiment_id,
+        "zero-denominator-condition",
+        "zero-denominator-case",
+        **inventory_kwargs,
+    )
+    attempt = None if experiment_id == "exp5" else _attempt(
+        experiment_id,
+        simulated_total_tokens=(100 if experiment_id == "exp3" else None),
+    )
+    result = _result(
+        inventory,
+        attempt=attempt,
+        challenge_family=(
+            "PARSER_REQUIRED_CANONICAL_JSON"
+            if experiment_id == "exp4"
+            else "INVALID_PARSED_CANDIDATE"
+        ),
+    )
+    if experiment_id == "exp3":
+        result.fault_observations = []
+        result.recovery_observations = []
+        result.validate()
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[inventory],
+        exp3_references=[],
+        exp4_challenges=challenge_rows,
+    )
+    store.write_root_result(result)
+
+    reduce_run(store.run_dir)
+
+    rows = _read_rows(
+        store.run_dir / "metrics" / "tables" / f"{experiment_id}.jsonl"
+    )
+    row = next(item for item in rows if item["row_kind"] in {"cell", "model"})
+    assert row[metric] is None
+    assert row["missing_reasons"][metric] == "zero_denominator"
+    assert metric not in row["not_applicable_reasons"]
+
+
+def test_infrastructure_invalid_root_nulls_cell_scientific_rates(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "infra-invalid-run")
+    valid_root = _inventory("exp1", "valid", "valid-case", difficulty="easy")
+    invalid_root = _inventory("exp1", "invalid", "invalid-case", difficulty="easy")
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[valid_root, invalid_root],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    store.write_root_result(_result(valid_root, attempt=_attempt("exp1")))
+    store.write_root_result(_preflight_blocked_result(invalid_root))
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp1.jsonl")[0]
+    assert row["preregistered_root_count"] == 2
+    assert row["scientifically_valid_root_count"] == 1
+    assert row["infrastructure_invalid_root_count"] == 1
+    assert row["completion_rate"] is None
+    assert row["end_to_end_verified_success_rate"] is None
+    assert row["missing_reasons"]["completion_rate"] == (
+        "infrastructure_invalid_root_present"
+    )
+    assert row["missing_reasons"]["end_to_end_verified_success_rate"] == (
+        "infrastructure_invalid_root_present"
+    )
+
+
+def test_failure_counts_use_committed_failure_kind_only(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "committed-failure-taxonomy")
+    inventories = [
+        _inventory("exp1", f"failure-{index}", f"failure-case-{index}", difficulty="easy")
+        for index in range(3)
+    ]
+    no_final = _result(inventories[0], final=True, verified=False)
+    no_final.failure_kind = "no_final"
+    incorrect_final = _result(inventories[1], final=False, verified=False)
+    incorrect_final.failure_kind = "incorrect_final"
+    infrastructure_invalid = _result(inventories[2], final=True, verified=False)
+    infrastructure_invalid.failure_kind = "infrastructure_invalid"
+    results = (no_final, incorrect_final, infrastructure_invalid)
+    for result in results:
+        result.failure_origin = "shared_diagnostic_origin"
+        result.validate()
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=inventories,
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    for result in results:
+        store.write_root_result(result)
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp1.jsonl")[0]
+    assert row["no_final_failure_count"] == 1
+    assert row["incorrect_final_failure_count"] == 1
+    assert row["infra_invalid_failure_count"] == 1
+    assert row["failure_root_count"] == 3
+    assert (
+        row["no_final_failure_count"]
+        + row["incorrect_final_failure_count"]
+        + row["infra_invalid_failure_count"]
+        == row["failure_root_count"]
+    )
+    assert row["failure_origin_counts"] == {"shared_diagnostic_origin": 3}
+
+
+def test_infrastructure_invalid_pair_endpoint_is_reported_ineligible(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "infra-invalid-pair-run")
+    baseline = _inventory("exp2", "baseline", "paired-case", worker_count=1)
+    treatment = _inventory("exp2", "treatment", "paired-case", worker_count=10)
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[baseline, treatment],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    store.write_root_result(_result(baseline, attempt=_attempt("exp2")))
+    store.write_root_result(_preflight_blocked_result(treatment))
+
+    reduce_run(store.run_dir)
+
+    rows = _read_rows(store.run_dir / "metrics" / "tables" / "exp2.jsonl")
+    pair = next(row for row in rows if row["row_kind"] == "pair")
+    assert pair["paired_speedup_planned_pair_count"] == 1
+    assert pair["paired_speedup_eligible_pair_count"] == 0
+    assert pair["paired_speedup_ineligible_pair_count"] == 1
+    assert pair["paired_speedup_ineligible_reason_counts"] == {
+        "infrastructure_invalid_root_present": 1
+    }
+
+
+@pytest.mark.parametrize(
+    ("experiment_id", "rate_metrics"),
+    (
+        (
+            "exp3",
+            (
+                "controlled_wrong_candidate_interception_rate",
+                "controlled_wrong_candidate_escape_rate",
+                "replacement_attempt_success_rate",
+                "result_completeness_rate",
+            ),
+        ),
+        (
+            "exp5",
+            (
+                "first_attempt_nonpass_rate",
+                "first_attempt_verification_rejection_rate",
+                "first_attempt_call_coverage",
+            ),
+        ),
+    ),
+)
+def test_infrastructure_invalid_root_nulls_exp3_and_exp5_scientific_rate_intervals(
+    tmp_path: Path,
+    experiment_id: str,
+    rate_metrics: tuple[str, ...],
+) -> None:
+    store = RunStore(tmp_path / f"infra-invalid-{experiment_id}")
+    inventory_kwargs = (
+        {"fault_type": "false_positive"}
+        if experiment_id == "exp3"
+        else {"configured_model": "zai-org/GLM-5.2"}
+    )
+    valid_root = _inventory(
+        experiment_id, "valid", "valid-case", **inventory_kwargs
+    )
+    invalid_root = _inventory(
+        experiment_id, "invalid", "invalid-case", **inventory_kwargs
+    )
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[valid_root, invalid_root],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    store.write_root_result(
+        _result(
+            valid_root,
+            attempt=_attempt(
+                experiment_id,
+                simulated_total_tokens=(100 if experiment_id == "exp3" else None),
+            ),
+        )
+    )
+    store.write_root_result(_preflight_blocked_result(invalid_root))
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(
+        store.run_dir / "metrics" / "tables" / f"{experiment_id}.jsonl"
+    )[0]
+    assert row["scientifically_valid_root_count"] == 1
+    assert row["infrastructure_invalid_root_count"] == 1
+    for metric in rate_metrics:
+        assert row[metric] is None
+        assert row["missing_reasons"][metric] == (
+            "infrastructure_invalid_root_present"
+        )
+        for suffix in (
+            "ci95_low",
+            "ci95_high",
+            "bootstrap_variance",
+            "bootstrap_standard_error",
+        ):
+            assert row[f"{metric}_{suffix}"] is None
+        assert row["metric_metadata"][metric]["missing_reason"] == (
+            "infrastructure_invalid_root_present"
+        )
+
+
+def test_exp3_infrastructure_invalid_cell_preserves_exact_recovery_facts(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp3-infra-exact-facts")
+    treatment = _inventory(
+        "exp3",
+        "infra-fault",
+        "infra-fault-case",
+        fault_type="false_positive",
+    )
+    reference = _inventory(
+        "exp3",
+        "infra-fault-reference",
+        "infra-fault-case",
+    )
+    treatment_result = _infrastructure_invalid_result_with_facts(
+        treatment,
+        attempt=_attempt("exp3", simulated_total_tokens=120),
+        runtime_ms=15,
+    )
+    reference_result = _result(
+        reference,
+        attempt=_attempt("exp3", simulated_total_tokens=100),
+        runtime_ms=10,
+    )
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[treatment],
+        exp3_references=[reference],
+        exp4_challenges=[],
+    )
+    store.write_root_result(treatment_result)
+    _write_reference(store, reference_result)
+
+    reduce_run(store.run_dir)
+
+    rows = _read_rows(store.run_dir / "metrics" / "tables" / "exp3.jsonl")
+    cell = next(row for row in rows if row["row_kind"] == "cell")
+    assert cell["injected_fault_target_count"] == 1
+    assert cell["controlled_wrong_candidate_count"] == 1
+    assert cell["controlled_wrong_candidate_interception_count"] == 1
+    assert cell["controlled_wrong_candidate_escape_count"] == 0
+    assert cell["started_replacement_attempt_count"] == 1
+    assert cell["successful_replacement_attempt_count"] == 1
+    assert cell["reassignment_count"] == 1
+    assert cell["discarded_simulated_trace_tokens"] == 120
+    assert cell["recovered_valid_canonical_required_slots"] == 0
+    assert cell["preregistered_required_slots"] == 1
+    assert cell["unrecovered_root_count"] == 1
+    for metric in (
+        "completion_rate",
+        "end_to_end_verified_success_rate",
+        "controlled_wrong_candidate_interception_rate",
+        "controlled_wrong_candidate_escape_rate",
+        "replacement_attempt_success_rate",
+        "result_completeness_rate",
+    ):
+        assert cell[metric] is None
+        assert cell["missing_reasons"][metric] == (
+            "infrastructure_invalid_root_present"
+        )
+    pair = next(row for row in rows if row["row_kind"] == "fault_reference_pair")
+    for metric in (
+        "simulated_wall_clock_overhead_ms",
+        "simulated_token_overhead",
+        "simulated_trace_attributed_cost_overhead",
+    ):
+        assert pair[metric] is None
+        assert pair["missing_reasons"][metric] == (
+            "infrastructure_invalid_root_present"
+        )
+        assert pair[f"{metric}_planned_pair_count"] == 1
+        assert pair[f"{metric}_eligible_pair_count"] == 0
+        assert pair[f"{metric}_ineligible_pair_count"] == 1
+
+
+def test_exp3_infrastructure_invalid_reference_nulls_pair_effects(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp3-infra-reference")
+    treatment = _inventory(
+        "exp3",
+        "valid-fault",
+        "infra-reference-case",
+        fault_type="false_positive",
+    )
+    reference = _inventory(
+        "exp3",
+        "infra-reference",
+        "infra-reference-case",
+    )
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[treatment],
+        exp3_references=[reference],
+        exp4_challenges=[],
+    )
+    store.write_root_result(
+        _result(
+            treatment,
+            attempt=_attempt("exp3", simulated_total_tokens=120),
+            runtime_ms=15,
+        )
+    )
+    _write_reference(
+        store,
+        _infrastructure_invalid_result_with_facts(
+            reference,
+            attempt=_attempt("exp3", simulated_total_tokens=100),
+            runtime_ms=10,
+        ),
+    )
+
+    reduce_run(store.run_dir)
+
+    rows = _read_rows(store.run_dir / "metrics" / "tables" / "exp3.jsonl")
+    pair = next(row for row in rows if row["row_kind"] == "fault_reference_pair")
+    for metric in (
+        "simulated_wall_clock_overhead_ms",
+        "simulated_token_overhead",
+        "simulated_trace_attributed_cost_overhead",
+    ):
+        assert pair[metric] is None
+        assert pair["missing_reasons"][metric] == (
+            "infrastructure_invalid_root_present"
+        )
+        assert pair[f"{metric}_planned_pair_count"] == 1
+        assert pair[f"{metric}_eligible_pair_count"] == 0
+        assert pair[f"{metric}_ineligible_pair_count"] == 1
+        assert pair[f"{metric}_ineligible_reason_counts"] == {
+            "infrastructure_invalid_root_present": 1
+        }
+        assert pair["metric_metadata"][metric]["missing_reason"] == (
+            "infrastructure_invalid_root_present"
+        )
+
+
+def test_exp3_missing_committed_reference_nulls_pair_effects_as_infra(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp3-missing-reference-result")
+    treatment = _inventory(
+        "exp3",
+        "valid-fault",
+        "missing-reference-case",
+        fault_type="false_positive",
+    )
+    reference = _inventory(
+        "exp3",
+        "missing-reference",
+        "missing-reference-case",
+    )
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[treatment],
+        exp3_references=[reference],
+        exp4_challenges=[],
+    )
+    store.write_root_result(
+        _result(
+            treatment,
+            attempt=_attempt("exp3", simulated_total_tokens=120),
+            runtime_ms=15,
+        )
+    )
+
+    reduce_run(store.run_dir)
+
+    rows = _read_rows(store.run_dir / "metrics" / "tables" / "exp3.jsonl")
+    pair = next(row for row in rows if row["row_kind"] == "fault_reference_pair")
+    for metric in (
+        "simulated_wall_clock_overhead_ms",
+        "simulated_token_overhead",
+        "simulated_trace_attributed_cost_overhead",
+    ):
+        assert pair[metric] is None
+        assert pair["missing_reasons"][metric] == (
+            "infrastructure_invalid_root_present"
+        )
+        assert pair[f"{metric}_planned_pair_count"] == 1
+        assert pair[f"{metric}_eligible_pair_count"] == 0
+        assert pair[f"{metric}_ineligible_pair_count"] == 1
+        assert pair[f"{metric}_ineligible_reason_counts"] == {
+            "missing_committed_root_result": 1
+        }
+        assert pair["metric_metadata"][metric]["missing_reason"] == (
+            "infrastructure_invalid_root_present"
+        )
+
+
+def test_exp3_infra_rate_reason_overrides_missing_slot_metadata_only(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp3-infra-missing-slots")
+    inventory = _inventory(
+        "exp3",
+        "infra-missing-slots",
+        "infra-missing-slots-case",
+        fault_type="false_positive",
+    )
+    result = _infrastructure_invalid_result_with_facts(
+        inventory,
+        attempt=_attempt("exp3", simulated_total_tokens=120),
+        runtime_ms=15,
+    )
+    result.required_slot_count = None
+    result.missing_reason["required_slot_count"] = "missing_required_slot_input"
+    result.validate()
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[inventory],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    store.write_root_result(result)
+
+    reduce_run(store.run_dir)
+
+    rows = _read_rows(store.run_dir / "metrics" / "tables" / "exp3.jsonl")
+    cell = next(row for row in rows if row["row_kind"] == "cell")
+    for metric in (
+        "recovered_valid_canonical_required_slots",
+        "preregistered_required_slots",
+    ):
+        assert cell[metric] is None
+        assert cell["missing_reasons"][metric] == "missing_required_slot_input"
+    assert cell["result_completeness_rate"] is None
+    assert cell["missing_reasons"]["result_completeness_rate"] == (
+        "infrastructure_invalid_root_present"
+    )
+    assert cell["metric_metadata"]["result_completeness_rate"][
+        "missing_reason"
+    ] == "infrastructure_invalid_root_present"
+
+
+def test_exp5_infrastructure_invalid_cell_preserves_actual_resource_facts(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp5-infra-exact-facts")
+    roots = [
+        _inventory(
+            "exp5",
+            f"infra-model-repeat-{repeat_id}",
+            f"infra-model-case-{repeat_id}",
+            repeat_id=repeat_id,
+            configured_model="zai-org/GLM-5.2",
+        )
+        for repeat_id in range(3)
+    ]
+    results = [
+        _infrastructure_invalid_result_with_facts(
+            inventory,
+            attempt=_attempt("exp5", total_tokens=100, cost=1.0),
+            runtime_ms=10 * (index + 1),
+        )
+        for index, inventory in enumerate(roots)
+    ]
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=roots,
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    for result in results:
+        store.write_root_result(result)
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp5.jsonl")[0]
+    assert row["actual_first_provider_attempt_count"] == 3
+    assert row["first_attempt_without_verifier_accepted_candidate_count"] == 0
+    assert row["first_attempt_provider_transport_failure_count"] == 0
+    assert row["first_attempt_parse_schema_unusable_count"] == 0
+    assert row["first_attempt_verification_checker_rejection_count"] == 0
+    assert row["first_attempt_checkable_candidate_count"] == 3
+    assert row["first_attempt_explicitly_rejected_by_verifier_count"] == 0
+    assert row["planned_first_attempt_ai_unit_count"] == 3
+    assert row["actual_total_tokens"] == 300
+    assert row["actual_cost_estimate_cny"] == pytest.approx(3.0)
+    assert row["repeat0_wall_clock_ms"] == 10
+    assert row["repeat1_wall_clock_ms"] == 20
+    assert row["repeat2_wall_clock_ms"] == 30
+    assert row["model_wall_clock_median_ms"] == 20
+    assert row["model_wall_clock_min_ms"] == 10
+    assert row["model_wall_clock_max_ms"] == 30
+    assert row["model_wall_clock_range_ms"] == 20
+    for metric in (
+        "completion_rate",
+        "end_to_end_verified_success_rate",
+        "first_attempt_nonpass_rate",
+        "first_attempt_verification_rejection_rate",
+        "first_attempt_call_coverage",
+    ):
+        assert row[metric] is None
+        assert row["missing_reasons"][metric] == (
+            "infrastructure_invalid_root_present"
+        )
+        for suffix in (
+            "ci95_low",
+            "ci95_high",
+            "bootstrap_variance",
+            "bootstrap_standard_error",
+        ):
+            assert row[f"{metric}_{suffix}"] is None
+
+
+def test_exp5_infrastructure_invalid_cell_keeps_missing_usage_null(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp5-infra-missing-usage")
+    roots = [
+        _inventory(
+            "exp5",
+            f"infra-missing-repeat-{repeat_id}",
+            f"infra-missing-case-{repeat_id}",
+            repeat_id=repeat_id,
+            configured_model="zai-org/GLM-5.2",
+        )
+        for repeat_id in range(3)
+    ]
+    for index, inventory in enumerate(roots):
+        attempt = _attempt(
+            "exp5",
+            total_tokens=(None if index == 0 else 100),
+            cost=(None if index == 0 else 1.0),
+        )
+        store.write_root_result(
+            _infrastructure_invalid_result_with_facts(
+                inventory,
+                attempt=attempt,
+                runtime_ms=10 * (index + 1),
+            )
+        )
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=roots,
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp5.jsonl")[0]
+    for metric in ("actual_total_tokens", "actual_cost_estimate_cny"):
+        assert row[metric] is None
+        assert row["missing_reasons"][metric] == "usage_missing"
+
+
+def test_exp4_normal_retry_exhaustion_remains_scientifically_valid(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "normal-exhaustion-exp4")
+    modes = ("FULL", "NO_VERIFICATION")
+    roots = [
+        _inventory(
+            "exp4",
+            f"normal-{mode}",
+            "normal-exhaustion-case",
+            mode=mode,
+            challenge_plan_id="normal-plan",
+        )
+        for mode in modes
+    ]
+    full = _result(roots[0], attempt=_attempt("exp4"))
+    exhausted = _result(
+        roots[1],
+        attempt=_attempt("exp4"),
+        final=False,
+        verified=False,
+    )
+    exhausted.failure_origin = "model_parse_exhausted"
+    exhausted.validate()
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=roots,
+        exp3_references=[],
+        exp4_challenges=[
+            _challenge_plan("normal-exhaustion-case", plan_id="normal-plan")
+        ],
+    )
+    store.write_root_result(full)
+    store.write_root_result(exhausted)
+
+    reduce_run(store.run_dir)
+
+    rows = _read_rows(store.run_dir / "metrics" / "tables" / "exp4.jsonl")
+    cell = next(
+        row
+        for row in rows
+        if row["row_kind"] == "cell" and row["slice"]["mode"] == "NO_VERIFICATION"
+    )
+    pair = next(row for row in rows if row["row_kind"] == "pair")
+    assert cell["scientifically_valid_ablation_cell"] is True
+    assert cell["failure_origin_counts"] == {"model_parse_exhausted": 1}
+    assert pair["planned_pair_count"] == 1
+    assert pair["runtime_valid_pair_count"] == 1
+    assert pair["runtime_invalid_pair_count"] == 0
+
     invalid_run = tmp_path / "missing-verification-run"
     invalid_store = RunStore(invalid_run)
     invalid_root = _inventory(
@@ -964,7 +1693,7 @@ def test_exp4_conditional_failure_bootstrap_recomputes_matched_denominator(
     run_dir = tmp_path / "run"
     store = RunStore(run_dir)
     roots: list[RootInventoryV1] = []
-    results: list[RootResultV1] = []
+    results: list[RootResultV2] = []
     challenges = []
     for index in range(5):
         case_id = f"bootstrap-case-{index}"
@@ -1033,7 +1762,7 @@ def test_required_slot_missing_nulls_the_whole_exp4_cell_interval(
     run_dir = tmp_path / "run"
     store = RunStore(run_dir)
     roots: list[RootInventoryV1] = []
-    results: list[RootResultV1] = []
+    results: list[RootResultV2] = []
     challenges = []
     for index in range(5):
         case_id = f"slot-cell-{index}"
@@ -1081,7 +1810,7 @@ def test_null_inputs_and_exp3_resource_semantics_propagate(
     run_dir = tmp_path / "run"
     store = RunStore(run_dir)
     roots: list[RootInventoryV1] = []
-    results: list[RootResultV1] = []
+    results: list[RootResultV2] = []
     references: list[RootInventoryV1] = []
     for index in range(5):
         case_id = f"slot-case-{index}"

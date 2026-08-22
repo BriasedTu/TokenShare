@@ -10,11 +10,13 @@ scope: Slim V2 agent routing and boundaries
 
 本目录是后续 Slim V2 设计与实现 Agent 的唯一入口。根据 2026-08-20 用户决定，除非当前任务明确指定其他维护范围，所有后续实验设施的设计、实现和运行都默认进入 Slim V2，不需要用户重复声明。四份前置权威文档已获得用户批准并冻结，是 Slim V2 范围内的当前权威；它们不改写 Slim V2 之外的 V1/legacy 状态。常规流程仍由用户逐阶段批准设计规格和实施计划；用户显式启动 `slim_v2_stage_relay_protocol.md` 时，则由该协议规定的多 reviewer 审查、完成标准和 `approved_under_user_delegation` 状态履行这两次委托审批。两种流程都不能绕过 shared-code 修改所需的再次用户批准。当前唯一例外是用户在 2026-08-21 已直接批准 Experiment 4 结构性局部旁路所需的最小 shared gap 修复；精确接口、文件范围、三票结论和验证门以 `slim_v2_exp4_structural_bypass_design.md` 为准，不能外推到其他 shared 修改。
 
+> **当前唯一 focus（2026-08-22）**：执行用户批准并冻结的 `slim_v2_final_summary_lightweight_repair_plan.md`。三个 Owner 必须是侧边栏可见的三个独立 Codex 对话，均使用 `gpt-5.6-sol/high`：第一对话负责 Tasks 1–3，第二对话负责 Tasks 4–6，第三对话负责新的真实 Representative。Owner 只统筹，具体代码实现和复核由其对话内子智能体完成。旧 v1 结果不迁移、不复用；Exp4 route evidence 实现明确延期，除非它实际阻断本轮输出。
+
 ## 目标
 
 Slim V2 要以最小设施完成：
 
-- 为 Experiment 1 的正式运行和 Experiment 5 调用真实 AI API；Experiment 1 每个 root 先按现有协议终态完成，再立即用 Slim-local coverage tail 补齐该 root 尚未调度的 planned units，使每个 planned unit 都有唯一 per-unit trace；
+- 为 Experiment 1 的正式运行和 Experiment 5 调用真实 AI API；Experiment 1 每个 root 先按现有协议终态完成，再立即用 Slim-local coverage tail 补齐该 root 尚未调度的 planned units，使每个 planned unit 都有唯一 per-unit trace；有效`no_final`仍补tail，只有condition/runtime或infrastructure-invalid终态阻断；
 - 调用现有 TokenShare 协议本体、Factorization 插件和真实 Lean 插件；
 - 表达并运行 Experiment 1–5 的冻结场景；
 - 让 Experiment 2–4 原样继承 Experiment 1 的任务切分、子任务语义、prompt 与依赖，并按 `case_id × source_repeat_id × planned_ai_unit_id` 精确复用 Experiment 1 的 protocol/coverage-tail trace；其中下游 `source_repeat_id=0`，与各实验自己的 `repeat_id` 分离；请求 ordinal 缺失时只回退到同一 trace 最后一个自然 attempt，不新增 AI 调用；
@@ -38,6 +40,7 @@ Experiment 2 的六档在线并发检查和 Experiment 3 的小型在线恢复�
 4. `Doc/SlimV2/slim_v2_system_integration_contract.md`
 5. 当前 focus 已进入获批的设计或实现阶段时，完整阅读支持材料 `Doc/SlimV2/slim_v2_reuse_inventory.md`，然后才打开源码；纯讨论、指标或价格维护任务不必读取它。
 6. 当前 focus 是 Experiment 4 / Task 4 时，再完整阅读 `Doc/SlimV2/slim_v2_exp4_structural_bypass_design.md`、`Doc/SlimV2/slim_v2_design_spec.md` 第 5.4/19.1 节和 `Doc/SlimV2/slim_v2_implementation_plan.md` Task 4，然后才修改源码。
+7. 当前 focus 是最终汇总轻量修复或其后的真实 Representative 时，完整阅读 `Doc/SlimV2/slim_v2_final_summary_lightweight_repair_plan.md`；它只覆盖该文件明确列出的六项修复和运行交棒。
 
 复用清单只提供精确源码位置、公开符号和复用等级，不能覆盖前四份权威。价格来源摘要同样只在维护价格时读取。当前 baseline 中的共享公共接口可按接线合同定点审计；旧 paper/formal 实现只能按复用清单中的固定 archive SHA 和 allowlist 使用 `git show <40位SHA>:<path>` 定点只读。不得 checkout archive branch/tag、创建 archive 工作副本或递归展开旧目录来“了解历史”。
 
@@ -80,13 +83,14 @@ TokenShareData/outputs/slim_v2/<run_id>/
 - 真实 API 能调用，secret 不进入输出。
 - Factorization 和 Lean 各至少跑通一个 root；Lean 使用真实 checker 和 root recheck。
 - Experiment 1–5 的冻结 condition 参数都可表达。
-- Experiment 1 每个 root 先冻结正常协议终态，再立即补齐 unscheduled planned units；每个 planned unit 只有一条标明 `protocol/coverage_tail` 的 trace，tail 不重复调用 protocol unit、不延长 root runtime，且在下一 root 前完成。
+- Experiment 1 每个 root 先冻结协议终态（包括有效`no_final`），再立即补齐 unscheduled planned units；每个 planned unit 只有一条标明 `protocol/coverage_tail` 的 trace，tail 不重复调用 protocol unit、不延长 root runtime，且在下一 root 前完成；只有设施终态阻断tail。
 - Experiment 2–4 能严格按 `case_id × source_repeat_id × planned_ai_unit_id` 复用 Experiment 1 trace，普通字段核对一致，exact ordinal 缺失时确定性使用同 trace 最后自然 attempt，且运行期间 provider calls 为 0；Experiment 2 不使用独立 split profile。
 - Experiment 3 能按 planned first-attempt units、ordinal 0 和冻结扰动公式执行五类 fault；正文 token/latency 资源明确标为 simulated trace-attributed。
 - roots 串行，`root_start_at_ms`、`root_terminal_at_ms` 与 `runtime_wall_clock_ms` 满足冻结生命周期定义；Exp1 正文批次 wall-clock 使用 protocol runtime 之和，`trace_tail_wall_clock_ms/tokens/cost` 单列。
 - Exp1/5 保存 provider 原始 usage、request start 与 `pricing_version/pricing_tier`，按指标权威的官方表计算成本；`reasoning_tokens` 不与 `completion_tokens` 重复相加。
 - 原始 JSONL 字段足以计算全部必须指标。
 - 单 root 失败仍写一行记录，不丢失固定分母。
+- Factorization/Lean的正常候选、验证或provider重试耗尽写`no_final`并保留细分来源；Lean checker或环境设施错误写`infrastructure_invalid`，不得互相压缩。Lean实验启动只轻量读取独立`lean-environment-test`生成的持久pass，不在每次启动时重跑Lean/lake。
 - metrics reducer 能从普通输出文件夹生成 CSV/JSON。
 - 不依赖任何旧 formal gate 或旧实验输出。
 

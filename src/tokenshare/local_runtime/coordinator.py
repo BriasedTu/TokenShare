@@ -777,6 +777,7 @@ class ProtocolRunCoordinator:
             merge_resolution_batch: BatchView | None = None
             schedule_ordinal = 0
             terminal_child_failure = None
+            terminal_infrastructure_failure = None
             pending_executions: list[
                 LogicalPendingExecution
                 | _LogicalPendingRetry
@@ -807,6 +808,7 @@ class ProtocolRunCoordinator:
             merge_resolution_batch = resume_checkpoint.merge_resolution_batch
             schedule_ordinal = resume_checkpoint.schedule_ordinal
             terminal_child_failure = resume_checkpoint.terminal_child_failure
+            terminal_infrastructure_failure = None
             pending_executions = list(resume_checkpoint.pending_executions)
             runtime_observations = list(resume_checkpoint.runtime_observations)
             trace_delivery_attempts = list(
@@ -1304,6 +1306,10 @@ class ProtocolRunCoordinator:
                         raise TypeError("invalid trace delivery attempt record")
                     trace_delivery_attempts.append(trace_delivery_attempt)
                 graph = execution["graph"]
+                infrastructure_failure = execution.get("infrastructure_failure")
+                if infrastructure_failure is not None:
+                    terminal_infrastructure_failure = infrastructure_failure
+                    break
                 if execution["canonical"] is None:
                     if execution.get("requeue_blocked"):
                         break
@@ -1319,9 +1325,7 @@ class ProtocolRunCoordinator:
                                     graph=graph,
                                     terminal_child_failure=terminal_child_failure,
                                 )
-                                raise RuntimeError(
-                                    f"child unit failed after retry limit: {unit_id}"
-                                )
+                                break
                             # 失败事实已由 engine 原子落账；可继续观测独立 sibling。
                             if execution.get("halt_run"):
                                 graph = self._record_parent_failure(
@@ -1835,6 +1839,15 @@ class ProtocolRunCoordinator:
                     "partial_observation": True,
                 },
             )
+        if terminal_infrastructure_failure is not None:
+            projected = replace(
+                projected,
+                status="failed",
+                summary={
+                    **projected.summary,
+                    "terminal_failure": terminal_infrastructure_failure,
+                },
+            )
         if not runtime_observations:
             return projected
         return replace(
@@ -2138,6 +2151,14 @@ class ProtocolRunCoordinator:
             correlation_id=f"{request.run_id}:verification:{scheduled.attempt.attempt_id}",
             causation_event_id=submission_flow.event.event_id,
         )
+        infrastructure_failure = _checker_infrastructure_failure(report)
+        if infrastructure_failure is not None:
+            return {
+                "graph": graph,
+                "canonical": None,
+                "failed": False,
+                "infrastructure_failure": infrastructure_failure,
+            }
         if report.status not in {"passed", "accepted"}:
             recovery_attempt = verification.attempt or submission_flow.attempt
             recovery_causation_event_id = (
@@ -2883,6 +2904,37 @@ def _optional_planned_ai_unit_id(plugin_runtime, unit) -> str | None:
     if not isinstance(planned_ai_unit_id, str) or not planned_ai_unit_id:
         raise ValueError("planned_ai_unit_id must be a non-empty string")
     return planned_ai_unit_id
+
+
+def _checker_infrastructure_failure(report) -> dict[str, object] | None:
+    """只把 Lean checker 明确基础设施状态升级为 root infrastructure 终止。"""
+
+    if report.status != "error":
+        return None
+    checker_status = None
+    failure_summary = report.failure_summary
+    if isinstance(failure_summary, dict):
+        checker_status = failure_summary.get("checker_status")
+    metadata = report.metadata
+    plugin_layer = (
+        metadata.get("plugin_domain_layer")
+        if isinstance(metadata, dict)
+        else None
+    )
+    details = (
+        plugin_layer.get("details")
+        if isinstance(plugin_layer, dict)
+        else None
+    )
+    if isinstance(details, dict) and isinstance(details.get("checker_status"), str):
+        checker_status = details["checker_status"]
+    if checker_status not in {"environment_error", "timeout", "helper_error"}:
+        return None
+    return {
+        "failure_stage": "candidate_verification",
+        "failure_origin": "checker_environment_error",
+        "infrastructure_invalid": True,
+    }
 
 
 def _build_no_verification_report(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +16,7 @@ from tokenshare.experiments.slim_v2.projector import (
     project_root_result,
 )
 from tokenshare.experiments.slim_v2.runtime import RootAssembly, run_root_slice
-from tokenshare.experiments.slim_v2.schema import RootInventoryV1
+from tokenshare.experiments.slim_v2.schema import AttemptResultV1, RootInventoryV1
 from tokenshare.local_runtime import (
     ProtocolRunCoordinator,
     SequentialWorkerBackend,
@@ -389,8 +391,9 @@ def test_projector_preserves_ledger_confirmed_natural_child_rejection(
     assert root_result.root_status == "failed"
     assert root_result.final_result_present is False
     assert root_result.verified_correct is False
-    assert root_result.failure_stage == "child_verification"
+    assert root_result.failure_stage == "candidate_acquisition"
     assert root_result.failure_kind == "no_final"
+    assert root_result.failure_origin == "model_verification_exhausted"
     assert root_result.required_slot_count == 1
     assert root_result.recovered_valid_canonical_slot_count == 0
     assert root_result.dispatched_ai_unit_ids == ["range_0"]
@@ -468,6 +471,190 @@ def test_lean_fixed_dag_root_runs_once_through_real_system_vertical_and_projects
     assert root_result.verified_correct is True
     assert len(root_result.planned_ai_unit_ids) == case["expected_ai_unit_count"]
     assert root_result.attempts == []
+
+
+def test_lean_checker_environment_error_stops_and_projects_infrastructure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tokenshare.plugins.lean_proof.environment.load_lean_semantic_authority",
+        lambda **_kwargs: SimpleNamespace(
+            schema_version="tokenshare.lean_environment_semantic_authority.v1",
+            authority_environment_digest=(
+                "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731"
+            ),
+            semantic_environment_digest=(
+                "sha256:dd480188a9181130b61fd9da3e09789264d8776e715087a811a4f942d699b682"
+            ),
+            semantic_checker_digest=(
+                "sha256:96740890ea19c77430391698296719c3fc3408e4ebbd81043d46650fb099884d"
+            ),
+            sidecar_digest=(
+                "sha256:6a60bb31465c535a9fcfcbe9a60f0e53af9e063cd05eeb2e151cf05817c0e24f"
+            ),
+        ),
+    )
+    case = _lean_case("lean_v2_medium_lemma_dag_01")
+    store = ArtifactStore(tmp_path / "lean_environment_error")
+    ledger = EventLedger(tmp_path / "lean_environment_error" / "events.jsonl")
+    config = replace(_config("lean_environment_error"), max_retries=2)
+    checker = RecordingLeanChecker(status=LeanCheckerStatus.ENVIRONMENT_ERROR)
+    adapter = LeanRuntimeAdapter(
+        provider_family="siliconflow",
+        environment_manifest=_test_lean_environment(),
+        checker=checker,
+        protocol_config=config,
+        created_at=NOW,
+    )
+    fake = _LeanSubmissionFake(store)
+    protocol_clock = _Clock()
+    assembly = RootAssembly(
+        run_id="task1_lean_environment_error",
+        root_input=case,
+        protocol_config=config,
+        artifact_store=store,
+        event_ledger=ledger,
+        plugin_runtime=adapter,
+        worker_backend=SequentialWorkerBackend(
+            executor=LeanExecutionBridge(
+                plugin_runtime=adapter,
+                proof_candidate_executor=fake,
+            ),
+            submitted_at=protocol_clock,
+        ),
+        now=protocol_clock,
+        observation_clock=_ObservationClock(),
+    )
+
+    protocol_result = run_root_slice(assembly)
+    root_result = _project_read_only(
+        inventory=_inventory(case=case, domain="lean"),
+        assembly=assembly,
+        protocol_result=protocol_result,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        artifact_reads_required=False,
+    )
+
+    assert protocol_result.summary["terminal_failure"] == {
+        "failure_stage": "candidate_verification",
+        "failure_origin": "checker_environment_error",
+        "infrastructure_invalid": True,
+    }
+    assert len(fake.requests) == 1
+    assert checker.modes == [LeanCheckerMode.CHILD_PROOF]
+    assert root_result.failure_stage == "candidate_verification"
+    assert root_result.failure_kind == "infrastructure_invalid"
+    assert root_result.failure_origin == "checker_environment_error"
+
+
+def test_lean_attempt_projection_uses_checker_report_status_not_verification_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tokenshare.plugins.lean_proof.environment.load_lean_semantic_authority",
+        lambda **_kwargs: SimpleNamespace(
+            schema_version="tokenshare.lean_environment_semantic_authority.v1",
+            authority_environment_digest=(
+                "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731"
+            ),
+            semantic_environment_digest=(
+                "sha256:dd480188a9181130b61fd9da3e09789264d8776e715087a811a4f942d699b682"
+            ),
+            semantic_checker_digest=(
+                "sha256:96740890ea19c77430391698296719c3fc3408e4ebbd81043d46650fb099884d"
+            ),
+            sidecar_digest=(
+                "sha256:6a60bb31465c535a9fcfcbe9a60f0e53af9e063cd05eeb2e151cf05817c0e24f"
+            ),
+        ),
+    )
+    case = _lean_case("lean_v2_medium_lemma_dag_01")
+    store = ArtifactStore(tmp_path / "lean_checker_status")
+    ledger = EventLedger(tmp_path / "lean_checker_status" / "events.jsonl")
+    config = _config("lean_checker_status")
+    adapter = LeanRuntimeAdapter(
+        provider_family="siliconflow",
+        environment_manifest=_test_lean_environment(),
+        checker=RecordingLeanChecker(),
+        protocol_config=config,
+        created_at=NOW,
+    )
+    fake = _LeanSubmissionFake(store)
+    protocol_clock = _Clock()
+    assembly = RootAssembly(
+        run_id="task1_lean_checker_status",
+        root_input=case,
+        protocol_config=config,
+        artifact_store=store,
+        event_ledger=ledger,
+        plugin_runtime=adapter,
+        worker_backend=SequentialWorkerBackend(
+            executor=LeanExecutionBridge(
+                plugin_runtime=adapter,
+                proof_candidate_executor=fake,
+            ),
+            submitted_at=protocol_clock,
+        ),
+        now=protocol_clock,
+        observation_clock=_ObservationClock(),
+    )
+    protocol_result = run_root_slice(assembly)
+    request = fake.requests[0]
+    attempt = _attempt_for_request(request)
+    original_report = adapter.checker_report_for_request(request.request_id)
+    assert original_report is not None
+    original_getter = adapter.checker_report_for_request
+
+    expected_results = {
+        LeanCheckerStatus.ACCEPTED: "accepted",
+        LeanCheckerStatus.REJECTED: "proof_rejected",
+        LeanCheckerStatus.ENVIRONMENT_ERROR: "environment_error",
+        LeanCheckerStatus.TIMEOUT: "timeout",
+        LeanCheckerStatus.HELPER_ERROR: "helper_error",
+    }
+    for checker_status, expected_result in expected_results.items():
+        monkeypatch.setattr(
+            adapter,
+            "checker_report_for_request",
+            lambda request_id, status=checker_status: (
+                replace(original_report, status=status)
+                if request_id == request.request_id
+                else original_getter(request_id)
+            ),
+        )
+        projected = project_root_result(
+            inventory=_inventory(case=case, domain="lean"),
+            assembly=assembly,
+            protocol_result=protocol_result,
+            provider_family="siliconflow",
+            requested_model="fake-submission",
+            resolved_model="fake-submission",
+            reasoning_mode="not_applicable",
+            attempts=[attempt],
+        )
+        assert projected.attempts[0].checker_result == expected_result
+
+    monkeypatch.setattr(
+        adapter,
+        "checker_report_for_request",
+        lambda request_id: (
+            None if request_id == request.request_id else original_getter(request_id)
+        ),
+    )
+    projected = project_root_result(
+        inventory=_inventory(case=case, domain="lean"),
+        assembly=assembly,
+        protocol_result=protocol_result,
+        provider_family="siliconflow",
+        requested_model="fake-submission",
+        resolved_model="fake-submission",
+        reasoning_mode="not_applicable",
+        attempts=[replace(attempt, parse_result="rejected")],
+    )
+    assert projected.attempts[0].checker_result == "not_reached"
 
 
 def _project_read_only(
@@ -663,6 +850,30 @@ def _inventory(*, case: dict[str, object], domain: str) -> RootInventoryV1:
     )
     inventory.validate()
     return inventory
+
+
+def _attempt_for_request(request: object) -> AttemptResultV1:
+    reasons = {
+        f"attempts[].{path}": "test_fixture_not_applicable"
+        for path in AttemptResultV1.nullable_leaf_paths()
+    }
+    attempt = AttemptResultV1(
+        attempt_id=request.attempt_id,
+        unit_id=request.unit_id,
+        planned_ai_unit_id=request.unit_id,
+        attempt_ordinal=0,
+        trace_origin="protocol",
+        result_kind="success",
+        provider_call_made=False,
+        raw_response_present=True,
+        parse_result="accepted",
+        canonical_accepted=False,
+        usage_status="usage_complete",
+        call_state="terminal",
+        missing_reason=reasons,
+    )
+    attempt.validate(experiment_id="exp1")
+    return attempt
 
 
 def _file_snapshot(root: Path) -> tuple[tuple[str, str], ...]:

@@ -17,7 +17,7 @@ from tokenshare.experiments.slim_v2.schema import (
     AblationObservationV1,
     AttemptResultV1,
     ProviderEntryViewV1,
-    RootResultV1,
+    RootResultV2,
     UnitTraceV1,
 )
 
@@ -67,11 +67,59 @@ def _attempt(case_id: str, planned: str) -> AttemptResultV1:
     return attempt
 
 
-def _success(inventory: Any) -> RootResultV1:
+def _lean_pre_dispatch_trace(case_id: str, planned: str) -> UnitTraceV1:
+    present_nullable = {
+        "trace_origin",
+        "started_at_ms",
+        "ended_at_ms",
+        "parse_result",
+        "checker_result",
+    }
+    attempt = AttemptResultV1(
+        attempt_id=f"predispatch:{planned}:0",
+        unit_id=f"unit:{planned}",
+        planned_ai_unit_id=planned,
+        attempt_ordinal=0,
+        trace_origin="coverage_tail",
+        started_at_ms=1,
+        ended_at_ms=1,
+        result_kind="pre_dispatch_failure",
+        provider_call_made=False,
+        raw_response_present=False,
+        parse_result="not_reached",
+        checker_result="not_reached",
+        canonical_accepted=False,
+        usage_status="not_available",
+        call_state="not_started",
+        missing_reason={
+            f"attempts[].{path}": "pre_dispatch_not_reached"
+            for path in AttemptResultV1.nullable_leaf_paths()
+            if path not in present_nullable
+        },
+    )
+    trace = UnitTraceV1(
+        case_id=case_id,
+        planned_ai_unit_id=planned,
+        domain="lean",
+        trace_origin="coverage_tail",
+        lemma_node_id=planned,
+        dependency_path=[planned],
+        provider_family="deepseek",
+        provider_entry_id="deepseek-entry",
+        configured_model="deepseek-model",
+        requested_model="deepseek-model",
+        resolved_model="deepseek-model",
+        attempts=[attempt],
+    )
+    trace.validate()
+    return trace
+
+
+def _success(inventory: Any) -> RootResultV2:
     is_exp1 = inventory.experiment_id == "exp1"
     is_exp2 = inventory.experiment_id == "exp2"
     is_exp34 = inventory.experiment_id in {"exp3", "exp4"}
-    result = RootResultV1(
+    result = RootResultV2(
         experiment_id=inventory.experiment_id,
         condition_id=inventory.condition_id,
         case_id=inventory.case_id,
@@ -145,10 +193,164 @@ def _success(inventory: Any) -> RootResultV1:
             for name in inventory.disabled_mechanisms
         ],
         missing_reason={},
-        not_applicable_reason=_nullable_reasons(RootResultV1),
+        not_applicable_reason=_nullable_reasons(RootResultV2),
     )
     result.validate()
     return result
+
+
+@pytest.mark.parametrize(
+    ("unscheduled", "tail_requests", "include_predispatch", "message"),
+    [
+        (["range_0"], {"range_1": {}}, False, "outside unscheduled"),
+        (
+            ["range_0", "range_1", "range_2"],
+            {"range_1": {}},
+            True,
+            "does not close",
+        ),
+    ],
+)
+def test_protocol_snapshot_write_rejects_open_tail_request_sets(
+    unscheduled: list[str],
+    tail_requests: dict[str, dict[str, object]],
+    include_predispatch: bool,
+    message: str,
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    store = RunStore(tmp_path / "open-tail-write")
+    with pytest.raises(ValueError, match=message):
+        store.write_root_protocol_snapshot(
+            "exp1",
+            "condition",
+            "case",
+            0,
+            protocol_result={
+                "summary": {
+                    "runtime_observation": {
+                        "unscheduled_ai_unit_ids": unscheduled,
+                    }
+                }
+            },
+            traces=(
+                [_lean_pre_dispatch_trace("case", "range_0")]
+                if include_predispatch
+                else []
+            ),
+            tail_requests=tail_requests,
+        )
+
+
+def test_protocol_snapshot_read_rejects_open_tail_request_set(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2.storage import (
+        PROTOCOL_SNAPSHOT_SCHEMA_VERSION,
+        RunStore,
+    )
+
+    store = RunStore(tmp_path / "open-tail-read")
+    key = ("exp1", "condition", "case", 0)
+    store.write_root_protocol(
+        *key,
+        {
+            "schema_version": PROTOCOL_SNAPSHOT_SCHEMA_VERSION,
+            "root_key": list(key),
+            "protocol_result": {
+                "summary": {
+                    "runtime_observation": {
+                        "unscheduled_ai_unit_ids": [
+                            "range_0",
+                            "range_1",
+                            "range_2",
+                        ],
+                    }
+                }
+            },
+            "traces": [asdict(_lean_pre_dispatch_trace("case", "range_0"))],
+            "tail_requests": {"range_1": {}},
+            "protocol_projection": None,
+        },
+    )
+
+    with pytest.raises(ValueError, match="does not close"):
+        store.read_root_protocol_snapshot(*key)
+
+
+def test_non_exp1_snapshot_does_not_require_coverage_tail_closure(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    rows = project_root_inventory_rows(build_inventory("representative"))
+    inventory = next(row for row in rows.roots if row.experiment_id == "exp2")
+    projection = _success(inventory)
+    store = RunStore(tmp_path / "exp2-no-tail")
+    key = (
+        inventory.experiment_id,
+        inventory.condition_id,
+        inventory.case_id,
+        inventory.repeat_id,
+    )
+    store.write_root_protocol_snapshot(
+        *key,
+        protocol_result={
+            "summary": {
+                "runtime_observation": {
+                    "unscheduled_ai_unit_ids": list(inventory.planned_ai_unit_ids),
+                }
+            }
+        },
+        traces=(),
+        tail_requests={},
+        protocol_projection=projection,
+    )
+
+    snapshot = store.read_root_protocol_snapshot(*key)
+    assert snapshot.protocol_projection == projection
+    assert snapshot.traces == ()
+    assert snapshot.tail_requests == {}
+
+
+def test_protocol_only_snapshot_may_precede_tail_preparation(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    trace = UnitTraceV1(
+        case_id="case",
+        planned_ai_unit_id="range_0",
+        domain="factorization",
+        trace_origin="protocol",
+        candidate_start=2,
+        candidate_end=3,
+        provider_family="deepseek",
+        provider_entry_id="deepseek-entry",
+        configured_model="deepseek-model",
+        requested_model="deepseek-model",
+        resolved_model="deepseek-model",
+        attempts=[_attempt("case", "range_0")],
+    )
+    store = RunStore(tmp_path / "protocol-only-before-tail")
+    key = ("exp1", "condition", "case", 0)
+    store.write_root_protocol_snapshot(
+        *key,
+        protocol_result={
+            "summary": {
+                "runtime_observation": {
+                    "unscheduled_ai_unit_ids": ["range_1"],
+                }
+            }
+        },
+        traces=[trace],
+    )
+
+    snapshot = store.read_root_protocol_snapshot(*key)
+    assert snapshot.traces == (trace,)
+    assert snapshot.tail_requests == {}
+    assert snapshot.protocol_projection is None
 
 
 def test_fresh_process_protocol_resume_uses_typed_files_only(
@@ -521,6 +723,14 @@ def test_fresh_protocol_resume_calls_only_the_missing_factor_tail_target(
     assert resumed.trace_tail_target_ai_unit_ids == [planned]
     assert resumed.trace_tail_recorded_ai_unit_ids == [planned]
     assert resumed.trace_tail_provider_attempt_count == 1
+    assert [
+        (attempt.planned_ai_unit_id, attempt.attempt_ordinal, attempt.trace_origin)
+        for attempt in resumed.attempts
+    ] == [
+        ("range_0", 0, "protocol"),
+        ("range_1", 0, "protocol"),
+        ("range_2", 0, "coverage_tail"),
+    ]
     assert fresh.read_trace(inventory.case_id, 0, planned).attempts[0].verifier_result == "passed"
     assert asdict(fresh.read_root_result(
         inventory.experiment_id,
@@ -535,7 +745,74 @@ def test_fresh_protocol_resume_calls_only_the_missing_factor_tail_target(
     assert not list((fresh.run_dir / "calls").glob("*.outcome.json"))
 
 
-def test_started_online_runtime_failure_uses_inventory_and_never_runs_tail(
+def test_completed_factor_tail_resume_matches_fresh_attempts_and_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import provider, runtime
+    from tokenshare.experiments.slim_v2.storage import RunStore
+    from tests.experiments.slim_v2.test_answer_paths import (
+        _PromptResponseFactory,
+        _answer_path_factor_case,
+        _entry,
+    )
+    from tests.experiments.slim_v2.test_system_vertical import _inventory
+
+    model = "deepseek-v4-pro"
+    entry = _entry(family="deepseek", model=model)
+    factory = _PromptResponseFactory(model)
+    monkeypatch.setenv("SLIM_V2_TEST_KEY", "secret")
+    monkeypatch.setattr(provider, "_open_response", factory)
+    case = _answer_path_factor_case()
+    inventory = replace(
+        _inventory(case=case, domain="factorization"),
+        condition_id="task5_completed_tail_resume",
+        provider_entry_id=entry.entry_id,
+        configured_model=model,
+        planned_ai_unit_ids=["range_0", "range_1", "range_2"],
+    )
+    inventory.validate()
+    store = RunStore(tmp_path / "run")
+    context = SimpleNamespace(
+        run_id="task5-completed-tail",
+        profile_id="representative",
+        inventory=inventory,
+        root_input=case,
+        source_run_dir=None,
+        challenge_plan=None,
+        is_reference=False,
+        provider_entries={entry.entry_id: entry},
+        max_retries=2,
+        continue_after_terminal_child_failure=True,
+        protocol_execution_attempt_upper=9,
+        provider_call_upper=9,
+        run_store=store,
+    )
+
+    fresh = runtime.execute_root_context(context)
+    call_count = len(factory.responses)
+    assert call_count == 3
+    protocol_snapshot = store.read_root_protocol(
+        inventory.experiment_id,
+        inventory.condition_id,
+        inventory.case_id,
+        inventory.repeat_id,
+    )
+    resumed = runtime.resume_exp1_root_context(context, protocol_snapshot)
+
+    assert [
+        (attempt.planned_ai_unit_id, attempt.attempt_ordinal, attempt.trace_origin)
+        for attempt in fresh.attempts
+    ] == [
+        ("range_0", 0, "protocol"),
+        ("range_1", 0, "protocol"),
+        ("range_2", 0, "coverage_tail"),
+    ]
+    assert asdict(resumed) == asdict(fresh)
+    assert len(factory.responses) == call_count
+
+
+def test_normal_parse_exhaustion_completes_unscheduled_coverage_tail(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -552,7 +829,7 @@ def test_started_online_runtime_failure_uses_inventory_and_never_runs_tail(
     case = _answer_path_factor_case()
     case["split_params"] = {
         "strategy_id": "factorization.candidate_range_partition.v1",
-        "requested_child_count": 1,
+        "requested_child_count": 3,
     }
     entry = _entry(family="deepseek", model="deepseek-v4-pro")
     inventory = replace(
@@ -560,7 +837,7 @@ def test_started_online_runtime_failure_uses_inventory_and_never_runs_tail(
         condition_id="task6_started_runtime_failure",
         provider_entry_id=entry.entry_id,
         configured_model=entry.configured_model,
-        planned_ai_unit_ids=["range_0"],
+        planned_ai_unit_ids=["range_0", "range_1", "range_2"],
     )
     inventory.validate()
     store = RunStore(tmp_path / "started-runtime-failure")
@@ -577,7 +854,7 @@ def test_started_online_runtime_failure_uses_inventory_and_never_runs_tail(
         max_retries=2,
         continue_after_terminal_child_failure=False,
         protocol_execution_attempt_upper=3,
-        provider_call_upper=3,
+        provider_call_upper=9,
     )
     responses: list[_FakeResponse] = []
 
@@ -594,37 +871,360 @@ def test_started_online_runtime_failure_uses_inventory_and_never_runs_tail(
         "_open_response",
         invalid_response,
     )
-    monkeypatch.setattr(
-        runtime,
-        "run_coverage_tail",
-        lambda *args, **kwargs: pytest.fail(
-            "runtime failure must not run coverage tail"
-        ),
-    )
-
     result = runtime.execute_root_context(context)
 
     assert result.protocol_started is True
     assert result.root_status == "failed"
-    assert result.failure_stage == "protocol_runtime"
-    assert result.failure_kind == "infrastructure_invalid"
-    assert len(responses) == 3
-    assert result.planned_ai_unit_ids == ["range_0"]
+    assert result.failure_stage == "candidate_acquisition"
+    assert result.failure_kind == "no_final"
+    assert result.failure_origin == "model_parse_exhausted"
+    assert len(responses) == 9
+    assert result.planned_ai_unit_ids == ["range_0", "range_1", "range_2"]
     assert result.dispatched_ai_unit_ids == ["range_0"]
     assert result.completed_ai_unit_ids == []
-    assert result.unscheduled_ai_unit_ids == []
-    assert len(result.attempts) == 3
+    assert result.unscheduled_ai_unit_ids == ["range_1", "range_2"]
+    assert len(result.attempts) == 9
+    assert [
+        (attempt.planned_ai_unit_id, attempt.attempt_ordinal, attempt.trace_origin)
+        for attempt in result.attempts
+    ] == [
+        *(("range_0", ordinal, "protocol") for ordinal in range(3)),
+        *(("range_1", ordinal, "coverage_tail") for ordinal in range(3)),
+        *(("range_2", ordinal, "coverage_tail") for ordinal in range(3)),
+    ]
+    assert result.trace_tail_target_ai_unit_ids == ["range_1", "range_2"]
+    assert result.trace_tail_recorded_ai_unit_ids == ["range_1", "range_2"]
+    assert result.trace_tail_failure_unit_count == 2
     snapshot = store.read_root_protocol_snapshot(
         inventory.experiment_id,
         inventory.condition_id,
         inventory.case_id,
         inventory.repeat_id,
     )
-    runtime_failure = snapshot.protocol_result["summary"]["slim_runtime_failure"]
-    assert runtime_failure["failure_kind"] == "infrastructure_invalid"
-    assert runtime_failure["error_kind"] == "RuntimeError"
-    trace = store.read_trace(inventory.case_id, 0, "range_0")
-    assert [attempt.attempt_ordinal for attempt in trace.attempts] == [0, 1, 2]
+    assert snapshot.protocol_result["summary"]["terminal_failure"] == {
+        "failure_stage": "candidate_acquisition",
+        "failure_origin": "model_parse_exhausted",
+        "infrastructure_invalid": False,
+    }
+    assert "slim_runtime_failure" not in snapshot.protocol_result["summary"]
+    from tokenshare.experiments.slim_v2.storage import select_trace_attempt
+
+    traces = {
+        planned: store.read_trace(inventory.case_id, 0, planned)
+        for planned in inventory.planned_ai_unit_ids
+    }
+    assert [attempt.attempt_ordinal for attempt in traces["range_0"].attempts] == [
+        0, 1, 2,
+    ]
+    assert all(traces[planned].trace_origin == "coverage_tail" for planned in ("range_1", "range_2"))
+    assert all(select_trace_attempt(trace, 0).attempt is not None for trace in traces.values())
+
+
+def test_lean_parse_exhaustion_completes_unscheduled_coverage_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli, provider, runtime
+    from tokenshare.experiments.slim_v2.execution import FixedTraceSubmissionAdapter
+    from tokenshare.experiments.slim_v2.storage import RunStore, select_trace_attempt
+    from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
+    from tokenshare.storage.artifacts import ArtifactStore
+    from tests.experiments.slim_v2.test_answer_paths import (
+        _FakeResponse,
+        _entry,
+        _response_body,
+    )
+    from tests.experiments.slim_v2.test_system_vertical import (
+        _inventory,
+        _lean_case,
+        _test_lean_environment,
+    )
+    from tests.support.lean_checker import RecordingLeanChecker
+
+    case = _lean_case("lean_v2_medium_lemma_dag_01")
+    planned = [str(node["node_id"]) for node in case["lemma_graph"]["nodes"]]
+    entry = _entry(family="deepseek", model="deepseek-v4-pro")
+    inventory = replace(
+        _inventory(case=case, domain="lean"),
+        condition_id="lean_parse_tail",
+        provider_entry_id=entry.entry_id,
+        configured_model=entry.configured_model,
+        planned_ai_unit_ids=planned,
+    )
+    inventory.validate()
+    store = RunStore(tmp_path / "lean-parse-tail")
+    checker = RecordingLeanChecker()
+    runtimes: list[LeanRuntimeAdapter] = []
+
+    def plugin_runtime(*, context, protocol_config, provider_family):
+        adapter = LeanRuntimeAdapter(
+            provider_family=provider_family,
+            seed=20260820,
+            protocol_config=protocol_config,
+            created_at="2026-08-22T00:00:00Z",
+            environment_manifest=_test_lean_environment(),
+            checker=checker,
+        )
+        runtimes.append(adapter)
+        return adapter
+
+    responses: list[_FakeResponse] = []
+
+    def invalid_response(request: object, timeout_seconds: float) -> _FakeResponse:
+        response = _FakeResponse(
+            _response_body(content="{}", model=entry.configured_model)
+        )
+        responses.append(response)
+        return response
+
+    monkeypatch.setenv("SLIM_V2_TEST_KEY", "secret")
+    monkeypatch.setattr(provider, "_open_response", invalid_response)
+    monkeypatch.setattr(runtime, "_plugin_runtime", plugin_runtime)
+    monkeypatch.setattr(
+        runtime,
+        "check_lean_proof",
+        lambda *_args, **_kwargs: pytest.fail("parse failure reached Lean tail checker"),
+    )
+    context = SimpleNamespace(
+        run_id="lean-parse-tail",
+        profile_id="representative",
+        inventory=inventory,
+        root_input=case,
+        run_store=store,
+        source_run_dir=None,
+        challenge_plan=None,
+        is_reference=False,
+        provider_entries={entry.entry_id: entry},
+        max_retries=2,
+        continue_after_terminal_child_failure=False,
+        protocol_execution_attempt_upper=3,
+        provider_call_upper=3 * len(planned),
+    )
+    result = runtime.execute_root_context(context)
+
+    assert result.failure_kind == "no_final"
+    assert result.failure_origin == "model_parse_exhausted"
+    assert result.unscheduled_ai_unit_ids == planned[1:]
+    assert result.trace_tail_target_ai_unit_ids == planned[1:]
+    assert result.trace_tail_recorded_ai_unit_ids == planned[1:]
+    assert result.trace_tail_provider_attempt_count == 6
+    assert len(responses) == 9
+    assert checker.modes == []
+    traces = {
+        item: store.read_trace(inventory.case_id, 0, item) for item in planned
+    }
+    assert all(
+        select_trace_attempt(trace, 0).attempt is not None
+        for trace in traces.values()
+    )
+    dependency_paths = {
+        planned[2]: [planned[0], planned[1], planned[2]],
+        planned[4]: planned,
+    }
+    for item, dependency_path in dependency_paths.items():
+        trace = traces[item]
+        assert trace.trace_origin == "coverage_tail"
+        assert trace.lemma_node_id == item
+        assert trace.dependency_path == dependency_path
+        assert len(trace.attempts) == 1
+        attempt = trace.attempts[0]
+        assert attempt.attempt_ordinal == 0
+        assert attempt.provider_call_made is False
+        assert attempt.result_kind == "pre_dispatch_failure"
+        assert attempt.parse_result == "not_reached"
+        assert attempt.checker_result == "not_reached"
+    provider_attempts = [
+        attempt
+        for trace in traces.values()
+        for attempt in trace.attempts
+        if trace.trace_origin == "coverage_tail"
+        and attempt.provider_call_made is True
+    ]
+    assert result.trace_tail_provider_attempt_count == len(provider_attempts)
+    assert result.trace_tail_total_tokens == sum(
+        int(attempt.total_tokens) for attempt in provider_attempts
+    )
+    expected_cost = (
+        sum(float(attempt.cost_estimate_cny) for attempt in provider_attempts)
+        if all(
+            attempt.cost_estimate_cny is not None for attempt in provider_attempts
+        )
+        else None
+    )
+    assert result.trace_tail_cost_estimate_cny == expected_cost
+    assert runtimes[0].dependency_path_for_planned_unit(planned[2]) == (
+        dependency_paths[planned[2]]
+    )
+
+    snapshot = store.read_root_protocol_snapshot(
+        inventory.experiment_id,
+        inventory.condition_id,
+        inventory.case_id,
+        inventory.repeat_id,
+    )
+    source_request = runtime._execution_request_from_document(
+        snapshot.tail_requests[planned[1]]
+    )
+    source_request = replace(
+        source_request,
+        request_id="exp2-predispatch-source-request",
+        attempt_id="exp2-predispatch-source-attempt",
+        attempt_ordinal=0,
+        soft_hints={
+            **dict(source_request.soft_hints or {}),
+            "planned_ai_unit_id": planned[2],
+            "lemma_node_id": planned[2],
+            "dependency_path": dependency_paths[planned[2]],
+        },
+    )
+    fixed = FixedTraceSubmissionAdapter(
+        source_store=store,
+        artifact_store=ArtifactStore(
+            store.system_root_directory(
+                inventory.experiment_id,
+                inventory.condition_id,
+                inventory.case_id,
+                inventory.repeat_id,
+            )
+        ),
+        case_id=inventory.case_id,
+        domain="lean",
+        provider_entry_id=entry.entry_id,
+        configured_model=entry.configured_model,
+        experiment_id="exp2",
+    )
+    source_submission = fixed.execute(
+        source_request,
+        submission_id="exp2-predispatch-source-submission",
+        submitted_at="2026-08-22T00:00:00Z",
+    )
+    assert source_submission.usage_summary["provider_call_made"] is False
+    assert source_submission.usage_summary["source_result_kind"] == (
+        "pre_dispatch_failure"
+    )
+    assert fixed.attempts[0].provider_call_made is False
+    assert fixed.attempts[0].source_lemma_node_id == planned[2]
+    assert fixed.attempts[0].source_dependency_path == dependency_paths[planned[2]]
+
+    invalid_trace = replace(
+        traces[planned[2]],
+        attempts=[replace(traces[planned[2]].attempts[0], provider_call_made=True)],
+    )
+    with pytest.raises(ValueError, match="coverage-tail trace is invalid"):
+        RunStore(tmp_path / "invalid-mixed-tail").write_root_protocol_snapshot(
+            inventory.experiment_id,
+            inventory.condition_id,
+            inventory.case_id,
+            inventory.repeat_id,
+            protocol_result=snapshot.protocol_result,
+            traces=[invalid_trace],
+            tail_requests={},
+        )
+
+    crash_store = RunStore(tmp_path / "snapshot-only-predispatch-tail")
+    protocol_summary = dict(snapshot.protocol_result["summary"])
+    protocol_summary["runtime_observation"] = {
+        **dict(protocol_summary["runtime_observation"]),
+        "unscheduled_ai_unit_ids": [planned[2]],
+    }
+    crash_store.write_root_protocol_snapshot(
+        inventory.experiment_id,
+        inventory.condition_id,
+        inventory.case_id,
+        inventory.repeat_id,
+        protocol_result={
+            **dict(snapshot.protocol_result),
+            "summary": protocol_summary,
+        },
+        traces=[traces[planned[2]]],
+        tail_requests={},
+    )
+    assert cli._protocol_tail_pending(crash_store, inventory) is True
+    assert cli._protocol_tail_requires_provider(crash_store, inventory) is False
+
+    for item in planned[1:]:
+        store.trace_path(inventory.case_id, 0, item).unlink()
+    response_count = len(responses)
+    resumed = runtime.resume_exp1_root_context(
+        context,
+        store.read_root_protocol(
+            inventory.experiment_id,
+            inventory.condition_id,
+            inventory.case_id,
+            inventory.repeat_id,
+        ),
+    )
+    assert len(responses) == response_count
+    assert resumed.trace_tail_target_ai_unit_ids == planned[1:]
+    assert resumed.trace_tail_recorded_ai_unit_ids == planned[1:]
+    assert all(
+        select_trace_attempt(
+            store.read_trace(inventory.case_id, 0, item),
+            0,
+        ).attempt
+        is not None
+        for item in planned
+    )
+
+
+def test_lean_checker_infrastructure_terminal_blocks_coverage_tail() -> None:
+    from tokenshare.experiments.slim_v2.runtime import coverage_tail_blocked
+
+    assert coverage_tail_blocked(
+        {
+            "terminal_failure": {
+                "failure_stage": "candidate_verification",
+                "failure_origin": "checker_environment_error",
+                "infrastructure_invalid": True,
+            }
+        }
+    ) is True
+
+
+@pytest.mark.parametrize(
+    "blocked_summary",
+    [
+        {
+            "slim_runtime_failure": {
+                "failure_stage": "runtime",
+                "failure_origin": "unexpected_runtime_error",
+            }
+        },
+        {
+            "terminal_failure": {
+                "failure_stage": "candidate_verification",
+                "failure_origin": "checker_environment_error",
+                "infrastructure_invalid": True,
+            }
+        },
+    ],
+)
+def test_infrastructure_snapshot_resume_never_requires_provider(
+    blocked_summary: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.storage import RunStore
+    from tests.experiments.slim_v2.test_answer_paths import _answer_path_factor_case
+    from tests.experiments.slim_v2.test_system_vertical import _inventory
+
+    inventory = replace(
+        _inventory(case=_answer_path_factor_case(), domain="factorization"),
+        condition_id="blocked_snapshot_resume",
+    )
+    store = RunStore(tmp_path / "blocked-snapshot-resume")
+    store.write_root_protocol_snapshot(
+        inventory.experiment_id,
+        inventory.condition_id,
+        inventory.case_id,
+        inventory.repeat_id,
+        protocol_result={"summary": blocked_summary},
+        traces=[],
+        tail_requests={},
+    )
+
+    assert cli._protocol_tail_pending(store, inventory) is False
+    assert cli._protocol_tail_requires_provider(store, inventory) is False
 
 
 def test_tail_request_snapshot_round_trips_only_public_execution_dto(

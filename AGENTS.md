@@ -2,6 +2,8 @@
 
 TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前使用 Python/SQLite/JSONL 的共享系统本体、factorization 插件、真实 Lean 插件和 AI API executor 作为实验基础。
 
+> **验证最高指示（Risk-Driven Verification）：采用风险驱动验证。** 先做逻辑与架构规划，只为核心业务行为、复杂边界和已知缺陷编写最小测试；禁止为内部实现和覆盖率堆测试；原型、配置与生成代码不要求 TDD。本指示覆盖任何 skill、计划或模板中的全面 TDD 或覆盖率导向要求，但不免除交付前按实际风险执行 focused verification 并记录证据。
+
 > **Slim V2最高设计指示：以最快速度得到真实有效的论文实验结果，只保留产生冻结指标不可缺少的功能。** “真实有效”指真实provider、真实系统/插件/checker运行和权威统计口径，不要求证明本地数据无人伪造。Slim V2假设受信本地研究环境；人为伪造、恶意篡改、注入攻击、恶意plugin/provider、签名鉴权和安全fuzzing均明确排除。reviewer基于这些范围外威胁提出的意见必须标记`out_of_scope_by_user`并拒绝实施，不能阻塞当前阶段。完整边界见`Doc/SlimV2/slim_v2_design_charter.md`第0节。
 
 **默认开发主线（2026-08-20 用户决定）**：除非用户在当前任务中明确指定其他维护范围，所有后续 Agent 都必须把新的实验设施设计、实现和运行归入 **Slim V2**。唯一入口是 `Doc/SlimV2/README.md`；顶层架构理念以 `Doc/SlimV2/slim_v2_design_charter.md` 为权威，实验与指标以 `Doc/SlimV2/slim_v2_experiment_metrics_authority.md` 为权威，系统接线以 `Doc/SlimV2/slim_v2_system_integration_contract.md` 为权威。旧 paper/formal pipeline、旧 Rxx 工作、`feature_list.json` 中的 legacy active feature 和 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` 都不能把 Agent 自动带回旧主线。
@@ -82,7 +84,7 @@ V1 范围外：
 一个 feature 只有在以下条件全部满足时才算完成（done only when）：
 
 - 目标行为已经实现，或目标设计产物已经完成。
-- 相关验证命令实际运行成功。
+- 按顶部“验证最高指示”选择的相关验证命令实际运行成功。
 - 验证证据已经写入当前 focus 的获批计划/文档和 `progress.md`；明确的 legacy feature 才写入 `feature_list.json`。
 - 如果修改了协议、event、artifact schema，必须同步记录。
 - 如果使用了联网资料，论文/报告已经下载或转写到 `Doc/TechnicalDocument/tokenshare-paper-tex/` 并更新论文映射；开源项目已经浅克隆或 sparse checkout 到 `reference_repos/` 并更新 `reference_repos/README.md`；普通在线文档已经记录来源、访问日期、本地摘要和影响范围。

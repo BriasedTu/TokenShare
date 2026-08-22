@@ -63,9 +63,13 @@ Slim V2 对一个 root 的唯一入口是：
 - `event_refs`：该 task 的事件 ID、序号、类型引用，不含完整 payload。
 - `artifact_refs`：result 投影发现并校验过的 artifact refs；不是按业务角色命名的 map。
 - `summary`：包含 event/artifact 数、unit/attempt state counts、`units[]`、`attempts[]`，以及 `runtime_observation`；有 hooks 时包含 `runtime_hook_observations`。
+- 正常候选取得失败耗尽时，`summary["terminal_failure"]` 固定为 `{"failure_stage": <stage>, "failure_origin": <origin>, "infrastructure_invalid": false}`。`origin` 只用 `model_parse_exhausted`、`model_verification_exhausted`、`provider_transport_exhausted` 或 `mixed_candidate_acquisition_failure`；Factorization 与 Lean 共享这一结构化终态，不抛普通 retry-limit 异常。
+- Lean checker 在运行中返回 `environment_error`、`timeout` 或 `helper_error` 时，`summary["terminal_failure"]` 使用 `failure_stage="candidate_verification"`、`failure_origin="checker_environment_error"`、`infrastructure_invalid=true`，并立即停止当前 root，不创建下一模型 retry。
 - `ledger_binding`：系统返回的运行绑定字段。Slim V2 不把它用于任何指标，也不围绕它增加门禁。
 
 `ProtocolRunResult.status == "completed"` 只表示协议 root 完成，不能单独等同于论文“正确”。正确性必须读取第 4、5 节所述领域结果。
+
+Slim projector 只把失败映射到冻结顶层 `failure_kind=no_final/incorrect_final/infrastructure_invalid`，并把上述细因复制到 nullable `failure_origin`；成功 root 的 `failure_origin=null`。condition fail-stop 与未知 runtime 异常的原细分原因也只能进入 `failure_origin`，不能成为新的顶层 `failure_kind`。
 
 ### 2.4 细粒度数据从哪里取
 
@@ -137,6 +141,13 @@ Slim V2 对一个 root 的唯一入口是：
 - 正确性唯一来源是 `adapter.merge_result.accepted == true` 且 `adapter.merge_result.root_checker_report.status == ACCEPTED`；普通 `result.status` 不能替代 root recheck。
 - child checker rejection、root checker rejection和 checker 环境错误必须分别保存，不能都折叠成“模型错误”。
 
+### 4.4 独立 Lean 环境 pass 与启动轻量校验
+
+- 独立环境测试覆盖冻结 catalog 中全部 checker-backed cases 的全部 lemma nodes，并以 oracle proof 调用真实 checker；预注册 `structured_blocked` cases 只保留库存计数，不冒充 checker pass。测试可构建 Lean project并运行 Lean/lake，但只有全部 nodes 为 `accepted` 时才原子写入 `local/cache/slim_v2/lean_environment_pass.v1.json`，schema 固定为 `tokenshare.slim_v2.lean_environment_pass.v1`。
+- pass 文件至少绑定 `status=passed`、catalog/environment 身份、checker-backed 与 structured-blocked case/node 计数、关键输入文件 digests，以及 `TokenShare/LemmaGraphOracle.olean` 与 `TokenShare/LemmaGraphCases.olean` 两个 compiled-object hashes。
+- 每次启动 Lean 实验、且在任何 provider 调用之前，只执行轻量只读校验：读取 pass JSON，校验 schema/status/pass digest、当前关键输入 digests、两个 `.olean` 文件存在且 hash 匹配。该启动路径禁止运行 Lean、lake 或任何 subprocess，也不得在 pass 缺失/失效时现场重建环境。
+- pass 缺失、不可读或任一绑定失效时，在 provider 前 fail closed：全部 pending Lean ordinary/reference roots 顶层记为 `infrastructure_invalid`、`failure_stage=preflight` 并保存具体 `failure_origin`；同 run 的 Factorization roots 继续，fixed-source closure 排除这些 Lean-invalid keys。修复环境并重新运行独立环境测试生成新 pass 后，才可按原预注册 inventory 重跑。运行中 checker 环境错误则沿用第 2.3 节的 `candidate_verification/checker_environment_error`，二者不得混同。
+
 ## 5. AI API 接线
 
 ### 5.1 local config 与 secret
@@ -184,11 +195,11 @@ Slim V2 对一个 root 的唯一入口是：
 
 ### 6.2 Experiment 1 coverage tail 与 Experiment 2–4 固定回答复用
 
-- Experiment 1 正常协议 `run_root()` 返回后，先把每个实际执行 AI unit 的普通语义输入与最多三个自然 attempts 写成 `trace_origin=protocol` 的 per-unit trace。此时 root start/terminal/runtime 已冻结，不得被后续 acquisition 改写。
-- Slim runner 随即从同一 `runtime_observation.unscheduled_ai_unit_ids` 生成 tail target set，并减去已经存在 protocol trace 的 planned IDs。target 按 `planned_ai_unit_id` 稳定排序；只处理本 root，不缓存到全局待办，不修改 coordinator、plugin readiness、ProtocolEngine、canonical、merge 或 root result。
+- Experiment 1 协议 `run_root()` 返回后，先把每个实际执行 AI unit 的普通语义输入与最多三个自然 attempts 写成 `trace_origin=protocol` 的 per-unit trace。有效 `no_final/incorrect_final` 或其他 `terminal_failure.infrastructure_invalid=false` 仍继续 coverage tail；只有 `slim_condition_failure`、`slim_runtime_failure` 或 `terminal_failure.infrastructure_invalid=true` 阻断。此时 root start/terminal/runtime 已冻结，不得被后续 acquisition 改写。
+- Slim runner 随即从同一 `runtime_observation.unscheduled_ai_unit_ids` 生成 tail target sequence，并减去已经存在 protocol trace 的 planned IDs。target 保持该冻结 observation 的原始顺序，不按文本或数字重排；只处理本 root，不缓存到全局待办，不修改 coordinator、plugin readiness、ProtocolEngine、canonical、merge 或 root result。
 - 每个 tail target 使用原 plan 中相同的普通 unit input、prompt、依赖输入、provider entry/model 与 request controls，通过同一个 Slim real-provider caller取得自然 attempts。`attempt_ordinal` 从 0 开始；transport/parse/verifier/checker 未 accepted 时继续，首次 accepted 后停止，最多三个。parser/verifier/checker 只决定 tail 是否继续，不向已终止 root 提交 submission。
-- 每个 tail target 写与同题同 key 的唯一 per-unit trace，`trace_origin=coverage_tail`。如果 request 无法构造、依赖输入不可用或 provider 调用失败，保存明确失败 attempt/result kind；不得伪造回答。tail 完成的定义是全部 target 均已写出至少一个真实 attempt/failure record，而不是全部获得 accepted answer。
-- coverage tail 完成或按上限终止后写普通 tail summary，包含 target/recorded IDs、真实 wall-clock、provider attempt count、tokens、cost 与 status；然后才能开始下一个 root。恢复时按三元 trace key 跳过已经持久化的 unit，只补当前 root 缺失的 target，不重复调用 protocol unit或已完成 tail unit，不创建独立 response bank。
+- 每个 tail target 写与同题同 key 的唯一 per-unit trace，`trace_origin=coverage_tail`。Lean 依赖 canonical 不可用时保存带原 `lemma_node_id/dependency_path`、`provider_call_made=false` 的 typed `pre_dispatch_failure`；其他 request 构造或 provider 调用失败同样保存明确失败 attempt/result kind，不得伪造回答。tail 完成的定义是全部 target 均已写出至少一个真实 attempt/failure record，而不是全部获得 accepted answer。
+- coverage tail 完成或按上限终止后写普通 tail summary，包含 target/recorded IDs、真实 wall-clock、provider attempt count、tokens、cost 与 status；其中调用数和资源只累计 `provider_call_made=true` 的 attempts。然后才能开始下一个 root。最终 `RootResultV2.attempts[]` 由 protocol snapshot 的 attempts 加上当前 root 所有已持久化 tail traces 的 attempts，按 target 原顺序和各 trace 自然 ordinal 稳定重建；fresh 与 resume 必须相同。恢复时按三元 trace key 跳过已经持久化的 unit，只补当前 root 缺失的 target，不重复调用 protocol unit或已完成 tail unit，不创建独立 response bank。
 - Experiment 1 正文 completion/correctness/timing/token/cost 只读取正常协议阶段。tail 的真实资源单列诊断；`actual_end_to_end_wall_clock_ms=Σ runtime_wall_clock_ms`，不能使用会夹入 root 间 tail 的跨-root `max-min`。
 - Experiment 2–4 不另行 acquisition，也不创建附加 repeat 或自然 trace attempts；它们可以同样消费 `protocol` 与 `coverage_tail` traces。
 - fixed-response executor 只能用 `case_id × source_repeat_id × planned_ai_unit_id` 精确匹配，且 Experiment 2–4 的 `source_repeat_id` 固定为 0。下游 root 的 `repeat_id`、`condition_id`、worker、fault、mode、attempt ordinal 和 backend 类型都不进入 lookup key。
@@ -274,6 +285,8 @@ policy布尔值只描述配置，不能证明实际机制被删除。结构路�
 
 本节字段名与 `slim_v2_experiment_metrics_authority.md` 第 8 节完全一致。
 
+普通 root result 的唯一可读写 schema 是 `tokenshare.slim_v2.root_result.v2`。`failure_origin` 必须出现但可为 `null`；reader、embedded protocol projection 与 reducer 均严格读取 v2。本项目不迁移或兼容旧 v1 结果，新的正式运行使用全新 run ID/目录；该版本切换不取消同一 v2 run 的 snapshot/trace/journal crash-resume。
+
 | 原始字段 | 实际来源 |
 |---|---|
 | `experiment_id`,`condition_id`,`case_id`,`repeat_id`,`domain`,`difficulty`,`topic_family`,`position_stratum` | Slim V2 预注册 condition/root inventory；case 分层来自当前 catalog/selection |
@@ -283,10 +296,10 @@ policy布尔值只描述配置，不能证明实际机制被删除。结构路�
 | `root_start_at_ms`,`root_terminal_at_ms`,`runtime_wall_clock_ms` | Slim runner在 `run_root` 协议生命周期入口与 terminal 返回/失败边界使用同一 clock记录；projector校验 `runtime=root_terminal-root_start`。公共 runtime observation 可作交叉读取，但 worker first-start 不能替代 root start |
 | `trace_tail_started_at_ms`,`trace_tail_terminal_at_ms`,`trace_tail_wall_clock_ms`,`trace_tail_status` | Exp1 Slim runner 在 `run_root()` 返回后、下一个 root 开始前使用独立真实 clock 记录；projector校验 tail wall，且不得回写 root terminal/runtime |
 | `trace_tail_target_ai_unit_ids`,`trace_tail_recorded_ai_unit_ids`,`trace_tail_provider_attempt_count`,`trace_tail_total_tokens`,`trace_tail_cost_estimate_cny` | target 来自正常协议 `runtime_observation.unscheduled_ai_unit_ids` 减去已有 protocol trace keys；recorded/resources 来自本 root coverage-tail per-unit traces 的普通聚合 |
-| `preflight_status`,`protocol_started`,`root_status` | `preflight_status` 来自 Slim 调用前普通检查结果；`protocol_started` 由该 root 是否已经进入 `run_root` 并产生首个 task lifecycle event 判定；`root_status` 来自 `ProtocolRunResult.status`，异常路径由 Slim 写 `infrastructure_error` |
+| `preflight_status`,`protocol_started`,`root_status` | `preflight_status` 来自 Slim 调用前普通检查结果；`protocol_started` 由该 root 是否已经进入 `run_root` 并产生首个 task lifecycle event 判定；已启动 root 的 `root_status` 来自 `ProtocolRunResult.status`，异常细分由 `failure_kind/failure_origin` 表达，不创建新的 root-status taxonomy |
 | `final_result_present` | root unit `completed` 且 root canonical/final plugin artifact可读取 |
 | `verified_correct` | Factorization 独立确定性结果检查；Lean `merge_result.accepted` + root checker `ACCEPTED` |
-| `failure_stage`,`failure_kind` | submission `result_kind/error`、parse failure、verification report、checker report、recovery终态和 Slim 捕获的接线异常按最早失败边界归一化 |
+| `failure_stage`,`failure_kind`,`failure_origin` | submission `result_kind/error`、parse failure、verification/checker report、`summary.terminal_failure`、recovery终态和 Slim 捕获的接线异常按最早失败边界归一化；顶层 kind 只允许三分类，细因只写 origin |
 | `planned_ai_unit_ids`,`dispatched_ai_unit_ids`,`completed_ai_unit_ids`,`unscheduled_ai_unit_ids`,`in_flight_ai_unit_ids_at_witness`,`observed_peak_concurrency` | `result.summary.runtime_observation` 同名字段 |
 | `worker_execution_facts[].worker_id`,`worker_execution_facts[].started_at_ms`,`worker_execution_facts[].ended_at_ms`,`worker_execution_facts[].result_kind` | `result.summary.runtime_observation.worker_execution_facts`；Slim projector 将现有 fact 时间字段规范化为 `*_at_ms` |
 | `required_slot_count` | `adapter.planned_split_plan.merge_plan.required_slots` 的预注册数量 |
@@ -343,6 +356,8 @@ policy布尔值只描述配置，不能证明实际机制被删除。结构路�
 
 每种情况都必须写固定身份、`root_status`、`failure_stage/kind`、已发生 attempts/usage/timing；不能因无 final result 跳过 JSONL 行。
 
+Factorization 与 Lean 的 provider/transport、parser 或环境正常时 verifier/checker 的 retry exhaustion 都是有效 `no_final`，相应 `failure_origin` 按第 2.3 节保存，成功值为 0。它们不得因共享 coordinator 返回 `failed` 而升级为 infrastructure-invalid。
+
 ### 8.2 provider error
 
 - 使用 submission `result_kind` 和 provider-call record 的 terminal attempt分类。
@@ -354,10 +369,13 @@ policy布尔值只描述配置，不能证明实际机制被删除。结构路�
 - parse rejection：保留 raw，`parse_result=rejected`，未到 verifier/checker。
 - verifier/checker rejection：保留 parsed candidate、verification/checker状态；若 policy 允许，由 coordinator 正常创建 replacement。
 - Lean root checker rejection优先判为 `incorrect_final` 或 `no_final`，取决于是否仍形成可读取的最终 root result；不得只看 protocol `completed`。
+- Lean checker 的 `environment_error`、`timeout`、`helper_error` 不是 proof rejection：首次出现即停止 root，不继续模型 retry，并投影为 `infrastructure_invalid`、`failure_origin=checker_environment_error`。
+- 预注册 worker-death 导致 replacement 用尽是有效实验 `no_final`，保留 `failure_stage=child_execution`、`failure_origin=worker_death_exhausted`；不得误写为 provider transport 或未知设施异常。
 
 ### 8.4 coverage tail failure
 
 - coverage-tail 的 provider/transport/parse/verifier/checker failure 按真实 attempt 保存，最多三个；它不改变已经冻结的 protocol root status、correctness 或 timing。
+- 正常 parser/verifier/provider/mixed retry exhaustion 形成的有效 `no_final` 不阻断 coverage tail；只有上文统一 blocker predicate 中的设施终态才阻断。
 - 某个 tail unit 无 accepted answer 不是理由去调用第四次、换模型或借其他 unit 回答；只把 tail status 记为 completed-with-failures。该 target 已有真实 failure record 后，仍算 coverage key 已形成，后续 fixed-response executor原样重放该 result kind。
 - tail 输出写入失败、同一三元键将产生第二条 trace、或 target 并非正常协议的 unscheduled planned unit，属于接线错误；不得开始下一个 root。
 
@@ -375,8 +393,11 @@ policy布尔值只描述配置，不能证明实际机制被删除。结构路�
 - plugin adapter、bridge、parser/checker 没有按本合同装配；
 - FULL mode 出现 disabled-mechanism observation；
 - 固定 trace 缺少三元键、同键存在冲突记录、trace 没有自然 attempt record、普通 unit 语义字段不一致或 source identity 不一致。当前 ordinal 不存在本身不是错误，必须回退到同一 trace 的最后自然 attempt。
+- Lean 环境 pass 文件缺失、schema/status/pass digest 无效、关键输入 digest 漂移，或两个绑定 `.olean` 缺失/hash 不匹配；启动检查只能轻量读取，禁止调用 Lean/lake 自修复。
 
 已预注册但因 condition fail-stop 未执行的 roots仍写 infrastructure-invalid 行。全局共享 catalog/config/store 无效时停止整次 run；单一 model condition 的 resolved-model mismatch 至少停止该 condition。
+
+reducer 对每个 cell 必须输出 `preregistered_root_count`、`scientifically_valid_root_count`、`infrastructure_invalid_root_count`；预注册但缺 committed result 的 root 计入 infrastructure-invalid 并记 `missing_committed_root_result`，三者恒满足 valid + infra = preregistered。这三个库存计数是冻结 153 formal occurrences 之外的 mandatory diagnostics。只要 infra count 非 0，cell 的 completion/success 及相关科学 rate/effect 均为 `null`，原因固定为 `infrastructure_invalid_root_present`；任一端 infrastructure-invalid 的 pair 必须记为 ineligible，同时保留 planned/eligible/ineligible 数量和原因分布。已经持久化且输入完整的精确 attempt/fault/replacement 数量与 token/cost/wall-clock 资源事实仍须输出，不得被科学有效性 early return 清空。三个失败 breakdown 只按已提交 `failure_kind` 直接分组。所有正式 ratio 的 denominator 为 0 时写 `null + missing_reason=zero_denominator`；从模板 null 改写为数值时必须清除同 metric 的旧 missing/not-applicable reason。
 
 ## 9. 明确禁止的依赖
 
@@ -420,7 +441,8 @@ result = ProtocolRunCoordinator(...).run_root(
 )
 read result + this root's ledger/store + adapter final artifacts
 if experiment is 1:
-    freeze root terminal/runtime and append protocol-origin per-unit traces
+    atomically snapshot protocol projection, protocol-origin traces,
+    deterministic tail requests, and known pre-dispatch coverage-tail traces
     enumerate result.runtime_observation.unscheduled_ai_unit_ids
     subtract units that already have a protocol trace
     acquire each remaining unit immediately, max three natural attempts
@@ -450,7 +472,8 @@ create the condition's worker backend
 result = ProtocolRunCoordinator(...).run_root(ProtocolRunRequest(...))
 read child checker reports and adapter.merge_result.root_checker_report
 if experiment is 1:
-    freeze root terminal/runtime and append protocol-origin per-unit traces
+    atomically snapshot protocol projection, protocol-origin traces,
+    deterministic tail requests, and known pre-dispatch coverage-tail traces
     acquire each unscheduled planned unit immediately into a coverage-tail trace
     preserve explicit dependency/request/provider failures instead of fabricating output
     append separate tail resource summary before the next root starts
@@ -470,7 +493,7 @@ append exactly one normalized root JSONL row
 
 ## 12. 已冻结决策与实施期验证项
 
-- 已冻结：Experiment 1 每个 root 分为正常 `run_root()` 与紧随其后的 Slim-local coverage tail；tail 只补该 root 的 unscheduled planned units，标记 `trace_origin=coverage_tail`，资源单列，完成后才开始下一 root，不修改 coordinator 或 root terminal/runtime。
+- 已冻结：Experiment 1 每个 root 分为结构化 `run_root()` 协议终态与紧随其后的 Slim-local coverage tail；有效`no_final`仍补tail，只有统一设施blocker阻断。tail只补该root的unscheduled planned units，标记`trace_origin=coverage_tail`，资源单列，完成后才开始下一root，不修改coordinator或root terminal/runtime。
 - 已冻结：Experiment 2–4 使用 Experiment 1 两阶段产生的唯一 per-unit traces，严格按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 匹配；exact current ordinal优先，缺失时回退同 trace 最后自然 attempt，且不调用真实 provider。Experiment 3 扰动身份仍使用下游当前 ordinal。
 - 已冻结：Experiment 2 不使用独立 20-way split，完整继承 Experiment 1 的 split、unit、prompt 与依赖；只改变 worker count，并由逻辑调度器实际计算结果。
 - 已冻结：lookup 后按 domain 比较 Factorization range 或 Lean node/dependency 普通字段，不使用 hash、digest 或证据链。

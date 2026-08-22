@@ -86,6 +86,7 @@ def build_lean_proof_candidate_prompt_package(
         prompt_text=_prompt_text(
             theorem_payload,
             expected_candidate_id=expected_candidate_id,
+            created_at=created_at,
         ),
         input_summary={
             "theorem_id": theorem_payload.theorem_id,
@@ -231,8 +232,20 @@ def _prompt_text(
     theorem_payload: LeanTheoremPayload,
     *,
     expected_candidate_id: str,
+    created_at: str,
 ) -> str:
     required_fields = ", ".join(_PROOF_CANDIDATE_REQUIRED_FIELDS)
+    exact_template = json.dumps(
+        {
+            "schema_version": LEAN_PROOF_CANDIDATE_SCHEMA_VERSION,
+            "proof_candidate_id": expected_candidate_id,
+            "theorem_payload_digest": theorem_payload.payload_digest,
+            "proof_source": "by\n  exact ...",
+            "created_at": created_at,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
     return "\n".join(
         [
             "You are generating a Lean proof candidate for TokenShare.",
@@ -244,6 +257,13 @@ def _prompt_text(
             f"Theorem payload digest: {theorem_payload.payload_digest}",
             f"Use this exact proof_candidate_id: {expected_candidate_id}",
             f"Return only one JSON object matching {LEAN_PROOF_CANDIDATE_SCHEMA_VERSION}.",
+            (
+                "schema_version must equal the complete literal "
+                f'"{LEAN_PROOF_CANDIDATE_SCHEMA_VERSION}".'
+            ),
+            "Do not shorten schema_version to v1 or 1.0.",
+            "Use exactly this JSON shape and replace only proof_source with your Lean proof body:",
+            exact_template,
             "The proof_candidate_id must start with proof_candidate:.",
             "The JSON object must contain a proof_source string accepted by the fixed Lean checker.",
             "proof_source must be a proof body only, such as by\\n  exact hP.",

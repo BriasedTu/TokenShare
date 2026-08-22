@@ -126,7 +126,7 @@ roots 串行，单 root 内并发；结果逐 root/attempt 增量落盘；响应
 
 ### 4.10 失败也是数据
 
-模型错误、checker rejection、超时、provider failure、worker death 未恢复和 root 无 final 都必须保留固定身份和结果行。设施不能通过跳过失败样本改善分母，也不能把模型自然失败当作基础设施 bug反复修复。
+模型错误、环境正常时的checker rejection、provider/transport耗尽、worker death未恢复和root无final都必须保留固定身份和结果行，作为有效`no_final/incorrect_final`进入预注册分母。Lean checker环境/timeout/helper错误、store/ledger或未知程序异常则必须单独标为`infrastructure_invalid`，使受影响科学cell为null；设施既不能通过跳过失败样本改善分母，也不能把两类失败互相伪装。
 
 ## 5. 必须保留的最小设施
 
@@ -149,7 +149,7 @@ roots 串行，单 root 内并发；结果逐 root/attempt 增量落盘；响应
 - 调用现有 core/local_runtime/plugin/storage 公共接口；
 - Factorization/Lean 领域语义不进入通用 runner；
 - shared code 默认只读；
-- coordinator 正常终态后由 Slim-local coverage tail补齐未调度 unit，不修改 coordinator。
+- coordinator 协议终态（包括有效`no_final`）后由 Slim-local coverage tail补齐未调度 unit，不修改 coordinator；只有condition/runtime或infrastructure-invalid终态阻断。
 - Experiment 4 的消融采用同一协议本体上的结构性局部旁路，不复制 runner、scheduler、状态机或 event ledger；只有真实调用边界早于现有 hook、且 Slim-local 无法得到 required evidence 时，才能按获批设计增加默认零影响的 shared optional seam。
 
 ### 5.4 两种回答执行能力
@@ -206,7 +206,7 @@ roots 串行，单 root 内并发；结果逐 root/attempt 增量落盘；响应
 本文不重复实验公式，但以下架构后果不可改变：
 
 - 所有 roots 在 runner 层串行，`worker_count` 只控制当前 root 内 AI units；
-- Experiment 1 正常协议 terminal 后立即运行 coverage tail，tail资源单列且不回写 root runtime；
+- Experiment 1 协议 terminal（包括有效`no_final`）后立即运行 coverage tail，只有设施终态阻断；tail资源单列且不回写 root runtime；
 - Experiment 2 完整继承 Experiment 1 plan，不使用独立 split；
 - Experiment 2–4 的来源键固定为 `case_id × source_repeat_id=0 × planned_ai_unit_id`，普通字段核对后才可消费；
 - Experiment 2–4 provider calls 为 0，ordinal缺失只允许同 trace last-attempt fallback；

@@ -1,4 +1,4 @@
-"""Slim V2 V1 普通数据对象与字段级验证。
+"""Slim V2 普通数据对象与字段级验证。
 
 本模块只冻结 JSON 可序列化的数据合同，不装配 runtime、catalog、provider 或
 reducer。字段上的 ``nullable`` / ``contract`` metadata 是 schema 事实来源；测试
@@ -18,7 +18,7 @@ from . import SLIM_V2_SCHEMA_VERSION
 RUN_CONFIG_SCHEMA_VERSION = "tokenshare.slim_v2.run_config.v1"
 ROOT_INVENTORY_SCHEMA_VERSION = "tokenshare.slim_v2.root_inventory.v1"
 UNIT_TRACE_SCHEMA_VERSION = "tokenshare.slim_v2.unit_trace.v1"
-ROOT_RESULT_SCHEMA_VERSION = "tokenshare.slim_v2.root_result.v1"
+ROOT_RESULT_SCHEMA_VERSION = "tokenshare.slim_v2.root_result.v2"
 PRICING_VERSION = "slim_v2.pricing.2026-08-20"
 
 _OPERATIONAL = "operational"
@@ -1255,7 +1255,7 @@ class ProviderCallResultV1(SchemaRecordV1):
 
 
 @dataclass(slots=True)
-class RootResultV1(SchemaRecordV1):
+class RootResultV2(SchemaRecordV1):
     SCHEMA_VERSION: ClassVar[str] = ROOT_RESULT_SCHEMA_VERSION
 
     experiment_id: str | None = _required()
@@ -1304,6 +1304,7 @@ class RootResultV1(SchemaRecordV1):
     verified_correct: bool | None = _required()
     failure_stage: str | None = _nullable()
     failure_kind: str | None = _nullable()
+    failure_origin: str | None = _nullable()
     planned_ai_unit_ids: list[str] = _required_factory(list)
     dispatched_ai_unit_ids: list[str] = _required_factory(list)
     completed_ai_unit_ids: list[str] = _required_factory(list)
@@ -1406,6 +1407,26 @@ class RootResultV1(SchemaRecordV1):
             raise SchemaValidationError(
                 "protocol-not-started root cannot have a final result"
             )
+        if self.failure_kind is not None and self.failure_kind not in {
+            "no_final",
+            "incorrect_final",
+            "infrastructure_invalid",
+        }:
+            raise SchemaValidationError("failure_kind must use the frozen top-level taxonomy")
+        if self.failure_kind is not None and self.verified_correct is not False:
+            raise SchemaValidationError(
+                "failure_kind requires verified_correct=false"
+            )
+        if self.verified_correct is False and self.failure_kind is None:
+            raise SchemaValidationError("failed root must carry failure_kind")
+        if self.failure_kind is None and self.failure_origin is not None:
+            raise SchemaValidationError("successful root cannot carry failure_origin")
+        if self.failure_kind in {"no_final", "infrastructure_invalid"} and (
+            not isinstance(self.failure_origin, str) or not self.failure_origin.strip()
+        ):
+            raise SchemaValidationError(
+                "no_final and infrastructure_invalid require a non-empty failure_origin"
+            )
 
     def _validate_tail_fields(self) -> None:
         tail_names = (
@@ -1496,9 +1517,9 @@ class RootResultV1(SchemaRecordV1):
             raise SchemaValidationError(
                 "Exp1 tail success and failure counts must equal target count"
             )
-        if self.trace_tail_provider_attempt_count < len(targets):
+        if self.trace_tail_provider_attempt_count > 3 * len(targets):
             raise SchemaValidationError(
-                "Exp1 tail provider attempt count must cover every target"
+                "Exp1 tail provider attempt count exceeds the natural retry cap"
             )
         if self.trace_tail_total_tokens is not None:
             _require_nonnegative_int(
@@ -1653,7 +1674,7 @@ __all__ = [
     "ProviderEntryViewV1",
     "ProviderRequestControlV1",
     "RootInventoryV1",
-    "RootResultV1",
+    "RootResultV2",
     "SchemaValidationError",
     "SlimRunConfigV1",
     "UnitTraceV1",

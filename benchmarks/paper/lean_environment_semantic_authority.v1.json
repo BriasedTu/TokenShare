@@ -19,7 +19,7 @@
       "files": {
         "fixtures/lean_proof_project/lean-toolchain": "sha256:61561b06f5587e027815fac8f59bf6ca160dfbf3f7372fc6297664acfd85b8c0",
         "fixtures/lean_proof_project/lakefile.lean": "sha256:288f5b67bd53c82742d276e5ed67714279bdce920c54a6986c1b4a7ef5032d39",
-        "fixtures/lean_proof_project/TokenShare.lean": "sha256:53d806bed7bb0b3629f6f6ababa929db48a9e68139abd985ca01ae613395726e",
+        "fixtures/lean_proof_project/TokenShare.lean": "sha256:a27de311bf72fdf181b57c418cfaa8a813857f91804bd60f4f79acae18fcb5c0",
         "fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean": "sha256:c974b8649b3eadf4738d39e3d852e8a958a5e75e2d751da01759e82cb2f919e0",
         "fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean": "sha256:06378524b81f22aa3ec652e96cc970be076aa390ab2ed6ada7f66f91013d8653",
         "fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean": "sha256:45393c97a1a61a4dd5607da8bbfb73690657b9f1ba61e07d39180a581cfcde85",
@@ -30,16 +30,16 @@
         "fixtures/lean_proof_project/TokenShare/Merge.lean": "sha256:f149dc0171a55156891ecd415fc3889e9030e2b81ce53697b1e1c54a51252fc7",
         "fixtures/lean_proof_project/TokenShare/SplitRules.lean": "sha256:6716f703905abe0b230215ac20886eb96b8e929aec27fb9c78265a7450aee5c1"
       },
-      "digest": "sha256:dd480188a9181130b61fd9da3e09789264d8776e715087a811a4f942d699b682"
+      "digest": "sha256:f2d1f99951081f6d59e4529ec97265438c14a9884cf99c013947f5a52e8df6ff"
     },
     "checker": {
       "schema_version": "tokenshare.lean_checker_semantic_projection.v1",
       "normalization": "utf8_lf.v1",
       "files": {
-        "src/tokenshare/plugins/lean_proof/checker.py": "sha256:af205269ff56dbe88c9561f0f8663d89941a1830e9f3de10aa51a61f79b3bcf4"
+        "src/tokenshare/plugins/lean_proof/checker.py": "sha256:bebcce9e669d15bccafddeae0e82b8733e9e1c3574dedb28fa6530d949ba7099"
       },
-      "digest": "sha256:96740890ea19c77430391698296719c3fc3408e4ebbd81043d46650fb099884d"
+      "digest": "sha256:ebe874c64679a4a924f9a916a9fe79f6334b173a7892f5a3aa7efb19a723ba5a"
     }
   },
-  "sidecar_digest": "sha256:6a60bb31465c535a9fcfcbe9a60f0e53af9e063cd05eeb2e151cf05817c0e24f"
+  "sidecar_digest": "sha256:7515686eee3406df9f7ca3221c806c0c2d80f7204799ec614309e4c48d08bdbd"
 }

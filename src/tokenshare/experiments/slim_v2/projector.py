@@ -22,7 +22,7 @@ from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
 from tokenshare.plugins.lean_proof.schemas import PROOF_ARTIFACT_OUTPUT_NAME
 from tokenshare.storage.events import EventType
 
-from .runtime import RootAssembly, TailSummaryV1
+from .runtime import RootAssembly, TailSummaryV1, coverage_tail_blocked
 from .schema import (
     AblationObservationV1,
     AttemptResultV1,
@@ -30,7 +30,7 @@ from .schema import (
     FaultObservationV1,
     RecoveryObservationV1,
     RootInventoryV1,
-    RootResultV1,
+    RootResultV2,
     WorkerDeathObservationV1,
     WorkerExecutionFactV1,
 )
@@ -52,7 +52,7 @@ def project_root_result(
     attempts: Sequence[AttemptResultV1] | None = None,
     tail_summary: TailSummaryV1 | None = None,
     scenario: object | None = None,
-) -> RootResultV1:
+) -> RootResultV2:
     """只读 join 当前 result、ledger/store 与插件领域事实。"""
 
     inventory.validate()
@@ -69,6 +69,7 @@ def project_root_result(
         raise RootProjectionError("runtime observation run_id does not match assembly")
     condition_failure = protocol_result.summary.get("slim_condition_failure")
     runtime_failure = protocol_result.summary.get("slim_runtime_failure")
+    terminal_failure = protocol_result.summary.get("terminal_failure")
     if condition_failure is not None:
         if not isinstance(condition_failure, Mapping):
             raise RootProjectionError("Slim condition failure must be an object")
@@ -90,6 +91,39 @@ def project_root_result(
             or not isinstance(runtime_failure.get("engine_root_status"), str)
         ):
             raise RootProjectionError("Slim runtime failure identity is invalid")
+    if terminal_failure is not None:
+        if (
+            not isinstance(terminal_failure, Mapping)
+            or set(terminal_failure) != {
+                "failure_stage",
+                "failure_origin",
+                "infrastructure_invalid",
+            }
+            or terminal_failure.get("failure_stage")
+            not in {
+                "candidate_acquisition",
+                "candidate_verification",
+                "child_execution",
+                "preflight",
+            }
+            or terminal_failure.get("failure_origin")
+            not in {
+                "model_parse_exhausted",
+                "model_verification_exhausted",
+                "provider_transport_exhausted",
+                "mixed_candidate_acquisition_failure",
+                "worker_death_exhausted",
+                "checker_environment_error",
+                "unexpected_runtime_error",
+            }
+            or not isinstance(terminal_failure.get("infrastructure_invalid"), bool)
+        ):
+            raise RootProjectionError("protocol terminal failure identity is invalid")
+        if (
+            terminal_failure["failure_origin"]
+            in {"checker_environment_error", "unexpected_runtime_error"}
+        ) != terminal_failure["infrastructure_invalid"]:
+            raise RootProjectionError("protocol terminal failure class is inconsistent")
 
     events = tuple(
         event
@@ -102,6 +136,8 @@ def project_root_result(
         event for event in events if event.event_type == EventType.MERGE_RECORDED
     )
     if merge_events:
+        if terminal_failure is not None:
+            raise RootProjectionError("terminal failure cannot carry a merged root")
         canonical_events, merge_event, final_canonical_event = _merge_ledger_facts(
             events
         )
@@ -132,20 +168,47 @@ def project_root_result(
         if verified_correct:
             failure_stage = None
             failure_kind = None
+            failure_origin = None
         else:
             failure_stage = "domain_root_recheck"
             failure_kind = "incorrect_final"
+            failure_origin = None
     else:
         if condition_failure is not None:
             if protocol_result.status != "failed":
                 raise RootProjectionError("condition failure requires a failed protocol root")
             failure_stage = str(condition_failure["failure_stage"])
-            failure_kind = str(condition_failure["failure_kind"])
+            failure_kind = "infrastructure_invalid"
+            failure_origin = str(condition_failure["failure_kind"])
         elif runtime_failure is not None:
             failure_stage = str(runtime_failure["failure_stage"])
-            failure_kind = str(runtime_failure["failure_kind"])
+            failure_kind = "infrastructure_invalid"
+            failure_origin = "unexpected_runtime_error"
+        elif terminal_failure is not None:
+            if protocol_result.status != "failed":
+                raise RootProjectionError("terminal failure requires a failed protocol root")
+            if not terminal_failure["infrastructure_invalid"]:
+                _natural_rejection_stage(
+                    events=events,
+                    protocol_result=protocol_result,
+                    worker_facts=observation.get("worker_execution_facts"),
+                )
+            failure_stage = str(terminal_failure["failure_stage"])
+            failure_kind = (
+                "infrastructure_invalid"
+                if terminal_failure["infrastructure_invalid"]
+                else "no_final"
+            )
+            failure_origin = str(terminal_failure["failure_origin"])
         elif inventory.experiment_id == "exp4" and protocol_result.status == "processing":
             failure_stage, failure_kind = _exp4_processing_failure(scenario)
+            if failure_kind not in {"no_final", "infrastructure_invalid"}:
+                failure_origin = failure_kind
+                failure_kind = "no_final"
+            elif failure_kind == "no_final":
+                failure_origin = "premature_merge_no_final"
+            else:
+                failure_origin = "exp4_processing_infrastructure_invalid"
         else:
             failure_stage = _natural_rejection_stage(
                 events=events,
@@ -153,6 +216,7 @@ def project_root_result(
                 worker_facts=observation.get("worker_execution_facts"),
             )
             failure_kind = "no_final"
+            failure_origin = "ledger_confirmed_natural_rejection"
         required_slot_count, recovered_slot_count = _failed_slot_counts(
             assembly=assembly,
             events=events,
@@ -206,9 +270,7 @@ def project_root_result(
         "unscheduled_ai_unit_ids",
     )
     if inventory.experiment_id == "exp1":
-        acquisition_failure = (
-            condition_failure is not None or runtime_failure is not None
-        )
+        acquisition_failure = coverage_tail_blocked(protocol_result.summary)
         if acquisition_failure and tail_summary is not None:
             raise RootProjectionError("acquisition-failed Exp1 root cannot carry a coverage tail")
         if not acquisition_failure and unscheduled_ai_unit_ids and tail_summary is None:
@@ -258,11 +320,24 @@ def project_root_result(
         and isinstance((attempt_id := event.payload.get("attempt_id")), str)
         and isinstance((status := event.payload.get("status")), str)
     }
+    lean_checker_status = (
+        _lean_attempt_checker_status(
+            events=events,
+            adapter=assembly.plugin_runtime,
+        )
+        if inventory.domain == "lean"
+        else {}
+    )
     projected_attempts = []
     fact_field = "verifier_result" if inventory.domain == "factorization" else "checker_result"
     reason_key = f"attempts[].{fact_field}"
     for attempt in attempts or ():
-        status = verification_status.get(str(attempt.attempt_id))
+        attempt_id = str(attempt.attempt_id)
+        status = (
+            verification_status.get(attempt_id)
+            if inventory.domain == "factorization"
+            else lean_checker_status.get(attempt_id, "not_reached")
+        )
         projected = replace(
             attempt,
             canonical_accepted=attempt.attempt_id in canonical_attempt_ids,
@@ -364,6 +439,7 @@ def project_root_result(
         "verified_correct": verified_correct,
         "failure_stage": failure_stage,
         "failure_kind": failure_kind,
+        "failure_origin": failure_origin,
         "planned_ai_unit_ids": planned_ai_unit_ids,
         "dispatched_ai_unit_ids": dispatched_ai_unit_ids,
         "completed_ai_unit_ids": completed_ai_unit_ids,
@@ -402,7 +478,7 @@ def project_root_result(
     values["not_applicable_reason"] = _null_reasons(values)
     for field_name in values["missing_reason"]:
         values["not_applicable_reason"].pop(field_name, None)
-    projected = RootResultV1(**values)
+    projected = RootResultV2(**values)
     projected.validate()
     return projected
 
@@ -913,6 +989,45 @@ def _recovery_projection(
             },
         )
     return projected, observations
+
+
+def _lean_attempt_checker_status(
+    *,
+    events: Sequence[Any],
+    adapter: object,
+) -> dict[str, str]:
+    """按 request 关联公开 checker report，不从粗粒度验证事件推断。"""
+
+    if not isinstance(adapter, LeanRuntimeAdapter):
+        raise RootProjectionError("Lean inventory has the wrong plugin runtime")
+    request_ids = {
+        attempt_id: request_id
+        for event in events
+        if event.event_type == EventType.EXECUTION_REQUEST_RECORDED
+        and isinstance((attempt_id := event.payload.get("attempt_id")), str)
+        and isinstance((request_id := event.payload.get("request_id")), str)
+    }
+    projected: dict[str, str] = {}
+    status_mapping = {
+        LeanCheckerStatus.ACCEPTED: "accepted",
+        LeanCheckerStatus.REJECTED: "proof_rejected",
+        LeanCheckerStatus.ENVIRONMENT_ERROR: "environment_error",
+        LeanCheckerStatus.TIMEOUT: "timeout",
+        LeanCheckerStatus.HELPER_ERROR: "helper_error",
+    }
+    for attempt_id, request_id in request_ids.items():
+        report = adapter.checker_report_for_request(request_id)
+        if report is None:
+            projected[attempt_id] = "not_reached"
+            continue
+        try:
+            checker_status = LeanCheckerStatus(report.status)
+            projected[attempt_id] = status_mapping[checker_status]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RootProjectionError(
+                f"unsupported Lean checker status for request {request_id}"
+            ) from exc
+    return projected
 
 
 def _fault_projection(
@@ -1493,12 +1608,12 @@ def _nonnegative_int(value: Any, field_name: str) -> int:
 
 def _null_reasons(values: Mapping[str, Any]) -> dict[str, str]:
     reasons: dict[str, str] = {}
-    for item in fields(RootResultV1):
+    for item in fields(RootResultV2):
         if item.metadata.get("nullable") is not True or values.get(item.name) is not None:
             continue
         if item.name in {"trace_tail_started_at_ms", "trace_tail_terminal_at_ms"}:
             reasons[item.name] = "trace_tail_not_needed"
-        elif item.name in {"failure_stage", "failure_kind"}:
+        elif item.name in {"failure_stage", "failure_kind", "failure_origin"}:
             reasons[item.name] = "root_verified_correct"
         elif item.name == "topic_family":
             reasons[item.name] = "not_applicable_to_factorization"

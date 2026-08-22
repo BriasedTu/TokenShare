@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from tokenshare.core.models import ProtocolConfig
 from tokenshare.executors.contracts import ExecutionSubmission
@@ -13,7 +17,11 @@ from tokenshare.local_runtime import (
     ProtocolRunRequest,
     SequentialWorkerBackend,
 )
-from tokenshare.plugins.lean_proof.checker import LeanCheckerMode
+from tokenshare.plugins.lean_proof.checker import (
+    LeanCheckerMode,
+    LeanCheckerStatus,
+)
+from tokenshare.plugins.lean_proof.environment import LeanEnvironmentManifest
 from tokenshare.plugins.lean_proof.prompt_builder import PROOF_CANDIDATE_OUTPUT_NAME
 from tokenshare.plugins.lean_proof.runtime_adapter import (
     LeanExecutionBridge,
@@ -239,6 +247,134 @@ def test_simple_split_case_uses_the_same_coordinator_and_checker_merge(
     assert all(
         request.task_unit_snapshot["unit_type"] == "lean_proof_subgoal"
         for request in candidate_executor.requests
+    )
+
+
+def test_proof_rejection_exhaustion_returns_structured_failed_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, candidate_executor, checker = _run_simple_failure(
+        tmp_path,
+        monkeypatch=monkeypatch,
+        checker_status=LeanCheckerStatus.REJECTED,
+        max_retries=0,
+    )
+
+    assert result.status == "failed"
+    assert result.summary["terminal_failure"] == {
+        "failure_stage": "candidate_acquisition",
+        "failure_origin": "model_verification_exhausted",
+        "infrastructure_invalid": False,
+    }
+    assert len(candidate_executor.requests) == 1
+    assert checker.modes == [LeanCheckerMode.CHILD_PROOF]
+
+
+@pytest.mark.parametrize(
+    "checker_status",
+    [
+        LeanCheckerStatus.ENVIRONMENT_ERROR,
+        LeanCheckerStatus.TIMEOUT,
+        LeanCheckerStatus.HELPER_ERROR,
+    ],
+)
+def test_checker_infrastructure_error_stops_without_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checker_status: LeanCheckerStatus,
+) -> None:
+    result, candidate_executor, checker = _run_simple_failure(
+        tmp_path,
+        monkeypatch=monkeypatch,
+        checker_status=checker_status,
+        max_retries=2,
+    )
+
+    assert result.status == "failed"
+    assert result.summary["terminal_failure"] == {
+        "failure_stage": "candidate_verification",
+        "failure_origin": "checker_environment_error",
+        "infrastructure_invalid": True,
+    }
+    assert len(candidate_executor.requests) == 1
+    assert checker.modes == [LeanCheckerMode.CHILD_PROOF]
+
+
+def _run_simple_failure(
+    tmp_path: Path,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    checker_status: LeanCheckerStatus,
+    max_retries: int,
+):
+    monkeypatch.setattr(
+        "tokenshare.plugins.lean_proof.environment.load_lean_semantic_authority",
+        lambda **_kwargs: SimpleNamespace(
+            schema_version="tokenshare.lean_environment_semantic_authority.v1",
+            authority_environment_digest=(
+                "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731"
+            ),
+            semantic_environment_digest="sha256:" + "2" * 64,
+            semantic_checker_digest="sha256:" + "3" * 64,
+            sidecar_digest="sha256:" + "4" * 64,
+        ),
+    )
+    case = _case("lean_v2_medium_lemma_dag_01")
+    store = ArtifactStore(tmp_path)
+    ledger = EventLedger(tmp_path / "events" / "lean_failure_runtime.jsonl")
+    config = replace(
+        ProtocolConfig.default(
+            config_id="lean_failure_runtime",
+            artifact_store_uri="file://artifacts",
+            event_log_uri="file://events/lean_failure_runtime.jsonl",
+        ),
+        max_retries=max_retries,
+    )
+    checker = RecordingLeanChecker(status=checker_status)
+    adapter = LeanRuntimeAdapter(
+        provider_family="siliconflow",
+        environment_manifest=_fake_environment_manifest(tmp_path),
+        checker=checker,
+        protocol_config=config,
+        created_at=NOW,
+    )
+    candidate_executor = _ScriptedProofCandidateExecutor(store)
+    result = ProtocolRunCoordinator(
+        engine=ProtocolEngine(
+            event_ledger=ledger,
+            protocol_config=config,
+            artifact_store=store,
+        ),
+        artifact_store=store,
+        event_ledger=ledger,
+        now=lambda: NOW,
+    ).run_root(
+        ProtocolRunRequest(
+            run_id="lean_failure_runtime",
+            root_input=case,
+            plugin_runtime=adapter,
+            worker_backend=SequentialWorkerBackend(
+                executor=LeanExecutionBridge(
+                    plugin_runtime=adapter,
+                    proof_candidate_executor=candidate_executor,
+                ),
+                submitted_at=lambda: NOW,
+            ),
+        )
+    )
+    return result, candidate_executor, checker
+
+
+def _fake_environment_manifest(tmp_path: Path) -> LeanEnvironmentManifest:
+    return LeanEnvironmentManifest.from_project(
+        project_root=Path("fixtures/lean_proof_project"),
+        lean_executable=tmp_path / "lean.exe",
+        lake_executable=tmp_path / "lake.exe",
+        lean_version="Lean 4.8.0 test",
+        lake_version="Lake 5.0.0 test",
+        resource_limits={"timeout_seconds": 30, "max_output_bytes": 65536},
+        created_at=NOW,
     )
 
 
