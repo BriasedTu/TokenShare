@@ -206,9 +206,12 @@ def project_root_result(
         "unscheduled_ai_unit_ids",
     )
     if inventory.experiment_id == "exp1":
-        if condition_failure is not None and tail_summary is not None:
-            raise RootProjectionError("condition-failed Exp1 root cannot carry a coverage tail")
-        if condition_failure is None and unscheduled_ai_unit_ids and tail_summary is None:
+        acquisition_failure = (
+            condition_failure is not None or runtime_failure is not None
+        )
+        if acquisition_failure and tail_summary is not None:
+            raise RootProjectionError("acquisition-failed Exp1 root cannot carry a coverage tail")
+        if not acquisition_failure and unscheduled_ai_unit_ids and tail_summary is None:
             raise RootProjectionError(
                 "Exp1 unscheduled AI units require a completed coverage-tail summary"
             )
@@ -216,7 +219,7 @@ def project_root_result(
             None, None, 0, "not_needed", [], [], 0, 0, 0, 0, 0.0
         )
         if (
-            condition_failure is None
+            not acquisition_failure
             and tail.trace_tail_target_ai_unit_ids != unscheduled_ai_unit_ids
         ):
             raise RootProjectionError(

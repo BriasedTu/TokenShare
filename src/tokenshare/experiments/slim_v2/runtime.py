@@ -64,6 +64,7 @@ from .schema import (
     ProviderCallResultV1,
     ProviderEntryViewV1,
     ProviderRequestControlV1,
+    RootInventoryV1,
     RootResultV1,
     UnitTraceV1,
 )
@@ -88,6 +89,7 @@ class RootAssembly:
     worker_backend: object
     now: Callable[[], str]
     observation_clock: Callable[[], str]
+    inventory: RootInventoryV1 | None = None
     mechanism_policy: ProtocolMechanismPolicy | None = None
     submission_adapter: object | None = None
     hooks: object | None = None
@@ -194,7 +196,7 @@ def _project_started_runtime_failure(
     task_id = registered[0].task_id
     root_unit_id = str(root_units[0]["unit_id"])
     scenario = assembly.scenario
-    inventory = getattr(scenario, "inventory", None)
+    inventory = assembly.inventory or getattr(scenario, "inventory", None)
     planned = tuple(getattr(inventory, "planned_ai_unit_ids", ()))
     if not planned:
         raise RuntimeError("started failure lacks structured planned AI units") from error
@@ -254,7 +256,8 @@ def _project_started_runtime_failure(
             **projected.summary,
             "slim_runtime_failure": {
                 "failure_stage": "protocol_runtime",
-                "failure_kind": type(error).__name__,
+                "failure_kind": "infrastructure_invalid",
+                "error_kind": type(error).__name__,
                 "engine_root_status": projected.status,
             },
         },
@@ -719,6 +722,7 @@ def _build_root_assembly(context: Any) -> RootAssembly:
             worker_backend=backend,
             now=_utc_now,
             observation_clock=_utc_now,
+            inventory=context.inventory,
             mechanism_policy=ProtocolMechanismPolicy(
                 replacement_attempts_allowed=int(context.max_retries) > 0
             ),
@@ -754,6 +758,7 @@ def _build_root_assembly(context: Any) -> RootAssembly:
         worker_backend=scenario.worker_backend,
         now=_utc_now,
         observation_clock=_utc_now,
+        inventory=context.inventory,
         mechanism_policy=scenario.mechanism_policy,
         submission_adapter=scenario.submission_adapter,
         hooks=scenario.hooks,
@@ -1073,6 +1078,10 @@ def execute_root_context(context: Any) -> RootResultV1:
             condition_failure = protocol_result.summary.get(
                 "slim_condition_failure"
             )
+            runtime_failure = protocol_result.summary.get("slim_runtime_failure")
+            acquisition_failure = (
+                condition_failure is not None or runtime_failure is not None
+            )
             observation = protocol_result.summary.get("runtime_observation")
             unscheduled = (
                 observation.get("unscheduled_ai_unit_ids", [])
@@ -1085,12 +1094,12 @@ def execute_root_context(context: Any) -> RootResultV1:
                     protocol_result=protocol_result,
                     domain=str(inventory.domain),
                 )
-                if condition_failure is None and unscheduled
+                if not acquisition_failure and unscheduled
                 else {}
             )
             placeholder = (
                 _placeholder_tail(protocol_result)
-                if condition_failure is None
+                if not acquisition_failure
                 else None
             )
             protocol_projection = project_root_result(
@@ -1116,7 +1125,7 @@ def execute_root_context(context: Any) -> RootResultV1:
             )
             for trace in traces:
                 context.run_store.write_trace(trace)
-            if condition_failure is None and unscheduled:
+            if not acquisition_failure and unscheduled:
                 tail_summary = run_coverage_tail(
                     store=context.run_store,
                     case_id=str(inventory.case_id),

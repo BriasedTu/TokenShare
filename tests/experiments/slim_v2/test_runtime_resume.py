@@ -535,6 +535,98 @@ def test_fresh_protocol_resume_calls_only_the_missing_factor_tail_target(
     assert not list((fresh.run_dir / "calls").glob("*.outcome.json"))
 
 
+def test_started_online_runtime_failure_uses_inventory_and_never_runs_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import provider, runtime
+    from tokenshare.experiments.slim_v2.storage import RunStore
+    from tests.experiments.slim_v2.test_answer_paths import (
+        _FakeResponse,
+        _answer_path_factor_case,
+        _entry,
+        _response_body,
+    )
+    from tests.experiments.slim_v2.test_system_vertical import _inventory
+
+    case = _answer_path_factor_case()
+    case["split_params"] = {
+        "strategy_id": "factorization.candidate_range_partition.v1",
+        "requested_child_count": 1,
+    }
+    entry = _entry(family="deepseek", model="deepseek-v4-pro")
+    inventory = replace(
+        _inventory(case=case, domain="factorization"),
+        condition_id="task6_started_runtime_failure",
+        provider_entry_id=entry.entry_id,
+        configured_model=entry.configured_model,
+        planned_ai_unit_ids=["range_0"],
+    )
+    inventory.validate()
+    store = RunStore(tmp_path / "started-runtime-failure")
+    context = SimpleNamespace(
+        run_id="task6-started-runtime-failure",
+        profile_id="representative",
+        inventory=inventory,
+        root_input=case,
+        run_store=store,
+        source_run_dir=None,
+        challenge_plan=None,
+        is_reference=False,
+        provider_entries={entry.entry_id: entry},
+        max_retries=2,
+        continue_after_terminal_child_failure=False,
+        protocol_execution_attempt_upper=3,
+        provider_call_upper=3,
+    )
+    responses: list[_FakeResponse] = []
+
+    def invalid_response(request: object, timeout_seconds: float) -> _FakeResponse:
+        response = _FakeResponse(
+            _response_body(content="{}", model=entry.configured_model)
+        )
+        responses.append(response)
+        return response
+
+    monkeypatch.setenv("SLIM_V2_TEST_KEY", "secret")
+    monkeypatch.setattr(
+        provider,
+        "_open_response",
+        invalid_response,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "run_coverage_tail",
+        lambda *args, **kwargs: pytest.fail(
+            "runtime failure must not run coverage tail"
+        ),
+    )
+
+    result = runtime.execute_root_context(context)
+
+    assert result.protocol_started is True
+    assert result.root_status == "failed"
+    assert result.failure_stage == "protocol_runtime"
+    assert result.failure_kind == "infrastructure_invalid"
+    assert len(responses) == 3
+    assert result.planned_ai_unit_ids == ["range_0"]
+    assert result.dispatched_ai_unit_ids == ["range_0"]
+    assert result.completed_ai_unit_ids == []
+    assert result.unscheduled_ai_unit_ids == []
+    assert len(result.attempts) == 3
+    snapshot = store.read_root_protocol_snapshot(
+        inventory.experiment_id,
+        inventory.condition_id,
+        inventory.case_id,
+        inventory.repeat_id,
+    )
+    runtime_failure = snapshot.protocol_result["summary"]["slim_runtime_failure"]
+    assert runtime_failure["failure_kind"] == "infrastructure_invalid"
+    assert runtime_failure["error_kind"] == "RuntimeError"
+    trace = store.read_trace(inventory.case_id, 0, "range_0")
+    assert [attempt.attempt_ordinal for attempt in trace.attempts] == [0, 1, 2]
+
+
 def test_tail_request_snapshot_round_trips_only_public_execution_dto(
 ) -> None:
     from tokenshare.experiments.slim_v2 import runtime
