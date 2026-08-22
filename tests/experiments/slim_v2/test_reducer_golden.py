@@ -1000,6 +1000,33 @@ def test_exp4_conditional_failure_bootstrap_recomputes_matched_denominator(
     assert pair["metric_metadata"][metric]["valid_bootstrap_replicate_count"] == 10_000
 
 
+def test_exp1_missing_protocol_runtime_carries_direct_cell_reason(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    store = RunStore(run_dir)
+    root = _inventory("exp1", "exp1-hard", "exp1-invalid")
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[root],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    store.write_root_result(_preflight_blocked_result(root))
+
+    reduce_run(run_dir)
+
+    row = _read_rows(run_dir / "metrics" / "tables" / "exp1.jsonl")[0]
+    assert row["actual_end_to_end_wall_clock_ms"] is None
+    assert row["missing_reasons"]["actual_end_to_end_wall_clock_ms"] == (
+        "missing_root_runtime"
+    )
+    assert row["root_end_to_end_elapsed_ms"] is None
+    assert row["missing_reasons"]["root_end_to_end_elapsed_ms"] == (
+        "insufficient_observations_for_sample_variance"
+    )
+
+
 def test_required_slot_missing_nulls_the_whole_exp4_cell_interval(
     tmp_path: Path,
 ) -> None:

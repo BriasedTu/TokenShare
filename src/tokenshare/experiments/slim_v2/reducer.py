@@ -880,6 +880,12 @@ def _add_distribution(
     values = [item.get(value_field) for item in observations]
     distribution = _distribution(values)
     row[metric] = distribution["median"]
+    if row[metric] is None:
+        _set_missing(
+            row,
+            metric,
+            str(distribution["missing_reason"]),
+        )
     for suffix in ("median", "q25", "q75", "iqr", "sample_variance", "sample_stddev"):
         source = "median" if suffix == "median" else suffix
         row[f"{metric}_{suffix}"] = distribution[source]
@@ -942,9 +948,17 @@ def _reduce_exp1(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
             rows.append(_apply_template(row, _EXP1_METRICS))
             continue
         results = [item.result for item in group if item.result is not None]
-        row["actual_end_to_end_wall_clock_ms"] = _sum_nullable(
+        actual_end_to_end = _sum_nullable(
             result.runtime_wall_clock_ms for result in results
         )
+        if actual_end_to_end is None:
+            _set_missing(
+                row,
+                "actual_end_to_end_wall_clock_ms",
+                "missing_root_runtime",
+            )
+        else:
+            row["actual_end_to_end_wall_clock_ms"] = actual_end_to_end
         resource_specs = (
             ("actual_provider_latency_ms", "root_provider_latency_ms", "provider_latency_ms"),
             ("actual_total_tokens", "root_total_tokens", "total_tokens"),
