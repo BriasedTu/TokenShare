@@ -715,6 +715,20 @@ def _natural_rejection_stage(
         if death_facts:
             return "child_execution"
 
+        late_rejected_submissions = [
+            event
+            for event in events
+            if event.event_seq < recovery_event.event_seq
+            and event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+            and event.payload.get("unit_id") == failed_child_unit_id
+            and event.payload.get("attempt_id") == recovery_attempt_id
+            and event.payload.get("acceptance_status") == "rejected"
+            and event.payload.get("result_kind") == "succeeded"
+            and event.payload.get("rejection_reason") == "lease_deadline_exceeded"
+        ]
+        if recovery_trigger == "lease_expired" and len(late_rejected_submissions) == 1:
+            return "child_execution"
+
         failed_submissions = [
             event
             for event in events

@@ -18,7 +18,13 @@ from statistics import median
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
 
-from .schema import AttemptResultV1, RootInventoryV1, RootResultV2
+from .schema import (
+    LEGACY_PRICING_VERSION,
+    PRICING_VERSION,
+    AttemptResultV1,
+    RootInventoryV1,
+    RootResultV2,
+)
 from .storage import RunStore
 
 
@@ -31,6 +37,24 @@ _TABLE_METADATA = {
     "bootstrap_seed": BOOTSTRAP_SEED,
     "quantile_method": "hyndman_fan_type_7",
 }
+_EXP5_V4_REFERENCE_TABLE_ID = "exp5_with_exp1_v4_reference"
+_EXP5_V4_REFERENCE_LIVE_MODELS = (
+    "zai-org/GLM-5.2",
+    "Qwen/Qwen3-14B",
+    "MiniMaxAI/MiniMax-M2.5",
+)
+_EXP5_V4_REFERENCE_SOURCE_MODEL = "deepseek-v4-flash"
+_EXP5_V4_REFERENCE_WALL_CLOCK_FIELDS = (
+    "repeat0_wall_clock_ms",
+    "repeat1_wall_clock_ms",
+    "repeat2_wall_clock_ms",
+    "repeat_wall_clock_ms",
+    "model_wall_clock_median_ms",
+    "model_wall_clock_min_ms",
+    "model_wall_clock_max_ms",
+    "model_wall_clock_range_ms",
+    "model_wall_clock_sample_stddev_ms",
+)
 
 # 这是 authority fixture 的有序 occurrence 合同；重复项对应不同实验/table scope。
 _FORMAL_METRIC_IDS = (
@@ -898,17 +922,24 @@ def _simulated_attempt_cost(attempt: AttemptResultV1) -> float | None:
     assert attempt.source_prompt_tokens is not None
     assert attempt.source_prompt_cache_hit_tokens is not None
     assert attempt.source_prompt_cache_miss_tokens is not None
-    if attempt.source_pricing_version != "slim_v2.pricing.2026-08-20":
-        return None
     generated = attempt.simulated_total_tokens - attempt.source_prompt_tokens
     if generated < 0:
         return None
-    if attempt.source_pricing_tier not in {"peak", "off_peak"}:
+    if (
+        attempt.source_pricing_version == PRICING_VERSION
+        and attempt.source_pricing_tier == "flat"
+    ):
+        hit_rate, miss_rate, output_rate = (0.05, 1.50, 4.50)
+    elif (
+        attempt.source_pricing_version == LEGACY_PRICING_VERSION
+        and attempt.source_pricing_tier in {"peak", "off_peak"}
+    ):
+        peak = attempt.source_pricing_tier == "peak"
+        hit_rate, miss_rate, output_rate = (
+            (0.30, 9.00, 27.00) if peak else (0.15, 4.50, 13.50)
+        )
+    else:
         return None
-    peak = attempt.source_pricing_tier == "peak"
-    hit_rate, miss_rate, output_rate = (
-        (0.30, 9.00, 27.00) if peak else (0.15, 4.50, 13.50)
-    )
     return (
         attempt.source_prompt_cache_hit_tokens * hit_rate
         + attempt.source_prompt_cache_miss_tokens * miss_rate
@@ -2466,7 +2497,7 @@ def _add_repeat_descriptions(rows: Sequence[dict[str, Any]]) -> None:
 
 def _first_attempt_classification(
     result: RootResultV2,
-) -> list[tuple[AttemptResultV1, bool, bool, str | None]]:
+) -> list[tuple[AttemptResultV1, bool, bool, str | None, bool]]:
     classified = []
     for attempt in result.attempts:
         if attempt.attempt_ordinal != 0 or attempt.provider_call_made is not True:
@@ -2487,7 +2518,21 @@ def _first_attempt_classification(
             attempt.verifier_result
             if attempt.verifier_result is not None else attempt.checker_result
         )
-        if not transport and parse_usable and verifier_value is None:
+        parsed_unsubmitted = (
+            not transport
+            and parse_usable
+            and attempt.result_kind == "parsed"
+            and attempt.verifier_result is None
+            and attempt.checker_result is None
+            and attempt.missing_reason.get("attempts[].verifier_result")
+            == "not_applicable_or_unavailable"
+        )
+        if (
+            not transport
+            and parse_usable
+            and verifier_value is None
+            and not parsed_unsubmitted
+        ):
             raise ValueError(
                 "missing first-attempt verification evidence: "
                 f"{result.case_id}:{attempt.planned_ai_unit_id}"
@@ -2496,9 +2541,11 @@ def _first_attempt_classification(
         passed = checkable and verifier_value in {"accepted", "passed", "success"}
         reason = (
             "transport" if transport else "parse" if not parse_usable
-            else "verification" if not passed else None
+            else "verification" if checkable and not passed else None
         )
-        classified.append((attempt, bool(passed), bool(checkable), reason))
+        classified.append(
+            (attempt, bool(passed), bool(checkable), reason, parsed_unsubmitted)
+        )
     return classified
 
 
@@ -2541,19 +2588,40 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
         )
         classified = [entry for result in results for entry in _first_attempt_classification(result)]
         actual = len(classified)
-        nonpass = sum(not passed for _attempt, passed, _checkable, _reason in classified)
+        parsed_unsubmitted_present = any(item[4] for item in classified)
+        nonpass = sum(
+            not passed
+            for _attempt, passed, _checkable, _reason, parsed_unsubmitted in classified
+            if not parsed_unsubmitted
+        )
         row["actual_first_provider_attempt_count"] = actual
-        row["first_attempt_without_verifier_accepted_candidate_count"] = nonpass
-        if not infrastructure_invalid_present:
+        if parsed_unsubmitted_present:
+            _set_not_applicable(
+                row,
+                "first_attempt_without_verifier_accepted_candidate_count",
+                "not_applicable_or_unavailable",
+            )
+        else:
+            row["first_attempt_without_verifier_accepted_candidate_count"] = nonpass
+        if parsed_unsubmitted_present:
+            _set_not_applicable(
+                row,
+                "first_attempt_nonpass_rate",
+                "not_applicable_or_unavailable",
+            )
+        elif not infrastructure_invalid_present:
             _set_ratio(row, "first_attempt_nonpass_rate", nonpass, actual)
         row["first_attempt_provider_transport_failure_count"] = sum(
-            reason == "transport" for _attempt, _passed, _checkable, reason in classified
+            reason == "transport"
+            for _attempt, _passed, _checkable, reason, _parsed_unsubmitted in classified
         )
         row["first_attempt_parse_schema_unusable_count"] = sum(
-            reason == "parse" for _attempt, _passed, _checkable, reason in classified
+            reason == "parse"
+            for _attempt, _passed, _checkable, reason, _parsed_unsubmitted in classified
         )
         row["first_attempt_verification_checker_rejection_count"] = sum(
-            reason == "verification" for _attempt, _passed, _checkable, reason in classified
+            reason == "verification"
+            for _attempt, _passed, _checkable, reason, _parsed_unsubmitted in classified
         )
         checkable = sum(entry[2] for entry in classified)
         rejected = sum(entry[2] and not entry[1] for entry in classified)
@@ -2581,21 +2649,26 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
                 "difficulty": result.difficulty, "topic_family": result.topic_family,
                 "position_stratum": result.position_stratum,
             }
-            raw_rates["first_attempt_nonpass_rate"].append(
-                {**identity,
-                 "numerator": sum(not item[1] for item in root_classified),
-                 "denominator": root_actual}
-            )
-            raw_rates["first_attempt_verification_rejection_rate"].append(
-                {**identity,
-                 "numerator": sum(item[2] and not item[1] for item in root_classified),
-                 "denominator": sum(item[2] for item in root_classified)}
-            )
+            if not any(item[4] for item in root_classified):
+                raw_rates["first_attempt_nonpass_rate"].append(
+                    {**identity,
+                     "numerator": sum(not item[1] for item in root_classified),
+                     "denominator": root_actual}
+                )
+            root_checkable = sum(item[2] for item in root_classified)
+            if root_checkable:
+                raw_rates["first_attempt_verification_rejection_rate"].append(
+                    {**identity,
+                     "numerator": sum(
+                         item[2] and not item[1] for item in root_classified
+                     ),
+                     "denominator": root_checkable}
+                )
             raw_rates["first_attempt_call_coverage"].append(
                 {**identity, "numerator": root_actual,
                  "denominator": len(observation.inventory.planned_ai_unit_ids)}
             )
-        if infrastructure_invalid_present:
+        if infrastructure_invalid_present and not parsed_unsubmitted_present:
             for metric in (
                 "first_attempt_nonpass_rate",
                 "first_attempt_verification_rejection_rate",
@@ -2606,6 +2679,11 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
                 )
         else:
             for metric, raw in raw_rates.items():
+                if (
+                    metric == "first_attempt_nonpass_rate"
+                    and parsed_unsubmitted_present
+                ):
+                    continue
                 _add_rate_interval(row, metric, raw)
         root_tokens = [
             _result_attempt_sum(result, "total_tokens", first_only=True)
@@ -2637,31 +2715,65 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
                 for result, value in zip(results, values)
             ]
             _add_distribution(row, metric, raw)
-        repeat_values = [_repeat_wall(group, repeat_id) for repeat_id in (0, 1, 2)]
-        for repeat_id, value in enumerate(repeat_values):
-            metric = f"repeat{repeat_id}_wall_clock_ms"
-            if value is None:
-                _set_missing(row, metric, "missing_repeat_wall_clock")
+        repeat_ids = {item.inventory.repeat_id for item in group}
+        if repeat_ids == {0}:
+            repeat0 = _repeat_wall(group, 0)
+            if repeat0 is None:
+                _set_missing(
+                    row, "repeat0_wall_clock_ms", "missing_repeat_wall_clock"
+                )
             else:
-                row[metric] = value
-        row["repeat_wall_clock_ms"] = repeat_values
-        if all(_finite(value) for value in repeat_values):
-            numeric = [float(value) for value in repeat_values]
-            row["model_wall_clock_median_ms"] = float(median(numeric))
-            row["model_wall_clock_min_ms"] = min(numeric)
-            row["model_wall_clock_max_ms"] = max(numeric)
-            row["model_wall_clock_range_ms"] = max(numeric) - min(numeric)
-            variance = sample_variance(numeric)
-            row["model_wall_clock_sample_stddev_ms"] = (
-                sqrt(variance) if variance is not None else None
-            )
+                _set_value(row, "repeat0_wall_clock_ms", repeat0)
+            for repeat_id in (1, 2):
+                _set_not_applicable(
+                    row,
+                    f"repeat{repeat_id}_wall_clock_ms",
+                    "not_applicable_or_unavailable",
+                )
+            row["repeat_wall_clock_ms"] = [repeat0]
+            if _finite(repeat0):
+                _set_value(row, "model_wall_clock_median_ms", repeat0)
+                _set_value(row, "model_wall_clock_min_ms", repeat0)
+                _set_value(row, "model_wall_clock_max_ms", repeat0)
+                _set_value(row, "model_wall_clock_range_ms", 0)
+                _set_missing(
+                    row,
+                    "model_wall_clock_sample_stddev_ms",
+                    "insufficient_observations_for_sample_variance",
+                )
+            else:
+                for name in (
+                    "model_wall_clock_median_ms", "model_wall_clock_min_ms",
+                    "model_wall_clock_max_ms", "model_wall_clock_range_ms",
+                    "model_wall_clock_sample_stddev_ms",
+                ):
+                    _set_missing(row, name, "missing_repeat_wall_clock")
         else:
-            for name in (
-                "model_wall_clock_median_ms", "model_wall_clock_min_ms",
-                "model_wall_clock_max_ms", "model_wall_clock_range_ms",
-                "model_wall_clock_sample_stddev_ms",
-            ):
-                _set_missing(row, name, "missing_repeat_wall_clock")
+            repeat_values = [_repeat_wall(group, repeat_id) for repeat_id in (0, 1, 2)]
+            for repeat_id, value in enumerate(repeat_values):
+                metric = f"repeat{repeat_id}_wall_clock_ms"
+                if value is None:
+                    _set_missing(row, metric, "missing_repeat_wall_clock")
+                else:
+                    row[metric] = value
+            row["repeat_wall_clock_ms"] = repeat_values
+            if all(_finite(value) for value in repeat_values):
+                numeric = [float(value) for value in repeat_values]
+                row["model_wall_clock_median_ms"] = float(median(numeric))
+                row["model_wall_clock_min_ms"] = min(numeric)
+                row["model_wall_clock_max_ms"] = max(numeric)
+                row["model_wall_clock_range_ms"] = max(numeric) - min(numeric)
+                variance = sample_variance(numeric)
+                row["model_wall_clock_sample_stddev_ms"] = (
+                    sqrt(variance) if variance is not None else None
+                )
+            else:
+                for name in (
+                    "model_wall_clock_median_ms", "model_wall_clock_min_ms",
+                    "model_wall_clock_max_ms", "model_wall_clock_range_ms",
+                    "model_wall_clock_sample_stddev_ms",
+                ):
+                    _set_missing(row, name, "missing_repeat_wall_clock")
         rows.append(_apply_template(row, _EXP5_METRICS))
     return rows
 
@@ -3028,7 +3140,300 @@ def reduce_run(run_dir: str | Path) -> dict[str, Any]:
     return summary
 
 
+def _reference_comparison_quality(
+    row: dict[str, Any],
+    observations: Sequence[_Observation],
+) -> None:
+    """投影比较表所需的共同质量、首轮 token 与成本，不复用 Exp5 正式表。"""
+
+    _common(row, observations)
+    results = [item.result for item in observations if item.result is not None]
+    classified = [
+        entry
+        for result in results
+        for entry in _first_attempt_classification(result)
+    ]
+    actual = len(classified)
+    nonpass = sum(
+        not passed
+        for _attempt, passed, _checkable, _reason, parsed_unsubmitted in classified
+        if not parsed_unsubmitted
+    )
+    checkable = sum(entry[2] for entry in classified)
+    rejected = sum(entry[2] and not entry[1] for entry in classified)
+    row["planned_first_attempt_ai_unit_count"] = sum(
+        len(item.inventory.planned_ai_unit_ids) for item in observations
+    )
+    row["actual_first_provider_attempt_count"] = actual
+    row["first_attempt_without_verifier_accepted_candidate_count"] = nonpass
+    _set_ratio(row, "first_attempt_nonpass_rate", nonpass, actual)
+    row["first_attempt_provider_transport_failure_count"] = sum(
+        reason == "transport"
+        for _attempt, _passed, _checkable, reason, _parsed_unsubmitted in classified
+    )
+    row["first_attempt_parse_schema_unusable_count"] = sum(
+        reason == "parse"
+        for _attempt, _passed, _checkable, reason, _parsed_unsubmitted in classified
+    )
+    row["first_attempt_verification_checker_rejection_count"] = sum(
+        reason == "verification"
+        for _attempt, _passed, _checkable, reason, _parsed_unsubmitted in classified
+    )
+    row["first_attempt_checkable_candidate_count"] = checkable
+    row["first_attempt_explicitly_rejected_by_verifier_count"] = rejected
+    _set_ratio(
+        row, "first_attempt_verification_rejection_rate", rejected, checkable
+    )
+    _set_ratio(
+        row,
+        "first_attempt_call_coverage",
+        actual,
+        row["planned_first_attempt_ai_unit_count"],
+    )
+    for output_name, attempt_field in (
+        ("actual_first_attempt_total_tokens", "total_tokens"),
+        ("actual_first_attempt_cost_estimate_cny", "cost_estimate_cny"),
+    ):
+        total = _sum_nullable(
+            _result_attempt_sum(result, attempt_field, first_only=True)
+            for result in results
+        )
+        if total is None:
+            _set_missing(row, output_name, "usage_missing")
+        else:
+            _set_value(row, output_name, total)
+    pricing_versions = sorted(
+        {
+            str(attempt.pricing_version)
+            for result in results
+            for attempt in result.attempts
+            if (
+                attempt.provider_call_made is True
+                and attempt.attempt_ordinal == 0
+                and attempt.pricing_version is not None
+            )
+        }
+    )
+    row["pricing_versions"] = pricing_versions
+
+
+def _reference_comparison_live_observations(
+    target_store: RunStore,
+) -> tuple[dict[str, list[_Observation]], set[str]]:
+    """读取并冻结三模型 Exp5 实测行；不读取正式 metrics 表或 provider。"""
+
+    by_model: dict[str, list[_Observation]] = defaultdict(list)
+    seen: set[tuple[str, str, str, int]] = set()
+    for inventory, result in target_store.iter_inventory_results(
+        "roots", experiment_id="exp5"
+    ):
+        identity = (
+            str(inventory.experiment_id),
+            str(inventory.condition_id),
+            str(inventory.case_id),
+            int(inventory.repeat_id),
+        )
+        if identity in seen:
+            raise ValueError(f"duplicate Exp5 target inventory identity: {identity!r}")
+        seen.add(identity)
+        if result is None:
+            raise ValueError("target Exp5 root result is not committed")
+        if (
+            inventory.repeat_id != 0
+            or result.repeat_id != 0
+            or result.experiment_id != "exp5"
+            or result.configured_model != inventory.configured_model
+        ):
+            raise ValueError("target must contain committed Exp5 repeat-0 model results")
+        by_model[str(inventory.configured_model)].append(_Observation(inventory, result))
+    if tuple(by_model) != _EXP5_V4_REFERENCE_LIVE_MODELS:
+        raise ValueError(
+            "target must contain only the frozen three Exp5 models in order"
+        )
+    case_sets = {
+        model: {str(item.inventory.case_id) for item in observations}
+        for model, observations in by_model.items()
+    }
+    target_cases = case_sets[_EXP5_V4_REFERENCE_LIVE_MODELS[0]]
+    if not target_cases or any(case_set != target_cases for case_set in case_sets.values()):
+        raise ValueError("target Exp5 model case sets must match exactly")
+    return by_model, target_cases
+
+
+def _reference_comparison_source_observations(
+    source_store: RunStore,
+    target_cases: set[str],
+) -> list[_Observation]:
+    """只抽取 target case 对应的 Exp1 Flash V4 committed facts。"""
+
+    by_case: dict[str, _Observation] = {}
+    for inventory, result in source_store.iter_inventory_results(
+        "roots", experiment_id="exp1"
+    ):
+        case_id = str(inventory.case_id)
+        if case_id not in target_cases:
+            continue
+        if (
+            inventory.configured_model != _EXP5_V4_REFERENCE_SOURCE_MODEL
+            or inventory.repeat_id != 0
+            or result is None
+            or result.experiment_id != "exp1"
+            or result.repeat_id != 0
+            or result.configured_model != _EXP5_V4_REFERENCE_SOURCE_MODEL
+        ):
+            raise ValueError(
+                "source must contain committed Exp1 deepseek-v4-flash repeat-0 results"
+            )
+        if case_id in by_case:
+            raise ValueError(f"duplicate Exp1 Flash source case: {case_id}")
+        if any(
+            attempt.provider_call_made is True and attempt.attempt_ordinal > 0
+            for attempt in result.attempts
+        ):
+            raise ValueError("source Exp1 Flash results must not contain ordinal>0 provider calls")
+        by_case[case_id] = _Observation(inventory, result)
+    if set(by_case) != target_cases:
+        raise ValueError("source and target case sets must match exactly")
+    return [by_case[case_id] for case_id in sorted(by_case)]
+
+
+def _reference_comparison_row(
+    *,
+    configured_model: str,
+    observation_origin: str,
+    observations: Sequence[_Observation],
+) -> dict[str, Any]:
+    """构造一行补充对比，不将它纳入 153 个正式指标。"""
+
+    row = _base_row(
+        _EXP5_V4_REFERENCE_TABLE_ID,
+        "model_reference",
+        {"configured_model": configured_model},
+    )
+    row.update(
+        configured_model=configured_model,
+        observation_origin=observation_origin,
+        source_experiment_id=("exp5" if observation_origin == "exp5_live" else "exp1"),
+        source_repeat_id=0,
+        case_ids=sorted(str(item.inventory.case_id) for item in observations),
+        wall_clock_field_names=list(_EXP5_V4_REFERENCE_WALL_CLOCK_FIELDS),
+    )
+    _reference_comparison_quality(row, observations)
+    if observation_origin == "exp5_live":
+        repeat0 = _repeat_wall(observations, 0)
+        if repeat0 is None:
+            _set_missing(row, "repeat0_wall_clock_ms", "missing_repeat_wall_clock")
+            for field in _EXP5_V4_REFERENCE_WALL_CLOCK_FIELDS[1:]:
+                _set_missing(row, field, "missing_repeat_wall_clock")
+        else:
+            _set_value(row, "repeat0_wall_clock_ms", repeat0)
+            for field in ("repeat1_wall_clock_ms", "repeat2_wall_clock_ms"):
+                _set_not_applicable(row, field, "not_applicable_or_unavailable")
+            _set_value(row, "repeat_wall_clock_ms", [repeat0])
+            _set_value(row, "model_wall_clock_median_ms", repeat0)
+            _set_value(row, "model_wall_clock_min_ms", repeat0)
+            _set_value(row, "model_wall_clock_max_ms", repeat0)
+            _set_value(row, "model_wall_clock_range_ms", 0)
+            _set_not_applicable(
+                row,
+                "model_wall_clock_sample_stddev_ms",
+                "insufficient_observations_for_sample_variance",
+            )
+    else:
+        for field in _EXP5_V4_REFERENCE_WALL_CLOCK_FIELDS:
+            _set_not_applicable(row, field, "not_applicable_or_unavailable")
+    return row
+
+
+def _commit_staged_supplemental(staged: Mapping[Path, Path], marker: Path) -> None:
+    """以 JSONL 为最终提交标志发布补充表；失败时恢复同表的上一版本。"""
+
+    if marker not in staged:
+        raise ValueError("supplemental staged output is missing the JSONL marker")
+    backups: dict[Path, Path] = {}
+    try:
+        for target in staged:
+            if target.exists():
+                backup = target.with_name(f".{target.name}.{uuid4().hex}.previous.tmp")
+                target.replace(backup)
+                backups[target] = backup
+        for target in sorted((path for path in staged if path != marker), key=str):
+            staged[target].replace(target)
+        staged[marker].replace(marker)
+    except Exception:
+        for target in staged:
+            if target.exists():
+                target.unlink()
+        for target, backup in backups.items():
+            if backup.exists():
+                backup.replace(target)
+        raise
+    else:
+        for backup in backups.values():
+            if backup.exists():
+                backup.unlink()
+    finally:
+        _cleanup_staged(staged)
+
+
+def reduce_exp5_with_exp1_v4_reference(
+    run_dir: str | Path,
+    source_run_dir: str | Path,
+) -> dict[str, Any]:
+    """发布 Exp5 三模型实测加 Exp1 Flash V4 历史事实的隔离补充表。
+
+    此函数只读两份 ordinary inventory/result；不会调用 provider，也不会改写
+    ``metrics/tables/exp5.*`` 或 ``summary.json``。
+    """
+
+    target_store = RunStore(run_dir)
+    source_store = RunStore(source_run_dir)
+    live_by_model, target_cases = _reference_comparison_live_observations(target_store)
+    source_observations = _reference_comparison_source_observations(
+        source_store, target_cases
+    )
+    rows = [
+        _reference_comparison_row(
+            configured_model=model,
+            observation_origin="exp5_live",
+            observations=live_by_model[model],
+        )
+        for model in _EXP5_V4_REFERENCE_LIVE_MODELS
+    ]
+    rows.append(
+        _reference_comparison_row(
+            configured_model=_EXP5_V4_REFERENCE_SOURCE_MODEL,
+            observation_origin="exp1_reused_actual",
+            observations=source_observations,
+        )
+    )
+    supplemental_dir = target_store.run_dir / "metrics" / "supplemental"
+    jsonl_target = supplemental_dir / f"{_EXP5_V4_REFERENCE_TABLE_ID}.jsonl"
+    csv_target = supplemental_dir / f"{_EXP5_V4_REFERENCE_TABLE_ID}.csv"
+    staged: dict[Path, Path] = {}
+    try:
+        _stage_payloads(
+            {
+                jsonl_target: _serialize_jsonl(rows),
+                csv_target: _serialize_csv(rows),
+            },
+            staged,
+        )
+        _commit_staged_supplemental(staged, jsonl_target)
+    except Exception:
+        _cleanup_staged(staged)
+        raise
+    return {
+        "schema_version": "tokenshare.slim_v2.exp5_v4_reference_comparison.v1",
+        "table_id": _EXP5_V4_REFERENCE_TABLE_ID,
+        "row_count": len(rows),
+        "jsonl": str(jsonl_target.relative_to(target_store.run_dir)),
+        "csv": str(csv_target.relative_to(target_store.run_dir)),
+    }
+
+
 __all__ = [
-    "formal_metric_occurrences", "metric_ids", "reduce_run", "sample_variance",
+    "formal_metric_occurrences", "metric_ids", "reduce_exp5_with_exp1_v4_reference",
+    "reduce_run", "sample_variance",
     "stratified_case_cluster_bootstrap", "type7_quantile",
 ]

@@ -15,6 +15,7 @@ from tokenshare.experiments.slim_v2.provider import (
     project_cost,
 )
 from tokenshare.experiments.slim_v2.schema import (
+    LEGACY_PRICING_VERSION,
     PRICING_VERSION,
     ProviderEntryViewV1,
     ProviderRequestControlV1,
@@ -458,11 +459,16 @@ def test_started_exp1_configuration_failure_projects_incorrect_root(
 
 
 @pytest.mark.parametrize(
-    ("family", "model", "started", "hit", "miss", "prompt", "expected_tier", "expected"),
+    (
+        "family", "model", "started", "hit", "miss", "prompt",
+        "expected_version", "expected_tier", "expected",
+    ),
     [
-        ("deepseek", "deepseek-v4-pro", "2026-08-21T09:30:00+08:00", 10, 20, 30, "peak", 0.000453),
-        ("deepseek", "deepseek-v4-pro", "2026-08-21T13:00:00+08:00", None, None, 30, "off_peak", None),
-        ("siliconflow", "Qwen/Qwen3-14B", "2026-08-21T01:00:00Z", None, None, 30, "flat", 0.000035),
+        ("deepseek", "deepseek-v4-flash", "2026-08-21T09:30:00+08:00", 10, 20, 30, PRICING_VERSION, "flat", 0.0000755),
+        ("deepseek", "deepseek-v4-flash", None, 10, 20, 30, PRICING_VERSION, "flat", 0.0000755),
+        ("deepseek", "deepseek-v4-pro", "2026-08-21T09:30:00+08:00", 10, 20, 30, LEGACY_PRICING_VERSION, "peak", 0.000453),
+        ("deepseek", "deepseek-v4-pro", "2026-08-21T13:00:00+08:00", None, None, 30, LEGACY_PRICING_VERSION, "off_peak", None),
+        ("siliconflow", "Qwen/Qwen3-14B", "2026-08-21T01:00:00Z", None, None, 30, LEGACY_PRICING_VERSION, "flat", 0.000035),
     ],
 )
 def test_project_cost_frozen_authority(
@@ -472,6 +478,7 @@ def test_project_cost_frozen_authority(
     hit: int | None,
     miss: int | None,
     prompt: int,
+    expected_version: str,
     expected_tier: str,
     expected: float | None,
 ) -> None:
@@ -485,7 +492,7 @@ def test_project_cost_frozen_authority(
         completion_tokens=10,
     )
 
-    assert projection.pricing_version == PRICING_VERSION
+    assert projection.pricing_version == expected_version
     assert projection.pricing_tier == expected_tier
     assert projection.cost_estimate_cny == pytest.approx(expected) if expected is not None else projection.cost_estimate_cny is None
 
@@ -967,10 +974,9 @@ def test_provider_submission_adapter_completes_lean_root(
         ("zai-org/GLM-5.2", True),
         ("Qwen/Qwen3-14B", True),
         ("MiniMaxAI/MiniMax-M2.5", True),
-        ("Pro/deepseek-ai/DeepSeek-V3", False),
     ],
 )
-def test_exp5_four_siliconflow_entries_complete_without_tail_or_replacement(
+def test_exp5_three_siliconflow_entries_complete_without_tail_or_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -1001,7 +1007,7 @@ def test_exp5_four_siliconflow_entries_complete_without_tail_or_replacement(
     monkeypatch.setattr(provider, "_open_response", factory)
     entry = _entry(model=model)
     entry.request_overrides = (
-        {"enable_thinking": True, "thinking_budget": 32768}
+        {"enable_thinking": True, "thinking_budget": 100000}
         if thinking
         else {"enable_thinking": False}
     )
@@ -1053,7 +1059,7 @@ def test_exp5_four_siliconflow_entries_complete_without_tail_or_replacement(
     assert all(body["model"] == model for body in factory.request_bodies)
     assert all(body.get("enable_thinking") is thinking for body in factory.request_bodies)
     if thinking:
-        assert all(body.get("thinking_budget") == 32768 for body in factory.request_bodies)
+        assert all(body.get("thinking_budget") == 100000 for body in factory.request_bodies)
     inventory = replace(
         _inventory(case=case, domain="factorization"),
         experiment_id="exp5",

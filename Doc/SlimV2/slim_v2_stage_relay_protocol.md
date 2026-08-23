@@ -435,7 +435,7 @@ shared core、local_runtime、Factorization/Lean plugin、executor 和 storage �
 9. Experiment 3 严格使用权威规定的五类 fault、planned first-attempt 分母、ordinal 0 注入、replacement 和 seed=20260820 的 token/latency 扰动；资源必须标为 simulated trace-attributed，不能称为当次真实 provider usage。
 10. Experiment 4 固定 FULL、四个单机制和六个双机制共 11 modes，使用 mode-blind 确定性 challenge；不得恢复旧 mode 或离线拼接双机制结果。
 11. Experiment 5 使用冻结的四个 SiliconFlow endpoint、相同 hard roots、零重试和真实 provider usage。
-12. DeepSeek/SiliconFlow 成本使用 slim_v2.pricing.2026-08-20；reasoning_tokens 是 completion_tokens 子集，禁止重复计价。
+12. 前向 Experiment 1 使用 `deepseek-v4-flash` 与 `slim_v2.pricing.2026-08-23` 的 flat 成本：cache-hit/cache-miss/output 分别为 `0.05/1.5/4.5 CNY per 1M tokens`；Experiment 5 保持 `slim_v2.pricing.2026-08-20` 的 SiliconFlow flat 成本。两者都只是普通成本换算常量，不形成价格门禁；reasoning_tokens 是 completion_tokens 子集，禁止重复计价。迁移前已启动 exact run 的 `deepseek-v4-pro` 峰/谷记录仅是不可改写的历史 cohort 事实，不得重标为 Flash 或前向价格规则。
 13. 单 root 失败仍必须写结果行，固定分母不得删除失败、超时或未恢复 root。
 
 六、原子运行与复用要求

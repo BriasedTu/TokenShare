@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -24,6 +24,11 @@ from .profiles import (
     project_root_inventory_rows,
 )
 from .schema import (
+    LEGACY_PRICING_VERSION,
+    PRE_FLASH_CONFIGURED_MODEL,
+    PRE_FLASH_EXP2_ROOT_KEY,
+    PRE_FLASH_PROVIDER_ENTRY_ID,
+    PRE_FLASH_REPRESENTATIVE_RUN_ID,
     AblationObservationV1,
     ProviderEntryViewV1,
     RootInventoryV1,
@@ -36,6 +41,22 @@ from .storage import RunStore, scan_resume
 
 _EXPERIMENT_ORDER = ("exp1", "exp2", "exp3", "exp4", "exp5")
 _FIXED_SOURCE_EXPERIMENTS = frozenset({"exp2", "exp3", "exp4"})
+_PRE_FLASH_LEGACY_CONFIG_FIELDS = frozenset(
+    {
+        "schema_version",
+        "run_id",
+        "profile_id",
+        "experiment_ids",
+        "source_run_dir",
+        "exp1_provider_config_path",
+        "exp5_provider_config_path",
+        "local_secret_config_path",
+        "pricing_version",
+        "ordinary_parallel_backend_kind",
+        "response_max_bytes",
+        "reducer_workers",
+    }
+)
 _REPO_ROOT = Path(__file__).parents[4]
 _DEFAULT_OUTPUT_ROOT = _REPO_ROOT / "TokenShareData" / "outputs" / "slim_v2"
 _NEXT_ATOMIC_WRITE_BYTES = 64 * 1024
@@ -101,6 +122,10 @@ def _parser() -> argparse.ArgumentParser:
 
     reduce = commands.add_parser("reduce")
     reduce.add_argument("--run-dir", required=True)
+
+    compare_exp5_v4 = commands.add_parser("compare-exp5-v4-reference")
+    compare_exp5_v4.add_argument("--run-dir", required=True)
+    compare_exp5_v4.add_argument("--source-run-dir", required=True)
 
     representative = commands.add_parser("representative")
     representative.add_argument("--run-id", required=True)
@@ -930,6 +955,50 @@ def _validate_resume_config(store: RunStore, config: SlimRunConfigV1) -> None:
         raise RuntimeError("resume run config differs from this command")
 
 
+def _is_pre_flash_representative_resume_request(
+    *,
+    run_id: str,
+    profile_id: str,
+    experiment_ids: Sequence[str],
+    source_run_dir: str | None,
+) -> bool:
+    """只识别法定人数冻结的旧 cohort；不能成为一般 config 兼容开关。"""
+
+    return (
+        run_id == PRE_FLASH_REPRESENTATIVE_RUN_ID
+        and profile_id == "representative"
+        and tuple(experiment_ids) == _EXPERIMENT_ORDER
+        and source_run_dir is None
+    )
+
+
+def _validate_pre_flash_representative_resume_config(
+    store: RunStore,
+) -> None:
+    """旧单值价格 config 仅可作为唯一 exact cohort 的冻结事实读取。"""
+
+    expected = {
+        "schema_version": "tokenshare.slim_v2.run_config.v1",
+        "run_id": PRE_FLASH_REPRESENTATIVE_RUN_ID,
+        "profile_id": "representative",
+        "experiment_ids": list(_EXPERIMENT_ORDER),
+        "source_run_dir": None,
+        "exp1_provider_config_path": "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+        "exp5_provider_config_path": "benchmarks/paper/exp5_siliconflow_provider_config.v3.json",
+        "local_secret_config_path": "local/ai_api_smoke.local.json",
+        "pricing_version": LEGACY_PRICING_VERSION,
+        "ordinary_parallel_backend_kind": "thread",
+        "response_max_bytes": 16 * 1024 * 1024,
+        "reducer_workers": 1,
+    }
+    try:
+        document = store.read_run_config()
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError("pre-Flash resume config cannot be read") from exc
+    if set(document) != _PRE_FLASH_LEGACY_CONFIG_FIELDS or document != expected:
+        raise RuntimeError("pre-Flash resume config is not the exact frozen cohort")
+
+
 def _validate_resume_inventory(
     store: RunStore,
     selected: Mapping[str, tuple[tuple[RootInventoryV1, bool], ...]],
@@ -955,6 +1024,61 @@ def _validate_resume_inventory(
                 raise RuntimeError(
                     f"resume inventory differs for {_root_key(root)}"
                 )
+
+
+def _pre_flash_frozen_selected(
+    store: RunStore,
+    selected: Mapping[str, tuple[tuple[RootInventoryV1, bool], ...]],
+) -> dict[str, tuple[tuple[RootInventoryV1, bool], ...]]:
+    """把唯一旧 cohort 的已冻结 Pro rows 装入恢复上下文，拒绝任何其他差异。"""
+
+    try:
+        frozen_roots = {
+            _root_key(root): root for root in store.read_root_inventory_rows("roots")
+        }
+        frozen_references = {
+            _root_key(root): root
+            for root in store.read_root_inventory_rows("exp3_references")
+        }
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("pre-Flash resume inventory cannot be read") from exc
+    expected_roots = {
+        _root_key(root)
+        for roots in selected.values()
+        for root, is_reference in roots
+        if not is_reference
+    }
+    expected_references = {
+        _root_key(root)
+        for roots in selected.values()
+        for root, is_reference in roots
+        if is_reference
+    }
+    if set(frozen_roots) != expected_roots or set(frozen_references) != expected_references:
+        raise RuntimeError("pre-Flash resume inventory keyset is not exact")
+    restored: dict[str, tuple[tuple[RootInventoryV1, bool], ...]] = {}
+    for experiment_id, experiment_roots in selected.items():
+        recovered: list[tuple[RootInventoryV1, bool]] = []
+        for current, is_reference in experiment_roots:
+            frozen = (frozen_references if is_reference else frozen_roots)[
+                _root_key(current)
+            ]
+            expected = (
+                current
+                if current.experiment_id == "exp5"
+                else replace(
+                    current,
+                    provider_entry_id=PRE_FLASH_PROVIDER_ENTRY_ID,
+                    configured_model=PRE_FLASH_CONFIGURED_MODEL,
+                )
+            )
+            if frozen != expected:
+                raise RuntimeError(
+                    f"pre-Flash resume inventory differs for {_root_key(current)}"
+                )
+            recovered.append((frozen, is_reference))
+        restored[experiment_id] = tuple(recovered)
+    return restored
 
 
 def _validate_committed_results(
@@ -1042,8 +1166,17 @@ def _run_experiment_locked(
         raise RuntimeError(f"run directory already exists; use --resume: {run_dir}")
     if resume and not run_dir.is_dir():
         raise RuntimeError(f"resume run directory does not exist: {run_dir}")
+    pre_flash_resume = resume and _is_pre_flash_representative_resume_request(
+        run_id=run_id,
+        profile_id=profile_id,
+        experiment_ids=experiment_ids,
+        source_run_dir=source_run_dir,
+    )
     if resume:
-        _validate_resume_config(store, config)
+        if pre_flash_resume:
+            _validate_pre_flash_representative_resume_config(store)
+        else:
+            _validate_resume_config(store, config)
 
     cases = _case_inputs()
     challenges = _challenge_map(inventory)
@@ -1052,19 +1185,36 @@ def _run_experiment_locked(
         experiment_id: _selected_roots(inventory, experiment_id)
         for experiment_id in experiment_ids
     }
+    if pre_flash_resume:
+        selected_by_experiment = _pre_flash_frozen_selected(
+            store,
+            selected_by_experiment,
+        )
     _validate_caps(
         profile_id=profile_id,
         plan=plan,
         selected=selected_by_experiment,
     )
     if resume:
-        _validate_resume_inventory(store, selected_by_experiment)
+        if not pre_flash_resume:
+            _validate_resume_inventory(store, selected_by_experiment)
         assert resume_view is not None
         _validate_committed_results(
             store,
             selected_by_experiment,
             resume_view.committed_root_keys,
         )
+        if pre_flash_resume:
+            uncommitted_exp1 = [
+                _root_key(root)
+                for root, is_reference in selected_by_experiment["exp1"]
+                if not is_reference
+                and _root_key(root) not in resume_view.committed_root_keys
+            ]
+            if uncommitted_exp1:
+                raise RuntimeError(
+                    "pre-Flash resume cannot dispatch a new Experiment 1 provider call"
+                )
 
     pending_write_roots: list[RootInventoryV1] = []
     pending_roots: list[RootInventoryV1] = []
@@ -1242,6 +1392,14 @@ def _run_experiment_locked(
             elif resume_view is not None and key in resume_view.protocol_root_keys:
                 protocol = store.read_root_protocol(*key)
                 result = services.resume_root(context, protocol)
+            elif (
+                pre_flash_resume
+                and key == PRE_FLASH_EXP2_ROOT_KEY
+                and _started_without_protocol(store, root)
+            ):
+                from .runtime import reproject_pre_flash_exp2_terminal_root_context
+
+                result = reproject_pre_flash_exp2_terminal_root_context(context)
             elif resume and _started_without_protocol(store, root):
                 result = _invalid_root_result(
                     root,
@@ -1289,6 +1447,14 @@ def main(
             ),
         )
         print(json.dumps(_plan_payload(plan, args.run_id), ensure_ascii=False))
+        return 0
+    if args.command == "compare-exp5-v4-reference":
+        from .reducer import reduce_exp5_with_exp1_v4_reference
+
+        summary = reduce_exp5_with_exp1_v4_reference(
+            Path(args.run_dir), Path(args.source_run_dir)
+        )
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
         return 0
 
     services = _services or _default_services()

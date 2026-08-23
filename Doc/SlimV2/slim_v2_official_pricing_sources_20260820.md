@@ -1,7 +1,7 @@
 ---
 status: user_frozen_source
 document: slim_v2_official_pricing_sources_20260820
-scope: DeepSeek Experiment 1 and SiliconFlow Experiment 5 official API pricing evidence
+scope: historical DeepSeek Pro and Experiment 5 SiliconFlow API pricing evidence
 accessed_at: 2026-08-20 Asia/Shanghai
 ---
 
@@ -9,15 +9,15 @@ accessed_at: 2026-08-20 Asia/Shanghai
 
 ## 1. 范围与使用规则
 
-本文只保存 2026-08-20 访问的 DeepSeek 与 SiliconFlow 官方一手页面证据，用于冻结 Slim V2 的 token 成本计算标准。未使用第三方价格聚合站。所有金额均保留官网原始币种和“每百万 tokens”单位，不在本文引入汇率换算。
+本文只保存 2026-08-20 访问的 DeepSeek Pro 与 SiliconFlow 官方一手页面证据。未使用第三方价格聚合站。所有金额均保留官网原始币种和“每百万 tokens”单位，不在本文引入汇率换算。自 2026-08-23 起，前向 Experiment 1 的 Flash 价格与身份改由 `slim_v2_flash_pricing_source_20260823.md` 记录；本文的 Pro 部分只解释已经启动 run 的历史事实，不能覆盖前向默认值。
 
 冻结时必须同时固定 `provider`、API `model`、币种、峰/谷时段（若有）、价格来源 URL 与访问日期。官网后续改价不得追溯改写已经启动的 run；新 run 如要采用新价，应形成新的 pricing snapshot/version。
 
-## 2. DeepSeek：Experiment 1
+## 2. DeepSeek Pro：Experiment 1 的历史快照
 
 ### 2.1 当前人民币价格
 
-Slim V2 权威文档中的本地 entry 为 `deepseek_v4_pro_exp1_baseline`，请求 model 为 `deepseek-v4-pro`。DeepSeek 官方价目页只定义 API model，不存在名为 `deepseek_v4_pro_exp1_baseline` 的官方产品名称；后者应视为 TokenShare 本地 config entry ID。
+2026-08-20 快照中的本地 entry 为 `deepseek_v4_pro_exp1_baseline`，请求 model 为 `deepseek-v4-pro`。DeepSeek 官方价目页只定义 API model，不存在名为 `deepseek_v4_pro_exp1_baseline` 的官方产品名称；后者应视为当时的 TokenShare 本地 config entry ID，而非当前前向 Experiment 1 默认值。
 
 官方中文价目页在访问时显示 API model `deepseek-v4-pro`，当前模型版本为 `DeepSeek-V4-Pro-0813`。单位为人民币元 / 1M tokens：
 
@@ -135,4 +135,4 @@ SiliconFlow 专用价格页虽然列出部分模型 cache 价，但本任务要�
 | SiliconFlow GLM-5.2 | 是 | 专用 `/pricing` 与登录后的模型价格详情均为 input 8.00；公开镜像早先的 6.00 不进入冻结表 |
 | 两家 reasoning token 归属 | 是 | 两家官方 schema 都把 reasoning 放在 completion token 细分中；成本使用 completion/output，禁止重复加算 |
 
-Slim V2 最终冻结策略：DeepSeek 采用人民币峰/谷表；SiliconFlow 指定 `https://siliconflow.cn/pricing` 为价格权威，并以登录后的 `https://cloud.siliconflow.cn/me/models` 价格详情交叉核对。冻结版本为 `slim_v2.pricing.2026-08-20`。该版本只用于成本换算，不创建预算、余额、审批或运行门禁。
+2026-08-20 快照的冻结策略：DeepSeek Pro 采用人民币峰/谷表；SiliconFlow 指定 `https://siliconflow.cn/pricing` 为价格权威，并以登录后的 `https://cloud.siliconflow.cn/me/models` 价格详情交叉核对。`slim_v2.pricing.2026-08-20` 对 Experiment 5 与已持久化 Pro 事实仍只用于成本换算，不创建预算、余额、审批或运行门禁；它不是前向 Flash Experiment 1 的价格版本。

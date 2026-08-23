@@ -139,11 +139,11 @@ def _expected_full_ids() -> dict[str, tuple[str, ...]]:
             for topic, count in zip(TOPICS, (2, 2, 1), strict=True)
             for case_id in lean_by_stratum[(difficulty, topic)][:count]
         ),
-        "exp5_factor": factor_by_difficulty["hard"][:42],
+        "exp5_factor": factor_by_difficulty["hard"][:28],
         "exp5_lean": tuple(
             case_id
             for topic in TOPICS
-            for case_id in lean_by_stratum[("hard_frontier", topic)][:4]
+            for case_id in lean_by_stratum[("hard_frontier", topic)][:3]
         ),
     }
 
@@ -198,8 +198,8 @@ def test_full_case_ids_match_all_authority_strata_and_counts() -> None:
         3,
         50,
         15,
-        42,
-        12,
+        28,
+        9,
     )
 
     factor_by_id = {
@@ -330,17 +330,17 @@ def test_full_condition_and_root_counts_match_canonical_inventory() -> None:
         "exp2": 600,
         "exp3": 3_726,
         "exp4": 2_145,
-        "exp5": 648,
+        "exp5": 111,
     }
-    assert inventory.paper_root_count == 7_554
+    assert inventory.paper_root_count == 7_017
     assert inventory.reference_root_counts == {"exp3": 106}
-    assert inventory.execution_root_count == 7_660
+    assert inventory.execution_root_count == 7_123
     assert inventory.condition_counts == {
         "exp1": 12,
         "exp2": 48,
         "exp3": 342,
         "exp4": 33,
-        "exp5": 48,
+        "exp5": 12,
     }
     assert all(
         condition.continue_after_terminal_child_failure is False
@@ -457,20 +457,35 @@ def test_full_attempt_and_provider_call_hard_caps_are_derived_from_inventory() -
     assert plan.experiments["exp4"].protocol_execution_attempt_upper == (
         7 * 3 * 293 * 2 + 4 * 3 * 293
     ) == 15_822
-    assert plan.online_provider_call_upper == 10_902
+    assert plan.experiments["exp2"].protocol_execution_attempt_upper == 14_400
+    assert plan.exp3_reference_protocol_execution_attempt_upper == 1_404
+    assert plan.experiments["exp5"].planned_first_attempt_ai_units == 852
+    assert plan.experiments["exp5"].protocol_execution_attempt_upper == 852
+    assert plan.experiments["exp5"].provider_call_upper == 852
+    fixed_replay_attempts = sum(
+        (
+            plan.experiments["exp2"].protocol_execution_attempt_upper,
+            plan.experiments["exp3"].protocol_execution_attempt_upper,
+            plan.experiments["exp4"].protocol_execution_attempt_upper,
+            plan.exp3_reference_protocol_execution_attempt_upper,
+        )
+    )
+    assert fixed_replay_attempts == 84_618
+    assert fixed_replay_attempts + plan.online_provider_call_upper == 91_380
+    assert plan.online_provider_call_upper == 6_762
     assert plan.online_provider_call_upper == sum(
         experiment.provider_call_upper for experiment in plan.experiments.values()
     )
 
 
-def test_full_hard_upper_includes_four_hundred_twenty_six_point_seventeen_gib_online_term() -> None:
+def test_full_hard_upper_tracks_three_model_exp5_online_term() -> None:
     from tokenshare.experiments.slim_v2.profiles import build_plan
 
     plan = build_plan("full", representative_raw_response_p95_bytes=256 * 1024)
 
     assert plan.hard_response_bytes == 16 * 1024 * 1024
-    assert plan.online_response_artifact_hard_upper_bytes == 457_597_931_520
-    assert round(plan.online_response_artifact_hard_upper_gib, 2) == 426.17
+    assert plan.online_response_artifact_hard_upper_bytes == 283_826_565_120
+    assert round(plan.online_response_artifact_hard_upper_gib, 2) == 264.33
     assert plan.hard_upper_bytes > plan.online_response_artifact_hard_upper_bytes
     assert plan.hard_upper_gib == plan.hard_upper_bytes / 1024**3
     assert isinstance(plan.hard_upper_bytes, int)
@@ -582,6 +597,14 @@ def test_full_exp5_inventory_preserves_repeat_model_order() -> None:
 
     inventory = build_inventory("full")
     conditions = {item.condition_id: item for item in inventory.conditions}
+    exp5_conditions = [
+        condition
+        for condition in inventory.conditions
+        if condition.experiment_id == "exp5"
+    ]
+    assert len(exp5_conditions) == 12
+    assert {condition.repeat_id for condition in exp5_conditions} == {0}
+    assert {condition.max_retries for condition in exp5_conditions} == {0}
     blocks: list[tuple[int, str | None]] = []
     for root in inventory.roots:
         if root.experiment_id != "exp5":
@@ -594,15 +617,6 @@ def test_full_exp5_inventory_preserves_repeat_model_order() -> None:
         (0, "zai-org/GLM-5.2"),
         (0, "Qwen/Qwen3-14B"),
         (0, "MiniMaxAI/MiniMax-M2.5"),
-        (0, "Pro/deepseek-ai/DeepSeek-V3"),
-        (1, "Qwen/Qwen3-14B"),
-        (1, "Pro/deepseek-ai/DeepSeek-V3"),
-        (1, "zai-org/GLM-5.2"),
-        (1, "MiniMaxAI/MiniMax-M2.5"),
-        (2, "MiniMaxAI/MiniMax-M2.5"),
-        (2, "zai-org/GLM-5.2"),
-        (2, "Pro/deepseek-ai/DeepSeek-V3"),
-        (2, "Qwen/Qwen3-14B"),
     ]
 
     representative = build_inventory("representative")
@@ -617,7 +631,6 @@ def test_full_exp5_inventory_preserves_repeat_model_order() -> None:
         "zai-org/GLM-5.2",
         "Qwen/Qwen3-14B",
         "MiniMaxAI/MiniMax-M2.5",
-        "Pro/deepseek-ai/DeepSeek-V3",
     ]
 
 
@@ -632,7 +645,7 @@ def test_representative_inventory_and_provider_call_hard_cap_are_exact() -> None
         "exp2": 12,
         "exp3": 8,
         "exp4": 44,
-        "exp5": 4,
+        "exp5": 3,
     }
     assert inventory.reference_root_counts == {"exp3": 2}
     for experiment_id, experiment in plan.experiments.items():
@@ -659,7 +672,8 @@ def test_representative_inventory_and_provider_call_hard_cap_are_exact() -> None
     assert plan.experiments["exp3"].protocol_execution_attempt_upper == (
         3 * exp3_rate_units + 4 * exp3_death_units
     ) == 190
-    assert plan.online_provider_call_upper == 89
+    assert plan.experiments["exp5"].provider_call_upper == 24
+    assert plan.online_provider_call_upper == 81
     assert all(
         root.worker_count == 10
         for root in inventory.roots
@@ -745,7 +759,7 @@ def test_representative_inventory_jsonl_round_trips_to_task1_projector_input(
         json.loads(line)
         for line in store.inventory_path("roots").read_text(encoding="utf-8").splitlines()
     ]
-    assert len(raw_roots) == len(inventory.roots) == 72
+    assert len(raw_roots) == len(inventory.roots) == 71
     assert all(set(row) == set(RootInventoryV1.field_names()) for row in raw_roots)
 
     loaded = store.read_root_inventory_rows("roots")
@@ -802,3 +816,23 @@ def test_frozen_inventory_stops_at_middle_conflict(tmp_path: Path) -> None:
     assert conflicting_roots.read_text(encoding="utf-8") == '{"conflict":true}\n'
     assert not store.inventory_path("exp3_references").exists()
     assert not store.inventory_path("exp4_challenges").exists()
+
+
+def test_forward_exp1_inventory_uses_flash_identity() -> None:
+    from tokenshare.experiments.slim_v2.profiles import (
+        build_profile,
+        build_inventory,
+        project_root_inventory_rows,
+    )
+
+    profile = build_profile("representative")
+    assert profile.experiments["exp1"].provider_entry_id == (
+        "deepseek_v4_flash_exp1_baseline"
+    )
+    assert profile.experiments["exp1"].model_id == "deepseek-v4-flash"
+
+    rows = project_root_inventory_rows(build_inventory("representative"))
+    for row in (*rows.roots, *rows.exp3_references):
+        if row.experiment_id in {"exp1", "exp2", "exp3", "exp4"}:
+            assert row.provider_entry_id == "deepseek_v4_flash_exp1_baseline"
+            assert row.configured_model == "deepseek-v4-flash"

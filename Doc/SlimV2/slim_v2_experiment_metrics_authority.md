@@ -2,7 +2,7 @@
 status: user_approved
 document: slim_v2_experiment_metrics_authority
 scope: TokenShare Slim V2 Experiment 1-5 experiments and metrics only
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 ---
 
 # Slim V2 实验与指标权威
@@ -78,19 +78,19 @@ last_updated: 2026-08-22
 
 ### 1.4 冻结价格与 token 计费口径
 
-Slim V2 的成本换算版本固定为 `pricing_version="slim_v2.pricing.2026-08-20"`。它只是 reducer/projector 使用的普通静态价格表，不是预算、审批、receipt 或执行门禁；价格变化不得阻止实验运行。官方来源、访问日期与页面核对记录保存在 `Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md`。
+前向成本换算按 experiment/provider 使用两个不可变版本：Experiment 1 使用 `pricing_version="slim_v2.pricing.2026-08-23"` 的 Flash 表；Experiment 5 保留 `pricing_version="slim_v2.pricing.2026-08-20"` 的 SiliconFlow 表。它们只是 reducer/projector 使用的普通静态价格表，不是预算、审批、receipt 或执行门禁；价格变化不得阻止实验运行。Flash 价格的直接用户来源见 `Doc/SlimV2/slim_v2_flash_pricing_source_20260823.md`；2026-08-20 的官方页面记录仅保留为 Experiment 5 与既有 Pro 事实的历史来源。
 
-#### 1.4.1 DeepSeek Experiment 1
+#### 1.4.1 DeepSeek Experiment 1（前向 Flash）
 
-本地 entry `deepseek_v4_pro_exp1_baseline` 对应官方 API model `deepseek-v4-pro`，访问时模型版本为 `DeepSeek-V4-Pro-0813`。人民币单价固定为：
+前向本地 entry `deepseek_v4_flash_exp1_baseline` 对应 API model `deepseek-v4-flash`。用户于 2026-08-23 直接冻结人民币单价：
 
-| 计费项（CNY / 1M tokens） | 空闲时段 | 高峰时段 |
-|---|---:|---:|
-| input，cache hit | 0.15 | 0.30 |
-| input，cache miss | 4.50 | 9.00 |
-| output | 13.50 | 27.00 |
+| 计费项（CNY / 1M tokens） | `pricing_tier` |
+|---|---:|
+| input，cache hit | 0.05 |
+| input，cache miss | 1.50 |
+| output | 4.50 |
 
-高峰按北京时间半开区间 `[09:00,12:00)` 与 `[14:00,18:00)` 判定，其余为空闲时段。每个真实 attempt 用该 attempt 的 `provider_request_started_at_utc` 转换到 `Asia/Shanghai` 后冻结 `pricing_tier=peak/off_peak`；不得用 root start、root terminal 或报告生成时间代替。DeepSeek 实际成本为：
+该 Flash 价格版本固定为 `slim_v2.pricing.2026-08-23`，仅有 `pricing_tier=flat`；不得沿用或按比例换算此前 Pro 的 peak/off_peak 表。真实 attempt 仍保存 `provider_request_started_at_utc` 作为调用事实，但它不参与 Flash 的价格档选择。DeepSeek Flash 实际成本为：
 
 ```text
 cost_estimate_cny = (
@@ -100,7 +100,7 @@ cost_estimate_cny = (
 ) / 1_000_000
 ```
 
-`prompt_tokens` 必须等于 cache hit 与 miss 两项之和；任一实际调用缺少 cache split、`completion_tokens`、调用起始时间或价格版本时，attempt cost 为 `null` 并记录 `usage_status/missing_reason`，不得猜测。
+`prompt_tokens` 必须等于 cache hit 与 miss 两项之和；任一实际调用缺少 cache split、`completion_tokens` 或价格版本时，attempt cost 为 `null` 并记录 `usage_status/missing_reason`，不得猜测。
 
 #### 1.4.2 SiliconFlow Experiment 5
 
@@ -111,9 +111,8 @@ SiliconFlow 以官方专用价格页 `https://siliconflow.cn/pricing` 为价格�
 | `zai-org/GLM-5.2` | 8.00 | 28.00 | 2.00 |
 | `Qwen/Qwen3-14B` | 0.50 | 2.00 | 无独立价 |
 | `MiniMaxAI/MiniMax-M2.5` | 2.10 | 8.40 | 0.21 |
-| `Pro/deepseek-ai/DeepSeek-V3` | 2.00 | 8.00 | 0.20 |
 
-有独立 cache-hit 价的 endpoint 按 provider 返回的 `prompt_cache_hit_tokens/prompt_cache_miss_tokens` 分项计算；缺任一分项则 cost 为 `null`。Qwen3-14B 的官网 cache 列未列独立价格，不能解释为免费：其全部 `prompt_tokens` 均按 input 0.50 计算。四个 endpoint 的 output 均按 `completion_tokens` 计算。
+有独立 cache-hit 价的 endpoint 按 provider 返回的 `prompt_cache_hit_tokens/prompt_cache_miss_tokens` 分项计算；缺任一分项则 cost 为 `null`。Qwen3-14B 的官网 cache 列未列独立价格，不能解释为免费：其全部 `prompt_tokens` 均按 input 0.50 计算。三个 Exp5 endpoint 的 output 均按 `completion_tokens` 计算。
 
 #### 1.4.3 reasoning tokens 不重复计数
 
@@ -127,6 +126,12 @@ generated_tokens = nonreasoning_completion_tokens + reasoning_tokens
 
 `reasoning_tokens` 缺失时只表示无法做该诊断拆分；只要 provider 的 `completion_tokens` 完整，仍可计算 output token 和成本。
 
+#### 1.4.4 2026-08-23 前已启动 Representative 的事实边界
+
+`slim-v2-representative-real-20260822-144900-ef9128fe` 在本次前向切换前已经持久化的 Experiment 1 traces 事实为 `deepseek-v4-pro` 与 `slim_v2.pricing.2026-08-20`。这些已发生事实不得重写、重价、重标为 Flash，也不得向同一 Experiment 1 事实集混入或重复新的 Flash provider 调用。
+
+经 Stage 7.1 独立法定人数 `3/3`，该 exact run 只能在窄的 frozen-v2 上下文中为已知 projector/recovery 修复执行同一 run 的 `--resume`；它不是前向 Flash Experiment 1 结果，不能作为 post-change Flash 结果的可比或可发表证据。此项只是结果解释的真值标签，不创建价格、发布或运行 gate。
+
 ## 2. Experiment 1：跨领域可行性与难度
 
 ### 2.1 研究问题与条件
@@ -136,7 +141,7 @@ generated_tokens = nonreasoning_completion_tokens + reasoning_tokens
 - **case/root**：Factorization 当前稳定 hash corpus 的 easy/medium/hard 各 100，共 300；Lean 为 3 个 `paper_difficulty` × 3 个 `topic_family` × 每格 15，共 135；总计 435 roots。
 - **repeat**：每题 1 次，`repeat_id=0`，`seed=1`；总计 435 root-runs、1,970 planned first-attempt AI units。
 - **worker**：`worker_count=10`，不是新的实验维度。
-- **provider/model**：官方 DeepSeek；entry=`deepseek_v4_pro_exp1_baseline`，model=`deepseek-v4-pro`，thinking enabled，`reasoning_effort=high`，`timeout_seconds=600`，`max_tokens=300000`，每个实际执行的 AI unit 最多 3 次自然 provider attempts；provider 全局 in-flight 上限 50；成本按第 1.4 节冻结的 `slim_v2.pricing.2026-08-20` 计算。
+- **provider/model**：官方 DeepSeek；前向 entry=`deepseek_v4_flash_exp1_baseline`，model=`deepseek-v4-flash`，thinking enabled，`reasoning_effort=high`，`timeout_seconds=600`，`max_tokens=300000`，每个实际执行的 AI unit 最多 3 次自然 provider attempts；provider 全局 in-flight 上限 50；成本按第 1.4 节冻结的 `slim_v2.pricing.2026-08-23` Flash flat 表计算。第 1.4.4 节的 exact historical run 只保留其已持久化 Pro 事实，不构成前向例外。
 - **阶段一：正常协议阶段**：调用一次现有 `run_root()`。Factorization 找到第一个正确因数后按现有语义完成 root；Lean 按现有 proof/root 终态语义完成或失败。`root_terminal_at_ms` 在 `run_root()` 返回并形成协议终态时记录；正常协议阶段实际执行的 unit 写唯一 per-unit trace，`trace_origin=protocol`。正文正确性、完成率、协议时间、provider latency、token 与 cost 只消费这一阶段。
 - **阶段二：逐 root coverage tail**：`run_root()` 返回后，Slim runner 立即读取该 root 的 `unscheduled_ai_unit_ids`，保持该冻结 observation 中的原始顺序（不再按文本或数字重排），只对尚无 protocol trace 的 planned units 执行 Slim-local trace acquisition。有效 `no_final/incorrect_final` 或其他 `terminal_failure.infrastructure_invalid=false` 的协议终态仍必须执行 tail；只有 `slim_condition_failure`、`slim_runtime_failure` 或 `terminal_failure.infrastructure_invalid=true` 阻断。每个 unit 使用与 Experiment 1 计划完全相同的 unit input、prompt、provider/model 与请求控制，写入同一题的唯一 per-unit trace，`trace_origin=coverage_tail`；不得重复调用任何已在正常协议阶段执行过的 unit，也不创建独立回答库。
 - **tail attempt 规则**：每个 coverage-tail unit 从自然 `attempt_ordinal=0` 开始，按 Experiment 1 相同的 parse/verifier/checker 接受规则，在失败或拒绝时继续取得下一自然 attempt，首次 accepted 后停止，最多三个 attempts。tail 只为决定是否继续 acquisition 而运行 parser/verifier/checker，不创建 protocol attempt、canonical、merge 或新的 root 终态，也不修改已经完成的 `ProtocolRunResult`。Lean 依赖 canonical 不可用而无法构造合法 request 时，保存带真实 `lemma_node_id/dependency_path`、`provider_call_made=false` 的 typed `pre_dispatch_failure` trace；其他 provider/transport 连续失败同样保存真实失败 attempt/result kind，不伪造回答。
@@ -400,7 +405,7 @@ Experiment 3 不新增 fault rate、fault type、death condition 或在线调用
 - **repeat**：每题 3 次，`repeat_id∈{0,1,2}`。每个 `case_id × repeat_id` 只分配一个 challenge family；同一 case 可以在三个 repeat 中轮换到不同 challenge，以减少 case 与 challenge 的混淆。
 - **worker**：全部 mode 固定 `worker_count=10`，不是自变量。
 - **重试**：全部 mode 的 `ProtocolConfig.max_retries=1`。含 `NO_REQUEUE` 的 mode 只把 `replacement_attempts_allowed=false`，不把 `max_retries` 改成 0；这样 engine 仍可形成“本应 replacement”的 recovery decision。
-- **provider/model**：所有 attempt 仍按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 精确读取 Experiment 1 的官方 DeepSeek `deepseek_v4_pro_exp1_baseline` / `deepseek-v4-pro` 正常协议或 coverage-tail trace。当前 ordinal 存在则精确读取，不存在则读取最后一个已有自然 ordinal并记录 fallback。同一 source key 在所有 mode 和三个实验 repeats 中不变；Experiment 4 当次 provider calls 固定为 0。挑战只在读取固定回答后变换本次协议输入，不改写 Experiment 1 trace 文件。
+- **provider/model**：前向所有 attempt 仍按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 精确读取 Experiment 1 的官方 DeepSeek `deepseek_v4_flash_exp1_baseline` / `deepseek-v4-flash` 正常协议或 coverage-tail trace。当前 ordinal 存在则精确读取，不存在则读取最后一个已有自然 ordinal并记录 fallback。同一 source key 在所有 mode 和三个实验 repeats 中不变；Experiment 4 当次 provider calls 固定为 0。挑战只在读取固定回答后变换本次协议输入，不改写 Experiment 1 trace 文件；第 1.4.4 节的 exact historical run 仍只消费其已经持久化的 Pro trace。
 - **fault**：Experiment 4 没有 `fault_type`、`fault_rate` 或 rate sweep，相关 condition 字段固定为 `null`。四类 challenge 可以复用 `no_return` 等协议原语，但不并入 Experiment 3 fault 条件或 fault-rate 指标。
 
 ### 5.3 十一项 ablation mode
@@ -571,22 +576,21 @@ Experiment 4 沿用已冻结的 11 个 modes、四类 mode-blind challenge、现
 
 `protocol_started_root_count`、`preflight_blocked_root_count`、challenge planned/applied/mismatch 数、四格 transition counts、各种 candidate/attempt/root 原始计数、pair/quadruple 库存数以及三个 repeat 的 min/max 都保持精确值，不加 CI。`protocol_start_coverage` 和 `challenge_application_coverage` 是接线/挑战实施完整性检查，也只报告精确比例；它们小于 1 时按第 5.6–5.7 节判定 cell 有效性，不能用置信区间淡化接线缺失。
 
-## 6. Experiment 5：四模型 endpoint comparison
+## 6. Experiment 5：三模型 endpoint comparison 与 Flash V4 补充参考
 
 ### 6.1 研究问题与条件
 
-- **研究问题**：在同一 hard roots、相同 TokenShare/parser/verifier/checker 流程和零重试条件下，四个固定模型 endpoint 的首次输出质量、最终完成/正确性和实际资源如何比较。
-- **case/root**：Factorization hard 42；Lean hard 的 `pure_logic/function_set/induction` 各 4；共 54 roots/model-repeat。
-- **repeat/规模**：4 models × 3 repeats；48 conditions、648 root-runs、4,992 planned first-attempt AI units/provider-attempt upper bound。
+- **研究问题**：在同一 hard roots、相同 TokenShare/parser/verifier/checker 流程和零重试条件下，三个固定 SiliconFlow thinking endpoint 的首次输出质量、最终完成/正确性、实际资源和真实 wall-clock 如何比较。
+- **case/root**：Factorization hard 固定有序清单的前 28；Lean hard 的 `pure_logic/function_set/induction` 各取既有有序清单的前 3；共 37 roots/model。此缩减只改变 Experiment 5，既有排序、协议、题目语义和 Experiment 1–4 均不变。
+- **repeat/规模**：只运行 `repeat_id=0`；3 models × 1 repeat，12 conditions、111 root-runs、852 planned first-attempt AI units/provider-attempt upper bound。
 - **worker**：所有 model/repeat condition 均为 `worker_count=10`，不是新的比较维度。
 - **重试**：`ProtocolConfig.max_retries=0`，`replacement_attempts_allowed=false`，每 AI unit 最多 1 次 provider attempt。
-- **provider/model**：SiliconFlow cohort v3：
-  - A `zai-org/GLM-5.2`，thinking，`thinking_budget=32768`；
-  - B `Qwen/Qwen3-14B`，thinking，`thinking_budget=32768`；
-  - C `MiniMaxAI/MiniMax-M2.5`，thinking，`thinking_budget=32768`；
-  - D `Pro/deepseek-ai/DeepSeek-V3`，nonthinking。
-- **公共控制**：`timeout_seconds=600`，`max_tokens=100000`，SiliconFlow 全局 in-flight=3；A/B/C的`thinking_budget=32768`保持不变，它不是response token上限；repeat 顺序固定 `ABCD / BDAC / CADB`。
-- **成本口径**：四个 endpoint 全部使用第 1.4 节的 `pricing_version="slim_v2.pricing.2026-08-20"`；reasoning 是 completion/output 子集，不重复计价。
+- **provider/model**：SiliconFlow cohort：
+  - A `zai-org/GLM-5.2`，thinking，`thinking_budget=100000`；
+  - B `Qwen/Qwen3-14B`，thinking，`thinking_budget=100000`；
+  - C `MiniMaxAI/MiniMax-M2.5`，thinking，`thinking_budget=100000`。
+- **公共控制**：`timeout_seconds=600`，`max_tokens=100000`，SiliconFlow 全局 in-flight=3；三个 entry 的`thinking_budget=100000`不是 response token 上限；唯一运行顺序固定为 `ABC`。
+- **成本口径**：三个 endpoint 全部使用第 1.4 节的 `pricing_version="slim_v2.pricing.2026-08-20"`；reasoning 是 completion/output 子集，不重复计价。
 - **grouping**：正文按 model endpoint 汇总；domain/topic/repeat 和 failure taxonomy 留在明细。不得创建 pairwise significance、排名或综合分数。
 
 ### 6.2 质量与最终结果表（必须）
@@ -596,14 +600,20 @@ Experiment 4 沿用已冻结的 11 个 modes、四类 mode-blind challenge、现
 | 指标 | 公式；numerator / denominator | 缺失与失败 | 最小原始字段 |
 |---|---|---|---|
 | `actual_first_provider_attempt_count` | 实际发生的 ordinal=0 provider attempts 数 | pre-dispatch 失败不计 call | attempt ordinal/call fields |
-| `first_attempt_without_verifier_accepted_candidate_count` | 首次 provider attempt 未直接产生 verifier/checker 接受 candidate 的数量 | 按 transport→parse→verification 互斥原因分类 | first-attempt result fields |
-| `first_attempt_nonpass_rate` | 上一 count / actual first attempts | denominator=0 为 `null` | 上述字段 |
+| `first_attempt_without_verifier_accepted_candidate_count` | 首次 provider attempt 未直接产生 verifier/checker 接受 candidate 的数量 | 只有全部实际首次调用都已到达可评估的 verifier/checker 边界时才写数值；出现第 6.2.1 节的已解析未提交事实时为 `null + not_applicable_or_unavailable` | first-attempt result fields |
+| `first_attempt_nonpass_rate` | 上一 count / actual first attempts | denominator=0 为 `null + zero_denominator`；第 6.2.1 节事实使本指标及其 interval 派生为 `null + not_applicable_or_unavailable` | 上述字段 |
 | `first_attempt_provider_transport_failure_count` | 非通过项中 provider/transport failure 数 | 互斥优先级第 1 | `result_kind`,`http_status` |
 | `first_attempt_parse_schema_unusable_count` | 非通过项中 parse/schema unusable 数 | 仅未归入 transport failure | `parse_result` |
 | `first_attempt_verification_checker_rejection_count` | 非通过项中 verifier/checker rejection 数 | 仅正常返回且可解析 | `verifier_result`,`checker_result` |
 | `first_attempt_checkable_candidate_count` | 首次调用中正常返回、可解析且实际到达 verifier/checker 的数量 | 未到检查边界不计 | raw/parse/checker fields |
-| `first_attempt_explicitly_rejected_by_verifier_count` | checkable candidates 中明确 rejected 数 | checker/verifier 缺失为数据无效 | verifier/checker fields |
+| `first_attempt_explicitly_rejected_by_verifier_count` | checkable candidates 中明确 rejected 数 | 只有实际到达 checker/verifier 的 candidate 可计；未到边界者不计入分母或本 count | verifier/checker fields |
 | `first_attempt_verification_rejection_rate` | rejected/checkable | denominator=0 为 `null` | 上述字段 |
+
+#### 6.2.1 已解析但未到 verification 边界
+
+当 ordinal-0 的真实 provider call 已持久化 `2xx`、raw response、可用 `parse_result` 与 `result_kind="parsed"`，同时 `verifier_result/checker_result` 均为 `null`，且同一 attempt 已有 `not_applicable_or_unavailable` 的持久化缺失原因时，它是已终止 protocol 中**不可评估的 verification 边界事实**。它不是 transport、parse 或 verification rejection，也不创建第四类 failure taxonomy、metric 或 raw 字段。
+
+Reducer 必须保留它的实际调用、调用覆盖、usage、token、cost 与 wall-clock 事实；它不进入三项 failure breakdown、`checkable`、explicitly rejected 或 verification-rejection 分母。由于不能从未到达 verification 的事实推导“未通过”，`first_attempt_without_verifier_accepted_candidate_count`、`first_attempt_nonpass_rate` 及其 bootstrap/CI/variance/standard-error 派生统一写 `null + not_applicable_or_unavailable`。没有这项既存缺失原因的同形 null 仍是投影损坏，reducer 必须 fail closed，不能静默吞掉。
 
 ### 6.3 调用量与资源表（必须）
 
@@ -614,29 +624,36 @@ Experiment 4 沿用已冻结的 11 个 modes、四类 mode-blind challenge、现
 | `first_attempt_call_coverage` | actual/planned | model | denominator=0 为 `null` | 上述字段 |
 | `actual_total_tokens` | `Σ actual total_tokens` | model | usage 缺失为 `null` | attempt usage fields |
 | `actual_cost_estimate_cny` | `Σ actual cost` | model | usage/价格缺失为 `null` | attempt cost fields |
-| `repeat0_wall_clock_ms` / `repeat1_wall_clock_ms` / `repeat2_wall_clock_ms` | 每 repeat：`max(root_terminal_at_ms)-min(root_start_at_ms)`；roots 串行 | model × repeat | 任一 root 生命周期边界缺失为 `null` | `repeat_id`,`root_start_at_ms`,`root_terminal_at_ms` |
-| `model_wall_clock_median_ms` | 三个 repeat wall-clock 的 median | model | 任一 repeat 缺失为 `null` | 三个 repeat 值 |
-| `model_wall_clock_min_ms` | 三个 repeat 的 min | model | 同上 | 三个 repeat 值 |
-| `model_wall_clock_max_ms` | 三个 repeat 的 max | model | 同上 | 三个 repeat 值 |
-| `model_wall_clock_range_ms` | `max-min` | model | 同上 | 三个 repeat 值 |
+| `repeat0_wall_clock_ms` | `max(root_terminal_at_ms)-min(root_start_at_ms)`；roots 串行 | model × repeat0 | 任一 root 生命周期边界缺失为 `null` | `repeat_id`,`root_start_at_ms`,`root_terminal_at_ms` |
+| `repeat1_wall_clock_ms` / `repeat2_wall_clock_ms` | 不运行 | model | 固定 `null + not_applicable_or_unavailable`，不是缺失或失败 | profile repeat set |
+| `model_wall_clock_median_ms` / `model_wall_clock_min_ms` / `model_wall_clock_max_ms` | 唯一的 repeat0 wall-clock | model | repeat0 缺失时为 `null` | repeat0 值 |
+| `model_wall_clock_range_ms` | 单观察值 `max-min=0` | model | repeat0 缺失时为 `null` | repeat0 值 |
 
 provider latency、429/timeout 和更细 failure message 仅作 Experiment 5 诊断，不进入这两张最小正文表。
 
 ### 6.4 方差与置信区间
 
-Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或 repeat，也不进行 pairwise significance、排名或综合分数。跨三个 repeats 的 model 汇总以 `case_id` 为 cluster；抽中一题时必须保留该 model 下该题的三个 repeats。
+Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或 repeat，也不进行 pairwise significance、排名或综合分数。唯一 `repeat_id=0` 下的 model 汇总以 `case_id` 为 cluster；抽中一题时保留该 model 下该题的唯一 observation。
 
 | 对象 | bootstrap 单位与重算方式 | 必须报告 |
 |---|---|---|
 | `completion_rate`、`end_to_end_verified_success_rate` | 每 model 按 case cluster 抽样并重算固定 root 分母 | bootstrap variance/standard error、95% CI、cluster count |
-| `first_attempt_nonpass_rate` | 抽 case 后汇总该题三个 repeats 的 actual first attempts，再重算 nonpass/actual | 同上 |
+| `first_attempt_nonpass_rate` | 仅当第 6.2.1 节不可评估边界不存在时，抽 case 后重算 nonpass/actual；否则保持 `null + not_applicable_or_unavailable` | 同上 |
 | `first_attempt_verification_rejection_rate` | 抽 case 后重算 rejected/checkable；不得独立抽 candidate | 同上 |
 | `first_attempt_call_coverage` | 抽 case 后重算 actual/planned first attempts | 同上 |
 | `root_actual_total_tokens` | 每 root 对实际 ordinal=0 provider attempts 求 `Σ total_tokens` | median/q25/q75/IQR、sample variance/stddev、median CI |
 | `root_actual_cost_estimate_cny` | 每 root 对实际 ordinal=0 provider attempts 求 `Σ cost_estimate_cny` | 同上 |
-| `repeat_wall_clock_ms` | 每 model 已有的三个 repeat wall-clock 值 | 新增 `model_wall_clock_sample_stddev_ms`；只作三批次离散程度描述 |
+| `repeat_wall_clock_ms` | 每 model 的唯一 repeat0 wall-clock 值 | `model_wall_clock_sample_stddev_ms=null + insufficient_observations_for_sample_variance`；不把单批次伪装为方差 |
 
-`actual_total_tokens`、`actual_cost_estimate_cny` 和三个 repeat 的 wall-clock/min/max/range 保持精确值。由于 wall-clock 只有三个批次值，`model_wall_clock_median_ms` 不计算 CI；不得把 54 roots 当作整批 wall-clock 的 54 次独立重复。若 root usage 缺失，逐 root token/cost 沿用第 6.3 节规则为 `null`，不当成 0。
+`actual_total_tokens`、`actual_cost_estimate_cny` 和唯一 repeat0 的 wall-clock/min/max/range 保持精确值。单批次的 `model_wall_clock_median_ms` 不计算 CI，`range=0` 只描述该单观察值而不是可推广稳定性；不得把 37 roots 当作整批 wall-clock 的 37 次独立重复。若 root usage 缺失，逐 root token/cost 沿用第 6.3 节规则为 `null`，不当成 0。
+
+### 6.5 Exp1 Flash V4 历史事实补充比较表（非正式 Exp5 表）
+
+在三个 Exp5 实测模型的正式 `metrics/tables/exp5.*` 和 `summary.json` 已发布后，允许显式运行 `compare-exp5-v4-reference --run-dir <exp5-run> --source-run-dir <exp1-flash-run>`。它只读取两个 run 的冻结 inventory 与 committed `RootResultV2`，不调用 provider、不重跑 root，也不改写正式五表或 summary；输出仅为 target run 的 `metrics/supplemental/exp5_with_exp1_v4_reference.{jsonl,csv}`。
+
+该表固定四行：三个 `observation_origin="exp5_live"` 行保留正式 Exp5 的质量、ordinal-0 实际 token/成本和各自真实 `repeat0_wall_clock_ms`；第四行固定为`configured_model="deepseek-v4-flash"`、`observation_origin="exp1_reused_actual"`，保留 Exp1 已发生的质量、ordinal-0 实际 token/原始成本和其原有 Flash 价格版本。V4 行的所有 wall-clock 字段必须为 `null + not_applicable_or_unavailable`，不得展示、换算或模拟其 Exp1 latency。
+
+调用前 reducer 必须确认 target 恰为上述三个 Exp5 repeat-0 模型且三者 case 集相同；source 对应 case 必须都是 committed `experiment_id="exp1"`、`configured_model="deepseek-v4-flash"`、`repeat_id=0`，并且没有任何 `attempt_ordinal>0` 的 provider call。source run 中不属于 target case 的 Exp1 roots 不进入该表。该表是明确 provenance 的跨实验参考，不是正式四模型 Exp5 endpoint comparison，不进入 153 个 formal metric occurrences、正文 Exp5 latency 比较或 summary。
 
 ## 7. 仅诊断字段与已退出指标
 
@@ -689,7 +706,7 @@ Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或
 | `attempts[].provider_latency_ms` | Exp1/5 provider call 后可空；缺失需 reason | Exp1 必须 provider latency；Exp5 仅诊断 |
 | `attempts[].raw_response_present`,`attempts[].parse_result`,`attempts[].verifier_result`,`attempts[].checker_result`,`attempts[].canonical_accepted` | 按执行边界必填/可空 | completion/correctness；Exp3 interception/escape；Exp4 wrong/raw-only；Exp5 nonpass/checkable/rejection |
 | `attempts[].prompt_tokens`,`attempts[].prompt_cache_hit_tokens`,`attempts[].prompt_cache_miss_tokens`,`attempts[].completion_tokens`,`attempts[].reasoning_tokens`,`attempts[].total_tokens` | provider usage 可空；缺失需 reason | 所有 actual token/cost 指标；reasoning token 仅作 completion 子集诊断，不重复加入 total/cost |
-| `attempts[].provider_request_started_at_utc`,`attempts[].pricing_version`,`attempts[].pricing_tier` | Exp1/5 实际调用后必填；Exp5 tier 固定为 `flat` | DeepSeek 峰/谷判定、SiliconFlow 平价表选择、成本来源冻结；不得用 root 时间代替 provider call start |
+| `attempts[].provider_request_started_at_utc`,`attempts[].pricing_version`,`attempts[].pricing_tier` | Exp1/5 实际调用后必填；前向 Flash 与 Exp5 的 tier 均固定为 `flat` | 调用时间事实、模型专属静态表选择与成本来源冻结；不得用 root 时间代替 provider call start |
 | `attempts[].cost_estimate_cny`,`attempts[].usage_status` | provider call 后必填/可空 | 所有 actual cost 指标；决定 token/cost 是否为 `null` |
 | `attempts[].source_response_slot_id`,`attempts[].source_response_consumed`,`attempts[].source_attempt_ordinal`,`attempts[].source_attempt_fallback_used`,`attempts[].source_trace_origin`,`attempts[].source_result_kind` | Exp2–4 固定回答主矩阵必填 | 标识实际选中的自然 attempt、是否 last-attempt fallback、来自正常协议还是 coverage tail，并原样重放 source result kind；名称中的 slot 不代表 response-bank authority |
 | `attempts[].source_case_id`,`attempts[].source_repeat_id`,`attempts[].source_planned_ai_unit_id` | Exp2–4 每次回答 lookup 必填 | 验证来源键严格等于 `case_id × source_repeat_id=0 × planned_ai_unit_id`；root `repeat_id` 不参与 lookup |
@@ -733,7 +750,7 @@ Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或
 9. Experiment 1 每个 root 先取得结构化 `run_root()` 协议终态，再立即对该 root 的 `unscheduled_ai_unit_ids` 执行 Slim-local coverage tail；有效`no_final`同样执行，只有统一设施blocker阻断。tail 只调用尚无 protocol trace 且具备合法request的 planned units；Lean pre-dispatch failure不调用provider但仍形成`trace_origin=coverage_tail`的typed trace。完成或按上限终止后才开始下一个 root，tail 的 wall/token/cost 单独记录，不进入 Experiment 1 正文协议资源。
 10. Experiment 3 的 fault target 分母、`ceil` 数量、稳定均匀选择、ordinal 0 单次注入、五类固定动作及 token/latency 扰动公式按第 4.2–4.4 节执行，不再留给设计 Agent选择。
 11. roots 在 runner 层串行；root timing 严格使用协议生命周期开始、终止与两者差值。Experiment 4 的五个 delta metric IDs 使用不带 `_median`/`_ms` 后缀的名称。
-12. 成本换算固定使用第 1.4 节的 `slim_v2.pricing.2026-08-20` 官方价格表；价格是普通 reducer/projector 常量，不是预算或门禁。DeepSeek/SiliconFlow 的 `reasoning_tokens` 都是 `completion_tokens` 子集，不得重复计入 token 或成本。
+12. 前向 Experiment 1 成本使用第 1.4 节的 Flash `slim_v2.pricing.2026-08-23` flat 表；Experiment 5 保留 `slim_v2.pricing.2026-08-20` SiliconFlow 表。价格都是普通 reducer/projector 常量，不是预算或门禁。DeepSeek/SiliconFlow 的 `reasoning_tokens` 都是 `completion_tokens` 子集，不得重复计入 token 或成本；第 1.4.4 节 exact historical run 只保留已写入的 Pro 价格事实。
 13. Experiment 2–4 请求的自然 ordinal 存在则精确读取；不存在则确定性读取该 per-unit trace 最后一个已有自然 attempt，不增加 provider call。回答/source result/usage/latency/cost 保持不变；Experiment 3 扰动仍按下游当前 ordinal 生成。
 14. Experiment 4的V/P/R/M采用`slim_v2_exp4_structural_bypass_design.md`批准的实际调用前旁路；P和Lean V不能在真实parser/checker运行后才覆盖结果。
 15. `{R,M}`固定为`RECOVERY_MERGE_FIRST`；M premature attempt抢先时R=`preempted_by_merge_first`、`stuck_due_to_no_requeue=false`，同一run禁止双阳性。

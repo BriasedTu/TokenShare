@@ -22,6 +22,7 @@ from tokenshare.executors.ai_api_transport import (
 )
 
 from .schema import (
+    LEGACY_PRICING_VERSION,
     PRICING_VERSION,
     ProviderCallResultV1,
     ProviderEntryViewV1,
@@ -96,6 +97,22 @@ def project_cost(
 ) -> CostProjectionV1:
     """按 metrics authority 1.4 纯投影成本；缺输入只返回 null。"""
 
+    if provider_family == "deepseek" and configured_model == "deepseek-v4-flash":
+        if (
+            prompt_tokens is None
+            or prompt_cache_hit_tokens is None
+            or prompt_cache_miss_tokens is None
+            or completion_tokens is None
+            or prompt_tokens != prompt_cache_hit_tokens + prompt_cache_miss_tokens
+        ):
+            return CostProjectionV1(PRICING_VERSION, "flat", None)
+        cost = (
+            prompt_cache_hit_tokens * 0.05
+            + prompt_cache_miss_tokens * 1.5
+            + completion_tokens * 4.5
+        ) / 1_000_000
+        return CostProjectionV1(PRICING_VERSION, "flat", cost)
+
     if provider_family == "deepseek":
         tier = _deepseek_tier(provider_request_started_at_utc)
         if (
@@ -108,19 +125,19 @@ def project_cost(
             or completion_tokens is None
             or prompt_tokens != prompt_cache_hit_tokens + prompt_cache_miss_tokens
         ):
-            return CostProjectionV1(PRICING_VERSION, tier, None)
+            return CostProjectionV1(LEGACY_PRICING_VERSION, tier, None)
         hit, miss, output = (0.30, 9.0, 27.0) if tier == "peak" else (0.15, 4.5, 13.5)
         cost = (
             prompt_cache_hit_tokens * hit
             + prompt_cache_miss_tokens * miss
             + completion_tokens * output
         ) / 1_000_000
-        return CostProjectionV1(PRICING_VERSION, tier, cost)
+        return CostProjectionV1(LEGACY_PRICING_VERSION, tier, cost)
 
     if provider_family == "siliconflow":
         rates = _SILICONFLOW_RATES.get(configured_model)
         if rates is None or prompt_tokens is None or completion_tokens is None:
-            return CostProjectionV1(PRICING_VERSION, "flat", None)
+            return CostProjectionV1(LEGACY_PRICING_VERSION, "flat", None)
         input_rate, output_rate, cache_hit_rate = rates
         if cache_hit_rate is None:
             cost = (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
@@ -136,7 +153,7 @@ def project_cost(
                 + prompt_cache_miss_tokens * input_rate
                 + completion_tokens * output_rate
             ) / 1_000_000
-        return CostProjectionV1(PRICING_VERSION, "flat", cost)
+        return CostProjectionV1(LEGACY_PRICING_VERSION, "flat", cost)
 
     return CostProjectionV1(PRICING_VERSION, None, None)
 

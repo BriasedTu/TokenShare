@@ -314,6 +314,393 @@ def test_non_exp1_snapshot_does_not_require_coverage_tail_closure(
     assert snapshot.tail_requests == {}
 
 
+def test_pre_flash_exp2_terminal_ledger_reprojects_once_without_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """唯一旧 cohort 的 terminal ledger 只能纯投影，不得重放协议或 provider。"""
+
+    from tokenshare.experiments.slim_v2 import runtime
+    from tokenshare.experiments.slim_v2.cli import _CliRootContext
+    from tokenshare.experiments.slim_v2.schema import (
+        PRE_FLASH_CONFIGURED_MODEL,
+        PRE_FLASH_EXP2_ROOT_KEY,
+        PRE_FLASH_PROVIDER_ENTRY_ID,
+        PRE_FLASH_REPRESENTATIVE_RUN_ID,
+        RootInventoryV1,
+    )
+    from tokenshare.experiments.slim_v2.storage import RunStore
+    from tests.experiments.slim_v2.test_scenarios import (
+        _acquire_factor_source,
+        _replace_source_attempt_latency,
+    )
+
+    # 这里的 source 仅为临时 typed fixture；实际恢复始终从同一 run 的 trace 读取。
+    case, store, _factory = _acquire_factor_source(tmp_path, monkeypatch)
+    source_case_id = str(case["case_id"])
+    case = {**case, "case_id": PRE_FLASH_EXP2_ROOT_KEY[2]}
+    planned = ["range_0", "range_1", "range_2"]
+    # 将临时 source 的普通 trace 身份变为冻结 key，不复制任何 provider response 内容。
+    for target in planned:
+        original = store.read_trace(source_case_id, 0, target)
+        store.write_trace(replace(
+            original,
+            case_id=PRE_FLASH_EXP2_ROOT_KEY[2],
+            provider_entry_id=PRE_FLASH_PROVIDER_ENTRY_ID,
+            configured_model=PRE_FLASH_CONFIGURED_MODEL,
+            requested_model=PRE_FLASH_CONFIGURED_MODEL,
+            resolved_model=PRE_FLASH_CONFIGURED_MODEL,
+        ))
+    _replace_source_attempt_latency(
+        source_store=store,
+        case_id=PRE_FLASH_EXP2_ROOT_KEY[2],
+        planned_ai_unit_id="range_0",
+        latency_ms=625_812,
+    )
+    inventory = RootInventoryV1(
+        experiment_id="exp2",
+        condition_id=PRE_FLASH_EXP2_ROOT_KEY[1],
+        case_id=PRE_FLASH_EXP2_ROOT_KEY[2],
+        repeat_id=0,
+        domain="factorization",
+        difficulty="hard",
+        topic_family=None,
+        position_stratum="late",
+        worker_count=1,
+        mode=None,
+        disabled_mechanisms=[],
+        fault_type=None,
+        fault_rate=None,
+        dead_worker_count=None,
+        kill_progress_target_ratio=None,
+        provider_entry_id=PRE_FLASH_PROVIDER_ENTRY_ID,
+        configured_model=PRE_FLASH_CONFIGURED_MODEL,
+        planned_ai_unit_ids=planned,
+        challenge_plan_id=None,
+    )
+    inventory.validate()
+    context = _CliRootContext(
+        run_id=PRE_FLASH_REPRESENTATIVE_RUN_ID,
+        profile_id="representative",
+        inventory=inventory,
+        root_input=case,
+        run_store=store,
+        source_run_dir=store.run_dir,
+        challenge_plan=None,
+        is_reference=False,
+        provider_entries={},
+        max_retries=2,
+        continue_after_terminal_child_failure=False,
+        protocol_execution_attempt_upper=9,
+        provider_call_upper=0,
+    )
+    assembly = runtime._build_root_assembly(context)
+    terminal = runtime.run_root_slice(assembly)
+    assert terminal.status == "failed"
+    late_submissions = [
+        event for event in assembly.event_ledger.read_all()
+        if event.event_type.value == "EXECUTION_SUBMISSION_RECORDED"
+        and event.payload.get("acceptance_status") == "rejected"
+        and event.payload.get("rejection_reason") == "lease_deadline_exceeded"
+    ]
+    assert len(late_submissions) == 3
+    assert {event.payload.get("result_kind") for event in late_submissions} == {
+        "succeeded"
+    }
+    key = PRE_FLASH_EXP2_ROOT_KEY
+    assert not store.root_protocol_path(*key).exists()
+    assert not store.root_result_path(*key).exists()
+    event_path = store.system_root_directory(*key) / "events.jsonl"
+    event_before = event_path.read_bytes()
+    calls_before = {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "calls").rglob("*")
+        if path.is_file()
+    }
+    responses_before = {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "responses").rglob("*")
+        if path.is_file()
+    }
+    traces_before = {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "traces").rglob("*")
+        if path.is_file()
+    }
+    monkeypatch.setattr(
+        runtime,
+        "call_provider_once",
+        lambda **_kwargs: pytest.fail("terminal ledger recovery must not call provider"),
+    )
+
+    result = runtime.reproject_pre_flash_exp2_terminal_root_context(context)
+
+    assert result.root_status == "failed"
+    assert result.failure_kind == "no_final"
+    assert [item.attempt_ordinal for item in result.attempts] == [0, 1, 2]
+    assert all(item.provider_call_made is False for item in result.attempts)
+    assert event_path.read_bytes() == event_before
+    assert {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "calls").rglob("*")
+        if path.is_file()
+    } == calls_before
+    assert {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "responses").rglob("*")
+        if path.is_file()
+    } == responses_before
+    assert {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "traces").rglob("*")
+        if path.is_file()
+    } == traces_before
+    assert store.root_protocol_path(*key).is_file()
+    assert store.write_root_result(result) == "written"
+    with pytest.raises(ValueError, match="without snapshot or result"):
+        runtime.reproject_pre_flash_exp2_terminal_root_context(context)
+
+
+def test_pre_flash_terminal_reprojection_rejects_duplicate_submission_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """重复 terminal submission 不能被窄恢复静默折叠。"""
+
+    from tokenshare.experiments.slim_v2 import runtime
+    from tokenshare.experiments.slim_v2.cli import _CliRootContext
+    from tokenshare.experiments.slim_v2.schema import (
+        PRE_FLASH_CONFIGURED_MODEL,
+        PRE_FLASH_EXP2_ROOT_KEY,
+        PRE_FLASH_PROVIDER_ENTRY_ID,
+        PRE_FLASH_REPRESENTATIVE_RUN_ID,
+        RootInventoryV1,
+    )
+    from tokenshare.storage.events import EventType
+    from tests.experiments.slim_v2.test_scenarios import (
+        _acquire_factor_source,
+        _replace_source_attempt_latency,
+    )
+
+    case, store, _factory = _acquire_factor_source(tmp_path, monkeypatch)
+    source_case_id = str(case["case_id"])
+    case = {**case, "case_id": PRE_FLASH_EXP2_ROOT_KEY[2]}
+    planned = ["range_0", "range_1", "range_2"]
+    for target in planned:
+        original = store.read_trace(source_case_id, 0, target)
+        store.write_trace(replace(
+            original,
+            case_id=PRE_FLASH_EXP2_ROOT_KEY[2],
+            provider_entry_id=PRE_FLASH_PROVIDER_ENTRY_ID,
+            configured_model=PRE_FLASH_CONFIGURED_MODEL,
+            requested_model=PRE_FLASH_CONFIGURED_MODEL,
+            resolved_model=PRE_FLASH_CONFIGURED_MODEL,
+        ))
+    _replace_source_attempt_latency(
+        source_store=store,
+        case_id=PRE_FLASH_EXP2_ROOT_KEY[2],
+        planned_ai_unit_id="range_0",
+        latency_ms=625_812,
+    )
+    inventory = RootInventoryV1(
+        experiment_id="exp2",
+        condition_id=PRE_FLASH_EXP2_ROOT_KEY[1],
+        case_id=PRE_FLASH_EXP2_ROOT_KEY[2],
+        repeat_id=0,
+        domain="factorization",
+        difficulty="hard",
+        topic_family=None,
+        position_stratum="late",
+        worker_count=1,
+        mode=None,
+        disabled_mechanisms=[],
+        fault_type=None,
+        fault_rate=None,
+        dead_worker_count=None,
+        kill_progress_target_ratio=None,
+        provider_entry_id=PRE_FLASH_PROVIDER_ENTRY_ID,
+        configured_model=PRE_FLASH_CONFIGURED_MODEL,
+        planned_ai_unit_ids=planned,
+        challenge_plan_id=None,
+    )
+    inventory.validate()
+    context = _CliRootContext(
+        run_id=PRE_FLASH_REPRESENTATIVE_RUN_ID,
+        profile_id="representative",
+        inventory=inventory,
+        root_input=case,
+        run_store=store,
+        source_run_dir=store.run_dir,
+        challenge_plan=None,
+        is_reference=False,
+        provider_entries={},
+        max_retries=2,
+        continue_after_terminal_child_failure=False,
+        protocol_execution_attempt_upper=9,
+        provider_call_upper=0,
+    )
+    assembly = runtime._build_root_assembly(context)
+    terminal = runtime.run_root_slice(assembly)
+    assert terminal.status == "failed"
+    submission = next(
+        event for event in assembly.event_ledger.read_all()
+        if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+        and event.payload.get("acceptance_status") == "rejected"
+        and event.payload.get("rejection_reason") == "lease_deadline_exceeded"
+    )
+    attempt_id = str(submission.payload["attempt_id"])
+    assembly.event_ledger.append(
+        event_type=EventType.EXECUTION_SUBMISSION_RECORDED,
+        object_type=submission.object_type,
+        object_id=f"{submission.object_id}:duplicate",
+        payload=dict(submission.payload),
+        idempotency_key=f"test:duplicate-submission:{attempt_id}",
+        task_id=submission.task_id,
+        actor=dict(submission.actor),
+        correlation_id=submission.correlation_id,
+        causation_event_id=submission.causation_event_id,
+        occurred_at=submission.occurred_at,
+    )
+    assert sum(
+        event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+        and event.payload.get("attempt_id") == attempt_id
+        for event in assembly.event_ledger.read_all()
+    ) == 2
+    key = PRE_FLASH_EXP2_ROOT_KEY
+    event_path = store.system_root_directory(*key) / "events.jsonl"
+    event_before = event_path.read_bytes()
+    calls_before = {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "calls").rglob("*")
+        if path.is_file()
+    }
+    responses_before = {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "responses").rglob("*")
+        if path.is_file()
+    }
+    traces_before = {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "traces").rglob("*")
+        if path.is_file()
+    }
+    monkeypatch.setattr(
+        runtime,
+        "call_provider_once",
+        lambda **_kwargs: pytest.fail("terminal ledger recovery must not call provider"),
+    )
+
+    with pytest.raises(ValueError, match="duplicate terminal submission identity"):
+        runtime.reproject_pre_flash_exp2_terminal_root_context(context)
+
+    assert event_path.read_bytes() == event_before
+    assert {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "calls").rglob("*")
+        if path.is_file()
+    } == calls_before
+    assert {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "responses").rglob("*")
+        if path.is_file()
+    } == responses_before
+    assert {
+        path.relative_to(store.run_dir).as_posix(): path.read_bytes()
+        for path in (store.run_dir / "traces").rglob("*")
+        if path.is_file()
+    } == traces_before
+    assert not store.root_protocol_path(*key).exists()
+    assert not store.root_result_path(*key).exists()
+
+
+def test_pre_flash_terminal_reprojection_rejects_nonterminal_context(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import runtime
+    from tokenshare.experiments.slim_v2.cli import _CliRootContext
+    from tokenshare.experiments.slim_v2.schema import (
+        PRE_FLASH_CONFIGURED_MODEL,
+        PRE_FLASH_EXP2_ROOT_KEY,
+        PRE_FLASH_PROVIDER_ENTRY_ID,
+        PRE_FLASH_REPRESENTATIVE_RUN_ID,
+        RootInventoryV1,
+    )
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    inventory = RootInventoryV1(
+        experiment_id="exp2", condition_id=PRE_FLASH_EXP2_ROOT_KEY[1],
+        case_id=PRE_FLASH_EXP2_ROOT_KEY[2], repeat_id=0, domain="factorization",
+        difficulty="hard", topic_family=None, position_stratum="late",
+        worker_count=1, mode=None, disabled_mechanisms=[], fault_type=None,
+        fault_rate=None, dead_worker_count=None, kill_progress_target_ratio=None,
+        provider_entry_id=PRE_FLASH_PROVIDER_ENTRY_ID,
+        configured_model=PRE_FLASH_CONFIGURED_MODEL,
+        planned_ai_unit_ids=["range_0"], challenge_plan_id=None,
+    )
+    context = _CliRootContext(
+        run_id=PRE_FLASH_REPRESENTATIVE_RUN_ID, profile_id="representative",
+        inventory=inventory, root_input={"case_id": inventory.case_id},
+        run_store=RunStore(tmp_path / "empty"), source_run_dir=tmp_path / "empty",
+        challenge_plan=None, is_reference=False, provider_entries={}, max_retries=2,
+        continue_after_terminal_child_failure=False,
+        protocol_execution_attempt_upper=3, provider_call_upper=0,
+    )
+
+    with pytest.raises(ValueError, match="terminal ledger"):
+        runtime.reproject_pre_flash_exp2_terminal_root_context(context)
+    assert not context.run_store.root_protocol_path(*PRE_FLASH_EXP2_ROOT_KEY).exists()
+
+
+def test_pre_flash_resume_selection_is_exact_and_never_relaxes_other_configs(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.schema import (
+        LEGACY_PRICING_VERSION,
+        PRE_FLASH_REPRESENTATIVE_RUN_ID,
+    )
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    store = RunStore(tmp_path / "exact")
+    store.write_run_config(
+        {
+            "schema_version": "tokenshare.slim_v2.run_config.v1",
+            "run_id": PRE_FLASH_REPRESENTATIVE_RUN_ID,
+            "profile_id": "representative",
+            "experiment_ids": ["exp1", "exp2", "exp3", "exp4", "exp5"],
+            "source_run_dir": None,
+            "exp1_provider_config_path": "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "exp5_provider_config_path": "benchmarks/paper/exp5_siliconflow_provider_config.v3.json",
+            "local_secret_config_path": "local/ai_api_smoke.local.json",
+            "pricing_version": LEGACY_PRICING_VERSION,
+            "ordinary_parallel_backend_kind": "thread",
+            "response_max_bytes": 16 * 1024 * 1024,
+            "reducer_workers": 1,
+        }
+    )
+    assert cli._is_pre_flash_representative_resume_request(
+        run_id=PRE_FLASH_REPRESENTATIVE_RUN_ID,
+        profile_id="representative",
+        experiment_ids=("exp1", "exp2", "exp3", "exp4", "exp5"),
+        source_run_dir=None,
+    )
+    cli._validate_pre_flash_representative_resume_config(store)
+    assert not cli._is_pre_flash_representative_resume_request(
+        run_id="another-run",
+        profile_id="representative",
+        experiment_ids=("exp1", "exp2", "exp3", "exp4", "exp5"),
+        source_run_dir=None,
+    )
+
+    malformed = RunStore(tmp_path / "malformed")
+    malformed.write_run_config({
+        **store.read_run_config(),
+        "pricing_version": "slim_v2.pricing.2026-08-23",
+    })
+    with pytest.raises(RuntimeError, match="exact frozen cohort"):
+        cli._validate_pre_flash_representative_resume_config(malformed)
+
+
 def test_protocol_only_snapshot_may_precede_tail_preparation(
     tmp_path: Path,
 ) -> None:

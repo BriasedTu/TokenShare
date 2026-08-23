@@ -8,7 +8,7 @@
   },
   "defaults": {
     "timeout_seconds": 600,
-    "max_tokens": 32768,
+    "max_tokens": 100000,
     "temperature": 0.0,
     "top_p": 1.0,
     "stream": false,
@@ -26,7 +26,7 @@
       "supports_streaming": false,
       "request_overrides": {
         "enable_thinking": true,
-        "thinking_budget": 32768
+        "thinking_budget": 100000
       },
       "pricing": {
         "currency": "CNY",
@@ -49,7 +49,7 @@
       "supports_streaming": false,
       "request_overrides": {
         "enable_thinking": true,
-        "thinking_budget": 32768
+        "thinking_budget": 100000
       },
       "pricing": {
         "currency": "CNY",
@@ -71,7 +71,7 @@
       "supports_streaming": false,
       "request_overrides": {
         "enable_thinking": true,
-        "thinking_budget": 32768
+        "thinking_budget": 100000
       },
       "pricing": {
         "currency": "CNY",
@@ -82,35 +82,13 @@
         "accessed_at": "2026-07-29"
       },
       "tags": ["paper", "exp5", "siliconflow", "cohort:v3", "thinking"]
-    },
-    {
-      "entry_id": "deepseek_v3_pro_exp5_v3",
-      "enabled": true,
-      "base_url": "https://api.siliconflow.cn/v1",
-      "api_key_env": "SILICONFLOW_API_KEY",
-      "model": "Pro/deepseek-ai/DeepSeek-V3",
-      "endpoint": "/chat/completions",
-      "supports_json_mode": true,
-      "supports_streaming": false,
-      "request_overrides": {
-        "enable_thinking": false
-      },
-      "pricing": {
-        "currency": "CNY",
-        "input_per_million_tokens": 2.0,
-        "output_per_million_tokens": 8.0,
-        "source_url": "https://siliconflow.cn/pricing",
-        "accessed_at": "2026-07-29",
-        "cross_check_source_url": "https://api-docs.siliconflow.cn/docs/release-notes/overview"
-      },
-      "tags": ["paper", "exp5", "siliconflow", "cohort:v3", "non-thinking"]
     }
   ],
   "local_concurrency": {
     "max_in_flight_global": 3
   },
   "metadata": {
-    "approval_snapshot": "feat_011_exp5_siliconflow_four_model_v3_2026_07_29",
+    "approval_snapshot": "slim_v2_exp5_three_thinking_100k_2026_08_23",
     "max_tokens_semantics": "Per-request visible answer generation ceiling; thinking entries use a separate thinking_budget.",
     "pricing_snapshot_freshness_identity": "source_url+accessed_at+exact_model_rates",
     "secret_policy": "api_key_env_only"

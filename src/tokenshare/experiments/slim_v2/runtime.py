@@ -55,7 +55,10 @@ from tokenshare.plugins.lean_proof.prompt_builder import (
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType
 
-from .execution import ProviderSubmissionAdapter
+from .execution import (
+    ProviderSubmissionAdapter,
+    reconstruct_fixed_trace_attempt,
+)
 from .provider import (
     ProviderCallContextV1,
     call_provider_once,
@@ -68,6 +71,10 @@ from .schema import (
     ProviderRequestControlV1,
     RootInventoryV1,
     RootResultV2,
+    PRE_FLASH_CONFIGURED_MODEL,
+    PRE_FLASH_EXP2_ROOT_KEY,
+    PRE_FLASH_PROVIDER_ENTRY_ID,
+    PRE_FLASH_REPRESENTATIVE_RUN_ID,
     UnitTraceV1,
 )
 from .storage import (
@@ -1447,10 +1454,289 @@ def resume_root_context(
     return projection
 
 
+def _recovery_artifact_document(
+    artifact_store: ArtifactStore,
+    reference: object,
+    *,
+    name: str,
+) -> Mapping[str, Any]:
+    """读取已验证的普通 artifact；恢复不得依赖未绑定的内存对象。"""
+
+    if not isinstance(reference, Mapping):
+        raise ValueError(f"recovery {name} reference is malformed")
+    artifact = ArtifactRef.from_dict(dict(reference))
+    if not artifact_store.verify(artifact):
+        raise ValueError(f"recovery {name} artifact verification failed")
+    try:
+        document = json.loads(artifact_store.read_bytes(artifact).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"recovery {name} artifact is unreadable") from exc
+    if not isinstance(document, Mapping):
+        raise ValueError(f"recovery {name} artifact must be an object")
+    return document
+
+
+def _pre_flash_terminal_root_facts(
+    context: Any,
+    assembly: RootAssembly,
+) -> tuple[ProtocolRunResult, list[AttemptResultV1], object]:
+    """只为唯一冻结 Exp2 terminal ledger 重新建立投影所需 typed facts。"""
+
+    inventory = context.inventory
+    key = _root_key(context)
+    if (
+        context.run_id != PRE_FLASH_REPRESENTATIVE_RUN_ID
+        or key != PRE_FLASH_EXP2_ROOT_KEY
+        or inventory.provider_entry_id != PRE_FLASH_PROVIDER_ENTRY_ID
+        or inventory.configured_model != PRE_FLASH_CONFIGURED_MODEL
+        or context.source_run_dir is None
+        or Path(context.source_run_dir).resolve() != context.run_store.run_dir.resolve()
+    ):
+        raise ValueError("pre-Flash recovery context is not the exact frozen Exp2 root")
+    if (
+        context.run_store.root_protocol_path(*key).exists()
+        or context.run_store.root_result_path(*key).exists()
+    ):
+        raise ValueError("pre-Flash recovery requires a root without snapshot or result")
+
+    events = assembly.event_ledger.read_all()
+    registered = [
+        event for event in events if event.event_type == EventType.TASK_REGISTERED
+    ]
+    if len(registered) != 1:
+        raise ValueError("pre-Flash recovery requires one registered task")
+    task_id = registered[0].task_id
+    if not isinstance(task_id, str) or not task_id:
+        raise ValueError("pre-Flash recovery task identity is malformed")
+
+    root_snapshots = []
+    child_units: dict[str, str] = {}
+    for event in events:
+        if event.event_type != EventType.TASK_UNIT_CREATED:
+            continue
+        snapshot = event.payload.get("task_unit")
+        if not isinstance(snapshot, Mapping):
+            raise ValueError("pre-Flash recovery unit snapshot is malformed")
+        unit_id = snapshot.get("unit_id")
+        if not isinstance(unit_id, str) or not unit_id:
+            raise ValueError("pre-Flash recovery unit identity is malformed")
+        if snapshot.get("unit_type") == "root":
+            root_snapshots.append(unit_id)
+        planned = _planned_from_unit_snapshot(
+            snapshot,
+            domain=str(inventory.domain),
+        )
+        if planned is not None:
+            if planned in child_units:
+                raise ValueError("pre-Flash recovery has duplicate planned child unit")
+            child_units[planned] = unit_id
+    if len(root_snapshots) != 1:
+        raise ValueError("pre-Flash recovery requires one root unit")
+    if set(child_units) != set(inventory.planned_ai_unit_ids):
+        raise ValueError("pre-Flash recovery child inventory differs from terminal ledger")
+
+    request_events: dict[str, tuple[Any, ExecutionRequest]] = {}
+    for event in events:
+        if event.event_type != EventType.EXECUTION_REQUEST_RECORDED:
+            continue
+        document = _recovery_artifact_document(
+            assembly.artifact_store,
+            event.payload.get("request_ref"),
+            name="request",
+        )
+        request = _execution_request_from_document(document)
+        planned = (request.soft_hints or {}).get("planned_ai_unit_id")
+        if not isinstance(planned, str) or not planned:
+            continue
+        if (
+            request.task_id != task_id
+            or request.unit_id != child_units.get(planned)
+            or request.attempt_id in request_events
+        ):
+            raise ValueError("pre-Flash recovery request identity is malformed")
+        request_events[request.attempt_id] = (event, request)
+    if not request_events:
+        raise ValueError("pre-Flash recovery has no fixed-source requests")
+
+    submissions: dict[str, tuple[Any, Mapping[str, Any]]] = {}
+    for event in events:
+        if event.event_type != EventType.EXECUTION_SUBMISSION_RECORDED:
+            continue
+        attempt_id = event.payload.get("attempt_id")
+        if attempt_id not in request_events:
+            continue
+        if attempt_id in submissions:
+            raise ValueError(
+                "pre-Flash recovery has duplicate terminal submission identity"
+            )
+        document = _recovery_artifact_document(
+            assembly.artifact_store,
+            event.payload.get("submission_ref"),
+            name="submission",
+        )
+        request = request_events[attempt_id][1]
+        if (
+            document.get("task_id") != task_id
+            or document.get("unit_id") != request.unit_id
+            or document.get("attempt_id") != attempt_id
+            or document.get("request_id") != request.request_id
+            or document.get("result_kind") != event.payload.get("result_kind")
+            or event.payload.get("unit_id") != request.unit_id
+        ):
+            raise ValueError("pre-Flash recovery submission identity is malformed")
+        submissions[attempt_id] = (event, document)
+    if set(submissions) != set(request_events):
+        raise ValueError("pre-Flash recovery requests lack unique terminal submissions")
+
+    root_started = []
+    root_terminal = []
+    for event in events:
+        if event.event_type != EventType.TASK_UNIT_STATE_CHANGED:
+            continue
+        transition = event.payload.get("task_unit_state_change")
+        if not isinstance(transition, Mapping) or transition.get("unit_id") != root_snapshots[0]:
+            continue
+        if transition.get("new_state") == "Processing":
+            root_started.append(event)
+        if transition.get("new_state") == "Failed":
+            root_terminal.append(event)
+    if len(root_started) != 1 or len(root_terminal) != 1:
+        raise ValueError("pre-Flash recovery requires one terminal failed root lifecycle")
+
+    attempts: list[AttemptResultV1] = []
+    worker_facts: list[dict[str, Any]] = []
+    for execution_index, (attempt_id, (request_event, request)) in enumerate(
+        sorted(request_events.items(), key=lambda item: item[1][0].event_seq)
+    ):
+        submission_event, _submission = submissions[attempt_id]
+        attempts.append(
+            reconstruct_fixed_trace_attempt(
+                request=request,
+                source_store=RunStore(context.source_run_dir),
+                artifact_store=assembly.artifact_store,
+                case_id=str(inventory.case_id),
+                domain=str(inventory.domain),
+                provider_entry_id=str(inventory.provider_entry_id),
+                configured_model=str(inventory.configured_model),
+            )
+        )
+        worker_facts.append(
+            {
+                "execution_index": execution_index,
+                "request_id": request.request_id,
+                "submission_id": _submission.get("submission_id"),
+                "result_kind": submission_event.payload.get("result_kind"),
+                "unit_id": request.unit_id,
+                "attempt_id": attempt_id,
+                "lease_id": request.lease_id,
+                "worker_id": "logical-worker-0",
+                "started_at": request_event.occurred_at,
+                "ended_at": submission_event.occurred_at,
+            }
+        )
+    if any(
+        not isinstance(item["submission_id"], str)
+        or not item["submission_id"]
+        or not isinstance(item["result_kind"], str)
+        or not item["result_kind"]
+        for item in worker_facts
+    ):
+        raise ValueError("pre-Flash recovery worker facts are malformed")
+
+    observation = build_runtime_observation(
+        run_id=assembly.run_id,
+        runtime_started_at=root_started[0].occurred_at,
+        runtime_ended_at=root_terminal[0].occurred_at,
+        planned_ai_unit_ids=list(inventory.planned_ai_unit_ids),
+        dispatched_ai_unit_ids=list(dict.fromkeys(
+            str(item.planned_ai_unit_id) for item in attempts
+        )),
+        completed_ai_unit_ids=[],
+        worker_execution_facts=worker_facts,
+    )
+    protocol = project_protocol_run(
+        run_id=assembly.run_id,
+        task_id=task_id,
+        root_unit_id=root_snapshots[0],
+        event_ledger=assembly.event_ledger,
+        artifact_store=assembly.artifact_store,
+        runtime_observation=observation,
+    )
+    if protocol.status != "failed":
+        raise ValueError("pre-Flash recovery ledger is not terminal failed")
+    logical_makespan = int(round(float(observation["runtime_wall_clock_ms"])))
+    scenario = replace(
+        assembly.scenario,
+        logical_scheduler=SimpleNamespace(clock_ms=logical_makespan),
+    )
+    slots = tuple(
+        {"source_child_unit_id": child_units[planned]}
+        for planned in inventory.planned_ai_unit_ids
+    )
+    projection_assembly = replace(
+        assembly,
+        plugin_runtime=SimpleNamespace(
+            planned_split_plan=SimpleNamespace(
+                merge_plan=SimpleNamespace(required_slots=slots)
+            )
+        ),
+        scenario=scenario,
+    )
+    return protocol, attempts, projection_assembly
+
+
+def reproject_pre_flash_exp2_terminal_root_context(context: Any) -> RootResultV2:
+    """窄恢复：仅投影唯一旧 Exp2 terminal ledger，不重跑协议或 provider。"""
+
+    key = _root_key(context)
+    if (
+        context.run_id != PRE_FLASH_REPRESENTATIVE_RUN_ID
+        or key != PRE_FLASH_EXP2_ROOT_KEY
+        or context.source_run_dir is None
+        or Path(context.source_run_dir).resolve() != context.run_store.run_dir.resolve()
+    ):
+        raise ValueError("pre-Flash recovery context is not the exact frozen Exp2 root")
+    if (
+        context.run_store.root_protocol_path(*key).exists()
+        or context.run_store.root_result_path(*key).exists()
+    ):
+        raise ValueError("pre-Flash recovery requires a root without snapshot or result")
+    events_path = context.run_store.system_root_directory(*key) / "events.jsonl"
+    if not events_path.is_file() or events_path.stat().st_size == 0:
+        raise ValueError("pre-Flash recovery requires a terminal ledger")
+    assembly = _build_root_assembly(context)
+    protocol, attempts, projection_assembly = _pre_flash_terminal_root_facts(
+        context,
+        assembly,
+    )
+    from .projector import project_root_result
+
+    result = project_root_result(
+        inventory=context.inventory,
+        assembly=projection_assembly,
+        protocol_result=protocol,
+        provider_family="deepseek",
+        requested_model=str(context.inventory.configured_model),
+        resolved_model=str(context.inventory.configured_model),
+        reasoning_mode="thinking",
+        attempts=attempts,
+        scenario=projection_assembly.scenario,
+    )
+    context.run_store.write_root_protocol_snapshot(
+        *_root_key(context),
+        protocol_result=asdict(protocol),
+        traces=(),
+        tail_requests={},
+        protocol_projection=result,
+    )
+    return result
+
+
 __all__ = [
     "RootAssembly", "TailSummaryV1", "coverage_tail_blocked",
     "execute_root_context",
     "materialize_protocol_traces", "resume_exp1_root_context",
+    "reproject_pre_flash_exp2_terminal_root_context",
     "resume_root_context",
     "run_coverage_tail", "run_root_slice",
 ]

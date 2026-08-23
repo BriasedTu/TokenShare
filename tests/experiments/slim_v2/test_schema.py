@@ -478,7 +478,7 @@ def test_nullable_fields_require_missing_or_not_applicable_reason() -> None:
         "exp1_provider_config_path",
         "exp5_provider_config_path",
         "local_secret_config_path",
-        "pricing_version",
+        "pricing_versions",
         "ordinary_parallel_backend_kind",
         "response_max_bytes",
         "reducer_workers",
@@ -491,9 +491,14 @@ def test_nullable_fields_require_missing_or_not_applicable_reason() -> None:
         ordinary_parallel_backend_kind="thread",
     )
     valid_config.validate()
+    assert valid_config.pricing_versions == {
+        "exp1": "slim_v2.pricing.2026-08-23",
+        "exp5": "slim_v2.pricing.2026-08-20",
+    }
     with pytest.raises(SchemaValidationError, match="subsequence"):
         replace(valid_config, experiment_ids=["exp3", "exp1"]).validate()
     for field_name, invalid_value in (
+        ("pricing_versions", {"exp1": "slim_v2.pricing.2026-08-20"}),
         ("ordinary_parallel_backend_kind", "process"),
         ("response_max_bytes", 16 * 1024 * 1024 + 1),
         ("reducer_workers", 2),

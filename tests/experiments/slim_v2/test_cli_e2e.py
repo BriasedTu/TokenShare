@@ -151,8 +151,8 @@ def _source_attempt(case_id: str, planned: str) -> AttemptResultV1:
         reasoning_tokens=0,
         total_tokens=2,
         provider_request_started_at_utc="2026-08-22T00:00:00Z",
-        pricing_version="slim_v2.pricing.2026-08-20",
-        pricing_tier="off_peak",
+        pricing_version="slim_v2.pricing.2026-08-23",
+        pricing_tier="flat",
         cost_estimate_cny=0.0,
         usage_status="complete",
         call_state="terminal",
@@ -180,10 +180,10 @@ def _write_source_traces(context: object) -> None:
             lemma_node_id=lemma_node_id,
             dependency_path=dependency_path,
             provider_family="deepseek",
-            provider_entry_id="deepseek_v4_pro_exp1_baseline",
-            configured_model="deepseek-v4-pro",
-            requested_model="deepseek-v4-pro",
-            resolved_model="deepseek-v4-pro",
+            provider_entry_id="deepseek_v4_flash_exp1_baseline",
+            configured_model="deepseek-v4-flash",
+            requested_model="deepseek-v4-flash",
+            resolved_model="deepseek-v4-flash",
             attempts=[_source_attempt(inventory.case_id, planned)],
         )
         context.run_store.write_trace(trace)
@@ -509,7 +509,7 @@ def test_atomic_source_is_explicit_and_run_all_orders_dependencies_and_reducer(
     assert {item[2] for item in calls if item[0] in {"exp2", "exp3", "exp4"}} == {
         tmp_path / "ordered"
     }
-    assert len(calls) == 74
+    assert len(calls) == 73
     assert reduced == [tmp_path / "ordered"]
 
     atomic_calls: list[tuple[str, str, Path | None]] = []
@@ -592,7 +592,7 @@ def test_representative_alias_and_reduce_have_no_second_runner(tmp_path: Path) -
         _services=services,
     ) == 0
     experiments = [item[0] for item in calls]
-    assert len(calls) == 74
+    assert len(calls) == 73
     assert experiments == sorted(
         experiments, key=("exp1", "exp2", "exp3", "exp4", "exp5").index
     )
@@ -608,6 +608,62 @@ def test_representative_alias_and_reduce_have_no_second_runner(tmp_path: Path) -
         tmp_path / "representative-alias",
         tmp_path / "representative-alias",
     ]
+
+
+def test_compare_exp5_v4_reference_is_explicit_and_does_not_start_a_runner(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.profiles import (
+        build_inventory,
+        project_root_inventory_rows,
+    )
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    inventory = build_inventory("representative")
+    projected = project_root_inventory_rows(inventory)
+    target_roots = [
+        root for root in projected.roots if root.experiment_id == "exp5"
+    ]
+    source_root = next(
+        root
+        for root in projected.roots
+        if root.experiment_id == "exp1" and root.case_id == "factor_v2_hard_145"
+    )
+    target = RunStore(tmp_path / "target")
+    source = RunStore(tmp_path / "source")
+    target.write_frozen_inventories(
+        conditions=inventory.conditions,
+        roots=target_roots,
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    for root in target_roots:
+        target.write_root_result(_success(root, None))
+    source.write_frozen_inventories(
+        conditions=inventory.conditions,
+        roots=[source_root],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    source.write_root_result(_success(source_root, None))
+
+    assert cli.main(
+        [
+            "compare-exp5-v4-reference",
+            "--run-dir",
+            str(target.run_dir),
+            "--source-run-dir",
+            str(source.run_dir),
+        ]
+    ) == 0
+    assert (
+        target.run_dir
+        / "metrics"
+        / "supplemental"
+        / "exp5_with_exp1_v4_reference.jsonl"
+    ).is_file()
+    assert not (target.run_dir / "metrics" / "summary.json").exists()
 
 
 def test_main_reuses_public_run_experiment(
@@ -651,7 +707,7 @@ def test_public_run_experiment_supplies_its_own_default_services(
         resume=False,
         reduce_after=False,
     ) == 0
-    assert len(calls) == 4
+    assert len(calls) == 3
 
 
 def test_roots_are_serial_and_resume_uses_only_committed_file_facts(
@@ -684,9 +740,9 @@ def test_roots_are_serial_and_resume_uses_only_committed_file_facts(
         str(tmp_path),
     ]
     assert cli.main(argv, _services=services) == 0
-    assert len(calls) == 4
+    assert len(calls) == 3
     assert cli.main([*argv, "--resume"], _services=services) == 0
-    assert len(calls) == 4
+    assert len(calls) == 3
 
     from tokenshare.experiments.slim_v2.storage import RunStore
 
@@ -715,7 +771,7 @@ def test_roots_are_serial_and_resume_uses_only_committed_file_facts(
     result_path.write_text("{broken", encoding="utf-8")
     with pytest.raises((json.JSONDecodeError, ValueError)):
         cli.main([*argv, "--resume"], _services=services)
-    assert len(calls) == 4
+    assert len(calls) == 3
 
 
 def test_resume_protocol_tail_and_started_without_protocol_never_rerun_root(
@@ -1351,9 +1407,9 @@ def test_representative_cap_secret_disk_and_price_are_run_safety_only(
 
     plan = build_plan("representative")
     assert (plan.paper_root_count, plan.execution_root_count, plan.online_provider_call_upper) == (
-        72,
-        74,
-        89,
+        71,
+        73,
+        81,
     )
 
     calls: list[tuple[str, str, Path | None]] = []
@@ -1410,12 +1466,12 @@ def test_representative_cap_secret_disk_and_price_are_run_safety_only(
                 "provider_family": "deepseek",
                 "entries": [
                     {
-                        "entry_id": "deepseek_v4_pro_exp1_baseline",
+                        "entry_id": "deepseek_v4_flash_exp1_baseline",
                         "enabled": True,
                         "base_url": "https://example.invalid",
                         "endpoint": "/chat/completions",
                         "api_key_env": "TASK6_MISSING_KEY",
-                        "model": "deepseek-v4-pro",
+                        "model": "deepseek-v4-flash",
                         "request_overrides": {},
                         "supports_json_mode": True,
                     }
@@ -1439,7 +1495,7 @@ def test_representative_cap_secret_disk_and_price_are_run_safety_only(
             {
                 "entries": [
                     {
-                        "entry_id": "deepseek_v4_pro_exp1_baseline",
+                        "entry_id": "deepseek_v4_flash_exp1_baseline",
                         "api_key": "task6-local-secret",
                     }
                 ]
@@ -1450,8 +1506,8 @@ def test_representative_cap_secret_disk_and_price_are_run_safety_only(
     entries = cli._preflight_provider_entries(
         ("exp1",), tuple(), repo_root=config_root
     )
-    assert entries["deepseek_v4_pro_exp1_baseline"].configured_model == (
-        "deepseek-v4-pro"
+    assert entries["deepseek_v4_flash_exp1_baseline"].configured_model == (
+        "deepseek-v4-flash"
     )
     assert os.environ["TASK6_MISSING_KEY"] == "task6-local-secret"
 
@@ -1596,7 +1652,7 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """74 次离线执行只能替换外部 HTTP 边界，其余均走生产接线。"""
+    """73 次离线执行只能替换外部 HTTP 边界，其余均走生产接线。"""
 
     from tokenshare.experiments.slim_v2 import cli, provider
     from tokenshare.experiments.slim_v2.reducer import reduce_run
@@ -1665,20 +1721,20 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
     store = RunStore(run_dir)
     paper_results = list(store.iter_inventory_results("roots"))
     reference_results = list(store.iter_inventory_results("exp3_references"))
-    assert len(paper_results) == 72
+    assert len(paper_results) == 71
     assert len(reference_results) == 2
     assert all(result is not None for _inventory, result in paper_results)
     assert all(result is not None for _inventory, result in reference_results)
     assert Counter(
         inventory.experiment_id for inventory, _result in paper_results
-    ) == Counter({"exp1": 4, "exp2": 12, "exp3": 8, "exp4": 44, "exp5": 4})
+    ) == Counter({"exp1": 4, "exp2": 12, "exp3": 8, "exp4": 44, "exp5": 3})
     assert {inventory.experiment_id for inventory, _result in reference_results} == {
         "exp3"
     }
 
     # 每次 execution 都留下生产 coordinator 的 protocol snapshot 与 event ledger。
-    assert len(list((run_dir / "roots").rglob("protocol.json"))) == 74
-    assert len(list((run_dir / "system").rglob("events.jsonl"))) == 74
+    assert len(list((run_dir / "roots").rglob("protocol.json"))) == 73
+    assert len(list((run_dir / "system").rglob("events.jsonl"))) == 73
 
     summary_path = run_dir / "metrics" / "summary.json"
     table_dir = run_dir / "metrics" / "tables"
@@ -1698,7 +1754,7 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
         "exp2": 12,
         "exp3": 8,
         "exp4": 44,
-        "exp5": 4,
+        "exp5": 3,
     }
     assert summary["exp3_reference_inventory_count"] == 2
     assert summary["provider_calls_observed"] == {
@@ -1706,7 +1762,7 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
         "exp2": 0,
         "exp3": 0,
         "exp4": 0,
-        "exp5": 32,
+        "exp5": 24,
     }
 
     for experiment_id in ("exp1", "exp2", "exp3", "exp4", "exp5"):
@@ -1729,14 +1785,13 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
             for row in jsonl_rows
         )
 
-    # 89 是冻结上界；当前确定性 parser-failure 路径实际产生 86 次 fake HTTP。
-    assert len(requested_models) == len(fake_responses) == 86
+    # 81 是冻结上界；当前确定性 parser-failure 路径实际产生 78 次 fake HTTP。
+    assert len(requested_models) == len(fake_responses) == 78
     assert set(requested_models) == {
-        "deepseek-v4-pro",
+        "deepseek-v4-flash",
         "zai-org/GLM-5.2",
         "Qwen/Qwen3-14B",
         "MiniMaxAI/MiniMax-M2.5",
-        "Pro/deepseek-ai/DeepSeek-V3",
     }
     assert all(response.closed for response in fake_responses)
     persisted_text = "".join(

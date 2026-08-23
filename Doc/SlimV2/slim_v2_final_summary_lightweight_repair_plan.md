@@ -3,7 +3,7 @@ status: user_approved_frozen
 document: slim_v2_final_summary_lightweight_repair_plan
 scope: post-representative final reducer wiring and same-run resume repair
 created: 2026-08-22
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 run_scope: representative_only
 ---
 
@@ -14,6 +14,18 @@ run_scope: representative_only
 本计划由用户于 2026-08-22 批准并冻结。目标是以最小 Slim-local 改动消除最终 reducer 发布阻断、恢复冻结失败分类与精确事实统计，并保证新 `RootResultV2` 的同一 run crash/resume 能稳定形成实验指标和结果文件。
 
 唯一成功终点是：离线 Representative 规模（72 个论文 roots + 2 个 references，共 74 executions）使用 fake execution services 但真实生产 reducer，成功生成 `summary.json` 以及 Experiment 1–5 的 JSONL/CSV；随后由新 Owner 使用全新 v2 run ID/目录启动真实 AI Representative。
+
+### 1.1 2026-08-23 前向 Flash 修订与 exact-run 边界
+
+用户直接将前向/new-run Experiment 1 baseline 改为 `deepseek_v4_flash_exp1_baseline` / `deepseek-v4-flash`，并冻结独立价格版本 `slim_v2.pricing.2026-08-23`：cache hit/cache miss/output 分别为 `0.05/1.50/4.50 CNY / 1M tokens`，`pricing_tier=flat`。它是普通成本投影，不形成价格门禁，也绝不沿用 Pro 的 peak/off_peak 成本公式。Experiment 5 的 SiliconFlow 价格事实仍使用其 `slim_v2.pricing.2026-08-20` 快照。
+
+此修订不能改写已经启动的 `slim-v2-representative-real-20260822-144900-ef9128fe`。Stage 7.1 三名独立只读 reviewer 对同一证据包给出 `3/3` 一致裁决：该 exact run 已持久化的 Experiment 1 Pro + `slim_v2.pricing.2026-08-20` facts 必须原样保留；不得重写、重价、混入 Flash，或为本次模型切换增加/重复 Experiment 1 provider 调用。它只能在 narrow frozen-v2 exact-run context 中为 projector/recovery 缺陷使用同一 run 的 `--resume`，且不得作为 post-change Flash Experiment 1 结果的可比或可发表依据。这是事实标签与报告边界，不是新的 runtime/publication/price gate。
+
+lease-expiry natural-rejection 修复已由独立实施者完成：`projector._natural_rejection_stage()` 只接受唯一 `lease_expired + acceptance_status=rejected + result_kind=succeeded + rejection_reason=lease_deadline_exceeded` 的既存终端事实，并投影到既有 `child_execution` 阶段；非该窄条件仍保留原有严格失败-submission 要求。实现先通过 `625,812 ms` lease 边界的 fail-first regression，再经 fresh spec/quality review 与 Owner 级 13-test focused verification。该修复同时覆盖 Exp2–4 共用的 logical-source-latency 投影路径，但不改变 fault、taxonomy、指标或 Exp4 route evidence。
+
+前向 Flash identity/config、按 experiment 选择 `pricing_versions={"exp1": "slim_v2.pricing.2026-08-23", "exp5": "slim_v2.pricing.2026-08-20"}` 的 schema/CLI wiring、Flash 独立价格公式与 reducer 的 source-price 映射也已完成并复核。旧 Pro 价格函数只用于 exact historical cohort，不能成为任何前向 Flash 公式的回退。
+
+为上述 exact run 的唯一未投影 Exp2 terminal root，已完成经复核的 narrow frozen-v2 ledger reproject：它只读同一 run 的终端 ledger、request/submission artifacts 与同一 run trace，重建 typed fixed-response attempts 后写入 root projection；不得运行协议、provider 或 transport。该路径只匹配 exact run/config/root，且对重复 terminal submission identity、缺 terminal ledger、已有 snapshot/result 或非终态上下文 fail closed。focused test 显式确保无 transport/provider 调用。同一 run 的 `--resume` 已完成 root processing；其未发布的 reducer 阻断与精确终态记录见第 7.1 节。
 
 ## 2. 冻结范围
 
@@ -175,6 +187,26 @@ git diff --check
 Owner 3 只能在以下事实全部成立后开始真实调用：Tasks 1–6 的实现、规格复核、质量复核和 owner-level focused tests 通过；生产 reducer 的 74-execution 离线 E2E 已真正发布五实验表；当前进程没有遗留 Slim run；两类 provider credential 与既有 Lean environment pass 可用；磁盘计划仍满足已冻结上界。
 
 运行必须使用新的唯一 v2 run ID/目录，不复制或读取旧 v1 root results。启动前先执行零调用 `plan --profile representative`，随后执行同一生产 `representative` 入口。若同一 v2 run 中断，先核对 process、result/trace/call journal 和 unknown terminal，再使用 `--resume`；不得创建第二个 run 冒充恢复。运行完成后使用同一生产 reducer 发布结果并记录论文 roots、references、provider calls、summary 与五实验表证据。
+
+### 7.1 当前 exact-run 恢复状态（2026-08-23）
+
+上一段的“新的唯一 v2 run”要求已由该 run 的首次启动满足；当前不是新 run。完成 process、results/traces/calls/responses journal 与 unknown-terminal 预检后，Owner 对 `slim-v2-representative-real-20260822-144900-ef9128fe` 执行同一 run 的 `representative --resume`，其 narrow frozen-v2 compatibility 只重投影既有 Exp2 terminal ledger，不会重放该终端 protocol 或重复任一已终端 provider 调用。该 resume 已修复 Exp2 投影并完成 root processing；终态核对为 process=`0`、冻结 inventory roots=`72`、result files=`72`、calls=`52 intent/52 terminal`、responses=`47`。每个带 response reference 的 terminal 均指向存在文件；5 条 `MiniMaxAI/MiniMax-M2.5` `provider_transport_error` terminal 没有 response，unknown terminal=`0`。
+
+该 exact run 始终是变更前 Pro cohort，绝不是 Flash evidence。`reduce --run-dir` 曾在 publication 前停止，精确异常为 `ValueError: missing first-attempt verification evidence: factor_v2_hard_145:range_3`；当时metrics、`summary.json` 与 temporary publication 文件均为零。因此本 Representative 未通过、未发布，且不得因 root processing 已完成而宣称全实验成功。
+
+#### 7.1.1 Exp5 parsed-unsubmitted reducer 法定人数裁决（2026-08-23）
+
+- owner 先暂停 reducer 修改，保留同一只读证据包，并并行分派三个全新、互不通信的只读审阅者：`/root/reducer_semantics_a`、`/root/reducer_semantics_b`、`/root/reducer_semantics_c`。三票分别为继续阻断、保留nonpass、quality指标置null，实质上全部不同；依接力协议第7.1节，再由全新只读仲裁者`/root/reducer_semantics_audit`读取同一证据和三份原始意见，作出绑定裁决 `C — EXP5_PARSED_UNSUBMITTED_METRIC_NULL_V1`、`authorize=yes`。
+- 证据事实是同一MiniMax root的`range_1/range_3/range_7`都已持久化真实`2xx`、raw response、`parse_result=result_kind=parsed`、usage/token/cost，却均无 submission/verification，所以`verifier_result/checker_result=null`且已有`not_applicable_or_unavailable`。其余5个child为无response的真实transport failure。该事实不改写root的`no_final/provider_transport_exhausted`、Pro identity/pricing、calls、responses、roots或system journal。
+- 授权的最小修复只写Slim-local `reducer.py`和`test_reducer_golden.py`：窄匹配该既有标记事实为内部不可评估状态，保留actual call、coverage、token、cost、wall-clock和三类已具证据的breakdown；不补造verification、不新增taxonomy/metric/raw字段、不把它伪称transport/parse/rejection。`checkable/rejected`不计该attempt；`first_attempt_without_verifier_accepted_candidate_count`、`first_attempt_nonpass_rate`及其bootstrap/CI/variance/standard-error派生写`null + not_applicable_or_unavailable`。没有既有N/A原因的同形null继续fail closed。
+- 必须先完成fail-first与golden/reducer focused验证，随后才可对这个exact run仅执行一次本地reducer publication；禁止`resume` protocol、provider/Lean调用或改写原始运行文件。发布后需核对72 inventory/results、52 intent/terminal、47 response、5 transport、unknown=0仍不变。新Flash Representative另用新run ID，不复用或标注旧Pro cohort为Flash。
+
+#### 7.1.2 本轮实施、发布与前向运行（2026-08-23）
+
+- 规模变更的文档先行：Full Exp5 冻结为28个Factorization hard加纯逻辑、函数集合、归纳各3个Lean case，四模型仅`repeat0`、零retry；由inventory派生16 conditions、148 roots、1,136 provider upper，Full同步为7,054 paper roots、7,160 executions、7,046 online upper、84,618 fixed和91,664 total protocol attempts。
+- 实现与回归仅改Slim-local `profiles.py`、`reducer.py`、`test_profiles.py`与`test_reducer_golden.py`。三个初始语义意见、第四位绑定仲裁、fresh文档复核、fresh规格复核及fresh代码质量复核均已完成；审查中发现并修复C root不能污染验证拒绝率bootstrap的边界。owner fresh focused验证为`test_profiles.py test_reducer_golden.py -q`=`51 passed in 12.72s`、Slim源码/测试`compileall` exit 0；零调用Full plan确认当前全量数字与strict-P95 estimate=`9.761 GiB`。
+- 已按绑定范围对exact Pro run**仅执行一次**本地`reduce --run-dir`，成功发布`metrics/summary.json`和Exp1–5各JSONL/CSV共11文件。发布前后对calls、inventory、references、responses、roots、system、traces七个输入目录逐文件SHA-256 manifest核对均一致；未调用provider/Lean、未resume协议，旧Pro cohort仍不构成Flash证据。
+- 新的前向Flash Representative已用`slim-v2-representative-flash-20260823-210500`从零启动并完成root processing与同一生产reducer发布：72个paper roots、74个executions（含2个Exp3 references）、72个root results，发布`metrics/summary.json`与Exp1–5各JSONL/CSV共11文件。真实provider为Exp1=`19`、Exp5=`32`，共51个attempt，全部为terminal/HTTP 200、带raw response；Exp1的4个Flash roots均`verified_correct`。Exp2–4中预注册fixed replay、fault和ablation条件的非完成root按各自实验语义保留，不能误作provider故障；Exp5的3个非完成root则是模型比较本身的真实`no_final`结果，须按其模型/parse/verification原因解读。不得创建第二个run或将旧Pro结果混入。
 
 ## 8. 完成标准
 

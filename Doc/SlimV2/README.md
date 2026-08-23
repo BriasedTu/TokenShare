@@ -10,7 +10,7 @@ scope: Slim V2 agent routing and boundaries
 
 本目录是后续 Slim V2 设计与实现 Agent 的唯一入口。根据 2026-08-20 用户决定，除非当前任务明确指定其他维护范围，所有后续实验设施的设计、实现和运行都默认进入 Slim V2，不需要用户重复声明。四份前置权威文档已获得用户批准并冻结，是 Slim V2 范围内的当前权威；它们不改写 Slim V2 之外的 V1/legacy 状态。常规流程仍由用户逐阶段批准设计规格和实施计划；用户显式启动 `slim_v2_stage_relay_protocol.md` 时，则由该协议规定的多 reviewer 审查、完成标准和 `approved_under_user_delegation` 状态履行这两次委托审批。两种流程都不能绕过 shared-code 修改所需的再次用户批准。当前唯一例外是用户在 2026-08-21 已直接批准 Experiment 4 结构性局部旁路所需的最小 shared gap 修复；精确接口、文件范围、三票结论和验证门以 `slim_v2_exp4_structural_bypass_design.md` 为准，不能外推到其他 shared 修改。
 
-> **当前唯一 focus（2026-08-22）**：执行用户批准并冻结的 `slim_v2_final_summary_lightweight_repair_plan.md`。三个 Owner 必须是侧边栏可见的三个独立 Codex 对话，均使用 `gpt-5.6-sol/high`：第一对话负责 Tasks 1–3，第二对话负责 Tasks 4–6，第三对话负责新的真实 Representative。Owner 只统筹，具体代码实现和复核由其对话内子智能体完成。旧 v1 结果不迁移、不复用；Exp4 route evidence 实现明确延期，除非它实际阻断本轮输出。
+> **当前唯一 focus（2026-08-23）**：本次 Exp5 最小变更已实施：正式 cohort 为 GLM、Qwen、MiniMax 三个 `thinking_budget=max_tokens=100000` 的真实 `repeat0` 模型，DeepSeek V3 已移出 Exp5；Exp1 `deepseek-v4-flash` 已仅作为质量、ordinal-0 token 与原始成本/价格的无延迟 supplemental reference，独立输出且不改变五张正式指标表或摘要。下一步是在零调用 preflight 后启动新的三模型 Exp5 Representative；旧 v1结果不迁移、不复用，旧Pro cohort不标为Flash证据，Exp4 route evidence仍延期，除非它实际阻断本轮输出。
 
 ## 目标
 
@@ -26,7 +26,7 @@ Slim V2 要以最小设施完成：
 
 所有 roots 在 runner 层串行执行；Experiment 1 的 coverage tail 在当前 root terminal 之后、下一个 root start 之前完成，tail 时间与资源单列，不进入正常协议正文指标。`worker_count` 只控制单个 root 内的 AI-unit 并发。真实 API 边界按“单 provider entry 输入、raw/usage/latency/model 输出、薄 execution bridge”的能力设计，不要求复用旧 `AIAPIExecutor` 整类。
 
-Slim V2 的非目标是论文级审计、防伪、复杂来源追踪、旧实验设施修复或生产级运行平台。不要重新引入 receipt、预算授权、digest/lineage closure、publication gate、evidence closure 或 paper eligibility。`slim_v2.pricing.2026-08-20` 只是成本换算常量，不是预算或门禁。
+Slim V2 的非目标是论文级审计、防伪、复杂来源追踪、旧实验设施修复或生产级运行平台。不要重新引入 receipt、预算授权、digest/lineage closure、publication gate、evidence closure 或 paper eligibility。前向 Experiment 1 使用 `slim_v2.pricing.2026-08-23` 的 Flash 静态成本常量；Experiment 5 保留其 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 快照。两者都不是预算或门禁。已在 2026-08-23 变更前启动的具体 run 必须保留其实际写入的 model/pricing 事实，不能借此重标前向默认值。
 
 Experiment 2 的六档在线并发检查和 Experiment 3 的小型在线恢复检查已经退出 Slim V2；不要为它们选择 case、保留调用预算、实现 runner 或生成指标表。除 Experiment 2 的六个 worker 档外，Experiment 1、3、4、5 全部固定 `worker_count=10`。
 
@@ -40,7 +40,7 @@ Experiment 2 的六档在线并发检查和 Experiment 3 的小型在线恢复�
 4. `Doc/SlimV2/slim_v2_system_integration_contract.md`
 5. 当前 focus 已进入获批的设计或实现阶段时，完整阅读支持材料 `Doc/SlimV2/slim_v2_reuse_inventory.md`，然后才打开源码；纯讨论、指标或价格维护任务不必读取它。
 6. 当前 focus 是 Experiment 4 / Task 4 时，再完整阅读 `Doc/SlimV2/slim_v2_exp4_structural_bypass_design.md`、`Doc/SlimV2/slim_v2_design_spec.md` 第 5.4/19.1 节和 `Doc/SlimV2/slim_v2_implementation_plan.md` Task 4，然后才修改源码。
-7. 当前 focus 是最终汇总轻量修复或其后的真实 Representative 时，完整阅读 `Doc/SlimV2/slim_v2_final_summary_lightweight_repair_plan.md`；它只覆盖该文件明确列出的六项修复和运行交棒。
+7. 当前 focus 是Experiment 5缩容、parsed-unsubmitted修复或其后的真实 Representative 时，完整阅读 `Doc/SlimV2/slim_v2_exp5_scale_change_20260823.md` 和 `Doc/SlimV2/slim_v2_final_summary_lightweight_repair_plan.md`第7.1节；后者只覆盖其明确列出的修复和运行交棒。
 
 复用清单只提供精确源码位置、公开符号和复用等级，不能覆盖前四份权威。价格来源摘要同样只在维护价格时读取。当前 baseline 中的共享公共接口可按接线合同定点审计；旧 paper/formal 实现只能按复用清单中的固定 archive SHA 和 allowlist 使用 `git show <40位SHA>:<path>` 定点只读。不得 checkout archive branch/tag、创建 archive 工作副本或递归展开旧目录来“了解历史”。
 

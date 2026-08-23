@@ -664,35 +664,18 @@ EXP5_FACTORIZATION_CASE_IDS = (
     "factor_v2_hard_032",
     "factor_v2_hard_081",
     "factor_v2_hard_088",
-    "factor_v2_hard_013",
-    "factor_v2_hard_080",
-    "factor_v2_hard_091",
-    "factor_v2_hard_071",
-    "factor_v2_hard_141",
-    "factor_v2_hard_004",
-    "factor_v2_hard_084",
-    "factor_v2_hard_163",
-    "factor_v2_hard_129",
-    "factor_v2_hard_041",
-    "factor_v2_hard_153",
-    "factor_v2_hard_086",
-    "factor_v2_hard_130",
-    "factor_v2_hard_021",
 )
 
 EXP5_LEAN_CASE_IDS = (
     "lean_v2_hard_frontier_pure_logic_checker_12",
     "lean_v2_hard_frontier_pure_logic_checker_02",
     "lean_v2_hard_frontier_pure_logic_checker_09",
-    "lean_v2_hard_frontier_pure_logic_checker_10",
     "lean_v2_hard_frontier_function_set_checker_14",
     "lean_v2_hard_frontier_function_set_checker_11",
     "lean_v2_hard_frontier_function_set_checker_10",
-    "lean_v2_hard_frontier_function_set_checker_15",
     "lean_v2_hard_frontier_induction_checker_06",
     "lean_v2_hard_frontier_induction_checker_05",
     "lean_v2_hard_frontier_induction_checker_10",
-    "lean_v2_hard_frontier_induction_checker_01",
 )
 
 REPRESENTATIVE_CASE_IDS = (
@@ -768,7 +751,6 @@ _EXP5_PROVIDER_ENTRIES = {
     "zai-org/GLM-5.2": "glm_5_2_exp5_v3",
     "Qwen/Qwen3-14B": "qwen3_14b_exp5_v3",
     "MiniMaxAI/MiniMax-M2.5": "minimax_m2_5_exp5_v3",
-    "Pro/deepseek-ai/DeepSeek-V3": "deepseek_v3_pro_exp5_v3",
 }
 
 
@@ -806,11 +788,11 @@ def build_profile(profile_id: str) -> ProfileV1:
     exp2_workers = (1, 3, 7, 10, 30, 50) if profile_id == "full" else (1, 10, 50)
     exp3_repeats = (0, 1) if profile_id == "full" else (0,)
     exp4_repeats = (0, 1, 2) if profile_id == "full" else (0,)
-    exp5_repeats = (0, 1, 2) if profile_id == "full" else (0,)
+    exp5_repeats = (0,)
     experiments = {
         "exp1": ExperimentProfileV1(
             "exp1", (10,), (0,), 2, False, None,
-            "deepseek_v4_pro_exp1_baseline", "deepseek-v4-pro", True,
+            "deepseek_v4_flash_exp1_baseline", "deepseek-v4-flash", True,
             "high", 600, 300_000,
         ),
         "exp2": ExperimentProfileV1(
@@ -1441,7 +1423,6 @@ def build_inventory(profile_id: str | ProfileV1) -> InventoryV1:
         "zai-org/GLM-5.2",
         "Qwen/Qwen3-14B",
         "MiniMaxAI/MiniMax-M2.5",
-        "Pro/deepseek-ai/DeepSeek-V3",
     )
     exp5_ids = (
         EXP5_FACTORIZATION_CASE_IDS + EXP5_LEAN_CASE_IDS
@@ -1452,11 +1433,7 @@ def build_inventory(profile_id: str | ProfileV1) -> InventoryV1:
     for case_id in exp5_ids:
         domain, _difficulty, topic, _units, _row = _case_data(case_id, factor, lean)
         exp5_groups.setdefault((domain, topic), []).append(case_id)
-    model_order_by_repeat = {
-        0: model_ids,
-        1: (model_ids[1], model_ids[3], model_ids[0], model_ids[2]),
-        2: (model_ids[2], model_ids[0], model_ids[3], model_ids[1]),
-    }
+    model_order_by_repeat = {0: model_ids}
     for repeat_id in profile.experiments["exp5"].repeat_ids:
         for model_id in model_order_by_repeat[repeat_id]:
             for (domain, topic), case_ids in exp5_groups.items():
@@ -1538,7 +1515,7 @@ def _provider_identity(condition: ConditionV1 | None) -> tuple[str, str]:
             raise ValueError(f"unknown Exp5 model: {condition.model_id}")
         assert condition.model_id is not None
         return _EXP5_PROVIDER_ENTRIES[condition.model_id], condition.model_id
-    return "deepseek_v4_pro_exp1_baseline", "deepseek-v4-pro"
+    return "deepseek_v4_flash_exp1_baseline", "deepseek-v4-flash"
 
 
 def _project_root_inventory(

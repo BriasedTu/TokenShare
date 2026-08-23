@@ -4,7 +4,7 @@ document: slim_v2_design_spec
 scope: Slim V2 minimal executable experiment facility
 owner: Stage 1 design specification owner
 created: 2026-08-21
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 run_scope: representative_only
 ---
 
@@ -66,8 +66,8 @@ Slim V2 只交付以下能力：
 - Experiment 3 只有五种 rate fault、冻结 worker-death 条件、ordinal 0 注入和 seed `20260820` 扰动；资源标为 `simulated_trace_attributed`；
 - Experiment 4 只有 FULL、四个单机制、六个双机制共 11 modes；challenge mode-blind，组合 mode 必须真实运行；
 - Experiment 4 不运行三机制、四机制或`ALL_OFF`，也不新增fault/error rate；
-- Experiment 5 只使用四个冻结 SiliconFlow endpoint、零重试、真实 usage；
-- 成本固定为 `slim_v2.pricing.2026-08-20`；`reasoning_tokens` 是 `completion_tokens` 子集，不重复计价；
+- Experiment 5 只使用三个冻结 SiliconFlow thinking endpoint、零重试、真实 usage；Exp1 Flash V4 只可进入独立历史参考表；
+- 前向 Experiment 1 成本固定为 Flash `slim_v2.pricing.2026-08-23`，Experiment 5 保留 SiliconFlow `slim_v2.pricing.2026-08-20`；两者按每个实际 attempt 固定，`reasoning_tokens` 是 `completion_tokens` 子集，不重复计价；
 - 单 root 失败、超时、未恢复、preflight block 或 infrastructure-invalid 均保留预注册身份和结果行；ratio 分母为 0 时写 `null + missing_reason=zero_denominator`，必需输入缺失或不适用时写 `null` 和对应原因，不写伪 0；数值写回必须清除同 metric 的模板旧原因。
 
 ## 2. 最小总体架构与模块树
@@ -148,7 +148,7 @@ flowchart LR
 | `storage.py` / 全部 | inventory/root/trace/call object | 普通原子文件、committed key集合和terminal-call facts | 每个持久化边界 | 冲突主键或写失败立即安全停 | root/trace/call键、crash窗口、resume/unknown |
 | `scenarios.py` / Exp2–4 | condition、plan、fixed source、seed、mechanism mode | scheduler/hooks/observations/reference projections | root adapter构造时 | 只执行冻结变换；mode不得进入challenge injector | 六worker、五fault、death、11 modes、四challenge |
 | `projector.py` / root | result、同一 ledger/store、plugin、hook、attempt journals | `RootResultV2`；临时内存仅当前 root | protocol/tail后 | 缺公共事实写null+reason；接线缺失分类 infrastructure-invalid | 与指标权威第8节叶字段集合、嵌套结构和必填/可空规则精确相等，另验领域正确性与failure taxonomy |
-| `provider.py` 的纯价格投影 / projector | provider family/model、usage、request UTC | attempt cost、version、tier；随attempt/root记录 | 实际/模拟usage之后 | 必需cache split/time缺失则cost null，不阻止调用 | 峰谷边界、四endpoint、reasoning不双算 |
+| `provider.py` 的纯价格投影 / projector | provider family/model、usage、request UTC | attempt cost、version、tier；随attempt/root记录 | 实际/模拟usage之后 | 必需cache split/time缺失则cost null，不阻止调用 | 峰谷边界、三个Exp5 endpoint、reasoning不双算 |
 | `reducer.py` / 离线 | 单个 run 目录 | `metrics/*.jsonl`、`*.csv`、`summary.json` | 单独命令或run-all末尾 | inventory-result缺口进入固定分母并标null/reason；绝不调用runtime/provider | 全指标、CI、pair/quadruple、流式内存边界 |
 | `gui.py` / 人工入口 | profile、Exp1–5/all、run ID、output、必要source、resume | 同一CLI argv和一个CLI子进程exit code；自身不持久化 | CLI之前 | 无效选择不启动；运行中不再启动第二进程 | 12种核心选择、Exp2–4 source、all→run-all、provider=0 |
 | `run_slim_v2.cmd` / Windows入口 | 脚本所在仓库、既有`tokenshare` conda环境 | 启动`python -m tokenshare.experiments.slim_v2.gui` | 用户双击时 | 缺conda/env/Tkinter时清晰退出，不安装或fallback | 静态目标与working-directory合同 |
@@ -220,7 +220,7 @@ Projector忽略 `event_refs`、`artifact_refs` 的防伪含义和 `ledger_bindin
 ### 5.1 Experiment 1：真实 DeepSeek、正常协议与 coverage tail
 
 1. full profile展开Factorization 300和Lean 135 roots，`repeat_id=0,seed=1,worker_count=10`；representative使用第13节四个精确roots。
-2. condition在root loop前解析唯一entry `deepseek_v4_pro_exp1_baseline`；caller固定`deepseek-v4-pro`、thinking enabled、`reasoning_effort=high`、600秒、300000 max tokens。配置的provider全局上限为50，但root内只有10 workers，故实际有效in-flight上限为10。
+2. 前向 condition 在 root loop 前解析唯一 entry `deepseek_v4_flash_exp1_baseline`；caller 固定 `deepseek-v4-flash`、thinking enabled、`reasoning_effort=high`、600秒、300000 max tokens。配置的provider全局上限为50，但root内只有10 workers，故实际有效in-flight上限为10。2026-08-23 前已启动的 exact run 只按其持久化 Pro identity 恢复，不能因此反向覆盖该前向 entry。
 3. runner记录`root_start_at_ms`后运行一次`run_root()`；每自然协议attempt立即写call intent、response/result和raw response；provider caller每次只调用一次，协议`max_retries=2`决定最多三个自然attempts。
 4. coordinator terminal后立即冻结`root_terminal_at_ms`和`runtime_wall_clock_ms`，projector形成protocol结果和每个已执行unit的`trace_origin=protocol` trace。
 5. runner计算`tail_targets=unscheduled_ai_unit_ids - protocol_trace_ids`，保持冻结runtime observation的原始顺序而不重新排序。Tail使用相同request、prompt、依赖、provider和控制；每unit从ordinal 0开始，首次accepted停止，最多三次；parser/checker只决定tail是否继续，不向已终止root提交。Lean依赖canonical不可用时不伪造依赖，而是写带真实`lemma_node_id/dependency_path`且`provider_call_made=false`的typed`pre_dispatch_failure`。
@@ -266,18 +266,19 @@ Worker death使用Process backend，dead count `{1,3}`、progress `{25%,50%,75%}
 
 Exp4 provider calls=0，source lookup和失败规则与Exp2–3一致。
 
-### 5.5 Experiment 5：四endpoint真实比较
+### 5.5 Experiment 5：三endpoint真实比较与 Flash V4 补充参考
 
-full按四model×三repeat×54roots得到648 root-runs；roots串行，root内`worker_count=10`，SiliconFlow全局in-flight=3。四个entry/model为：
+Full按三model×唯一`repeat0`×37 roots得到111 root-runs；37 roots为既有冻结有序清单中的Factorization hard前28和Lean hard每topic前3。roots串行，root内`worker_count=10`，SiliconFlow全局in-flight=3；Experiment 1–4、既有排序和题目语义不变。三个entry/model为：
 
 | entry | model | reasoning |
 |---|---|---|
-| `glm_5_2_exp5_v3` | `zai-org/GLM-5.2` | thinking, budget 32768 |
-| `qwen3_14b_exp5_v3` | `Qwen/Qwen3-14B` | thinking, budget 32768 |
-| `minimax_m2_5_exp5_v3` | `MiniMaxAI/MiniMax-M2.5` | thinking, budget 32768 |
-| `deepseek_v3_pro_exp5_v3` | `Pro/deepseek-ai/DeepSeek-V3` | nonthinking |
+| `glm_5_2_exp5_v3` | `zai-org/GLM-5.2` | thinking, budget 100000 |
+| `qwen3_14b_exp5_v3` | `Qwen/Qwen3-14B` | thinking, budget 100000 |
+| `minimax_m2_5_exp5_v3` | `MiniMaxAI/MiniMax-M2.5` | thinking, budget 100000 |
 
-公共控制为timeout 600、max tokens 100000、零重试、`replacement_attempts_allowed=false`；三个thinking entry的`thinking_budget=32768`保持不变，不能与response `max_tokens`混用。repeat model顺序固定`ABCD/BDAC/CADB`。每AI unit最多一个provider attempt，自然早停保留planned-but-unscheduled。configured/requested/resolved model不一致立即停止该model condition尚未执行roots，并为固定库存写infrastructure-invalid。provider自然失败、parse/checker rejection仍是结果。
+公共控制为timeout 600、max tokens 100000、零重试、`replacement_attempts_allowed=false`；三个thinking entry的`thinking_budget=100000`不能与response `max_tokens`混用。唯一model顺序固定`ABC`。每AI unit最多一个provider attempt，自然早停保留planned-but-unscheduled。configured/requested/resolved model不一致立即停止该model condition尚未执行roots，并为固定库存写infrastructure-invalid。provider自然失败、parse/checker rejection仍是结果。
+
+Exp1 的`deepseek-v4-flash`不进入上述 live Exp5 inventory。三个实测模型发布后，独立 CLI `compare-exp5-v4-reference --run-dir <exp5-run> --source-run-dir <exp1-flash-run>`可只读相同 case 的 Exp1 committed Flash repeat0 结果，输出单独的 V4 provenance reference 行；该行仅携带质量、ordinal-0 实际 token/原始成本，所有 wall-clock 字段为`null + not_applicable_or_unavailable`。此命令不调用provider、不改变`reduce_run()`、正式 Exp5 表或`summary.json`，也不把 V4 标为 live Exp5 endpoint。
 
 ## 6. Provider caller、fixed executor、tail、scenario、projector、sink和reducer
 
@@ -305,18 +306,16 @@ Caller直接复用`ai_api_transport.py`的`build_deepseek_chat_body`,`build_sili
 
 ### 6.3 pricing projector
 
-价格纯函数只接受usage、model和provider request start，版本固定`slim_v2.pricing.2026-08-20`。CNY/1M tokens常量为：
+价格纯函数只接受usage、model和 provider request start，并按 attempt 的 experiment/provider 选择不可变版本：前向 Exp1 为`slim_v2.pricing.2026-08-23`，Exp5 为`slim_v2.pricing.2026-08-20`。CNY/1M tokens常量为：
 
 | provider/model | cache hit | cache miss/input | output |
 |---|---:|---:|---:|
-| DeepSeek `deepseek-v4-pro` off-peak | 0.15 | 4.50 | 13.50 |
-| DeepSeek `deepseek-v4-pro` peak | 0.30 | 9.00 | 27.00 |
+| DeepSeek `deepseek-v4-flash` flat | 0.05 | 1.50 | 4.50 |
 | SiliconFlow `zai-org/GLM-5.2` | 2.00 | 8.00 | 28.00 |
 | SiliconFlow `Qwen/Qwen3-14B` | 无独立价 | 0.50 | 2.00 |
 | SiliconFlow `MiniMaxAI/MiniMax-M2.5` | 0.21 | 2.10 | 8.40 |
-| SiliconFlow `Pro/deepseek-ai/DeepSeek-V3` | 0.20 | 2.00 | 8.00 |
 
-DeepSeek按每attempt的`provider_request_started_at_utc`转换到Asia/Shanghai，以`[09:00,12:00)`、`[14:00,18:00)`选择peak，其余off-peak；SiliconFlow为flat。DeepSeek与有cache价的SiliconFlow缺cache split则cost null；Qwen全部`prompt_tokens`按input 0.50。output只用完整`completion_tokens`；`reasoning_tokens`是其子集且绝不再加一次。价格错误或缺失不阻止运行，只产生null+reason。
+前向 Flash 与 SiliconFlow 都为flat；Flash 的调用开始时间仍记录为事实，但不用于选取峰/谷价。Flash 与有cache价的SiliconFlow缺cache split则cost null；Qwen全部`prompt_tokens`按input 0.50。output只用完整`completion_tokens`；`reasoning_tokens`是其子集且绝不再加一次。价格错误或缺失不阻止运行，只产生null+reason。2026-08-23 前 exact run 已持久化的 Pro peak/off_peak 值只按同一 run 的事实读取，不适用于新 run。
 
 ### 6.4 reducer
 
@@ -362,7 +361,7 @@ python -m tokenshare.experiments.slim_v2.gui
 | `exp1_provider_config_path` | tracked path | 默认`benchmarks/paper/exp1_baseline_provider_config.v3.json`，只取唯一entry |
 | `exp5_provider_config_path` | tracked path | 默认`benchmarks/paper/exp5_siliconflow_provider_config.v3.json`，按冻结entry显式取值 |
 | `local_secret_config_path` | gitignored path | 默认`local/ai_api_smoke.local.json`；不复制到run config |
-| `pricing_version` | `slim_v2.pricing.2026-08-20` | 固定普通常量 |
+| `pricing_versions` | 前向 new-run safe config 的普通映射：`exp1=slim_v2.pricing.2026-08-23`、`exp5=slim_v2.pricing.2026-08-20` | 每个实际 attempt 仍写其单一 `pricing_version`；不得以单个 run 全局常量覆盖跨 provider 的事实。2026-08-23 前 exact run 的旧单值仅限窄恢复读取；不是 gate |
 | `ordinary_parallel_backend_kind` | `thread` | Thread事实完整性Gate通过后冻结；不是实验维度 |
 | `response_max_bytes` | 16 MiB | 资源边界，不是输入安全策略 |
 | `reducer_workers` | 1 | 首版固定串行，profile不改变 |
@@ -390,7 +389,7 @@ python -m tokenshare.experiments.slim_v2.gui
 | Exp3 death | Factorization difficulty三层或Lean topic三层，共6 strata；`dead={1,3} × progress={25,50,75}% × repeat={0,1}` | perturbation seed 20260820 | 6×2×3×2=72 | 636 |
 | Exp3 auxiliary reference | 与death相同的6 domain strata × `repeat={0,1}`，无fault/death | perturbation seed 20260820 | 12，非论文condition | 106，非论文root分母 |
 | Exp4 | `mode=11个冻结mode × repeat={0,1,2}`；challenge family是同plan的root-level paired stratum，不进入mode-specific injector | source repeat固定0 | 33 | 2,145 |
-| Exp5 | Factorization hard一个domain stratum + Lean hard三个topic strata，共4；`model={A,B,C,D} × repeat={0,1,2} × stratum` | model顺序ABCD/BDAC/CADB | 4×3×4=48 | 648 |
+| Exp5 | Factorization hard一个domain stratum + Lean hard三个topic strata，共4；`model={A,B,C} × repeat={0} × stratum` | model顺序ABC | 3×1×4=12 | 111 |
 
 静态profile测试必须逐行断言condition/root总数、合法值和Exp3 `planned first-attempt=16,728, execution-attempt upper=52,992`，并验证plan值与逐root inventory公式相等；空分层不得静默删掉condition，必须暴露profile/catalog错误。
 
@@ -714,8 +713,8 @@ Exp3正文所有resource表的metadata固定`resource_semantics=simulated_trace_
 | 必须指标 | 原始字段 | 产生组件 | 文件 |
 |---|---|---|---|
 | `actual_first_provider_attempt_count` | ordinal0 + `provider_call_made` | caller/projector | root result→metrics |
-| `first_attempt_without_verifier_accepted_candidate_count` | ordinal0 transport/parse/verification结果 | projector/reducer | metrics |
-| `first_attempt_nonpass_rate` | nonpass/actual first calls | reducer | metrics |
+| `first_attempt_without_verifier_accepted_candidate_count` | ordinal0 transport/parse/verification结果，且全部实际调用均到达可评估verification边界 | projector/reducer | metrics |
+| `first_attempt_nonpass_rate` | nonpass/actual first calls；出现已解析未提交事实时为`null + not_applicable_or_unavailable` | reducer | metrics |
 | `first_attempt_provider_transport_failure_count` | first result kind/http，互斥优先1 | projector/reducer | metrics |
 | `first_attempt_parse_schema_unusable_count` | parse unusable，未归transport | projector/reducer | metrics |
 | `first_attempt_verification_checker_rejection_count` | checkable rejected | checker/projector | metrics |
@@ -727,16 +726,16 @@ Exp3正文所有resource表的metadata固定`resource_semantics=simulated_trace_
 | `actual_total_tokens` | actual attempt usage | caller/reducer | metrics |
 | `actual_cost_estimate_cny` | actual attempt price | pricing/reducer | metrics |
 | `repeat0_wall_clock_ms` | repeat0 roots的max terminal-min start | runner/reducer | metrics |
-| `repeat1_wall_clock_ms` | repeat1 roots的max terminal-min start | runner/reducer | metrics |
-| `repeat2_wall_clock_ms` | repeat2 roots的max terminal-min start | runner/reducer | metrics |
-| `model_wall_clock_median_ms` | 三个repeat值的median | reducer | metrics |
-| `model_wall_clock_min_ms` | 三个repeat值的min | reducer | metrics |
-| `model_wall_clock_max_ms` | 三个repeat值的max | reducer | metrics |
+| `repeat1_wall_clock_ms` | 不运行，固定`null + not_applicable_or_unavailable` | profile/reducer | metrics |
+| `repeat2_wall_clock_ms` | 不运行，固定`null + not_applicable_or_unavailable` | profile/reducer | metrics |
+| `model_wall_clock_median_ms` | 唯一repeat0值 | reducer | metrics |
+| `model_wall_clock_min_ms` | 唯一repeat0值 | reducer | metrics |
+| `model_wall_clock_max_ms` | 唯一repeat0值 | reducer | metrics |
 | `model_wall_clock_range_ms` | max-min | reducer | metrics |
 | `root_actual_total_tokens` | 每root ordinal0 token sum | reducer | metrics |
 | `root_actual_cost_estimate_cny` | 每root ordinal0 cost sum | reducer | metrics |
-| `repeat_wall_clock_ms` | 三批次wall原始值 | reducer | metrics |
-| `model_wall_clock_sample_stddev_ms` | 三批次wall样本标准差 | reducer | metrics |
+| `repeat_wall_clock_ms` | 单元素`[repeat0_wall_clock_ms]` | reducer | metrics |
+| `model_wall_clock_sample_stddev_ms` | 单观察值，`null + insufficient_observations_for_sample_variance` | reducer | metrics |
 
 ### 10.10 方差、CI和计数元数据
 
@@ -789,11 +788,11 @@ coverage tail是唯一协议terminal后的Slim-local例外。它只能读取已�
 | Exp2 | Exp1 hard plan中的50 Factorization；workers 1/3/7/10/30/50；2 repeats；`max_retries=2`；600 roots；planned units与execution-attempt ceiling从Exp1 plan精确求和 |
 | Exp3 | Factorization 50×5 faults×6 rates×2 + Lean 3×5×3 rates×2 =3,090 fault roots；worker death 53×2 dead counts×3 progress×2=636；全部`max_retries=2`；合计3,726、16,728 planned first attempts（rate 13,920 + death 2,808）、52,992 execution-attempt hard upper（`3×rate + 4×death`）；另106辅助references不进分母，其planned/upper为468/1,404 |
 | Exp4 | 65 cases×3 repeats×11 modes=2,145；195 challenge plans，quota 49/49/48/49；每mode/repeat 293 units，合计9,669 first-attempt units；execution attempt upper 15,822 |
-| Exp5 | 54 roots×4 models×3 repeats=648；4,992 planned/attempt upper；model order ABCD/BDAC/CADB |
+| Exp5 | 37 roots（Factorization 28 + Lean 3×3）×3 models×repeat0=111；852 planned/attempt upper；model order ABC |
 
 Full的全部有序case IDs已作为既有Slim-local只读profile成果固化；六Task实施的Task 2必须在Task 1真实纵链之后重新校准其数量、顺序、分层、catalog存在性和逐root planned units，但不得丢弃或按旧Task编号自动宣称整个新Task 2完成。其一次性来源只允许reuse inventory固定SHA、allowlist路径/符号的最小`git show`或当前权威catalog上的冻结选择规则；若历史资产含digest/eligibility，只提取普通有序case ID，不复制这些字段。Slim runtime只读自己的profile data和当前catalog case，绝不读取`paper_suite_scale_300_50_54.v1`、`exp5_parent_quarter_selection.v4`或任何旧selection/profile。ID生成不是运行时选择，也不形成selection authority。
 
-Full全局硬规模：论文roots=`435+600+3,726+2,145+648=7,554`；加106个Exp3 references后root executions=`7,660`；真实provider-call hard cap=`5,910+4,992=10,902`。Exp3 references的冻结planned/upper为468/1,404；`plan`仍必须从固化inventory精确输出Exp2 planned/attempt ceilings、该reference ceiling，以及每实验和全局的protocol/simulated attempt ceilings，不得用摘要常量替代profile求和。
+Full全局硬规模：论文roots=`435+600+3,726+2,145+111=7,017`；加106个Exp3 references后root executions=`7,123`；真实provider-call hard cap=`5,910+852=6,762`。Exp3 references的冻结planned/upper为468/1,404；`plan`仍必须从固化inventory精确输出Exp2 planned/attempt ceilings、该reference ceiling，以及每实验和全局的protocol/simulated attempt ceilings，不得用摘要常量替代profile求和。
 
 ## 13. Representative profile：精确清单、调用上限和通过标准
 
@@ -801,7 +800,7 @@ Representative与Full使用同一CLI、runner、adapter、provider、schema、st
 
 ### 13.1 Source roots和Experiment 1
 
-Exp1固定四个roots，均`repeat_id=0,worker_count=10,entry=deepseek_v4_pro_exp1_baseline`：
+前向 Exp1 固定四个roots，均`repeat_id=0,worker_count=10,entry=deepseek_v4_flash_exp1_baseline`：
 
 | case_id | domain/stratum | planned AI units |
 |---|---|---:|
@@ -850,19 +849,19 @@ Representative challenge quota缩为每family一个，仍使用同一plan生成�
 
 ### 13.5 Experiment 5和总调用上限
 
-Exp5只用`factor_v2_hard_145 × repeat0`，依次运行四个冻结entry，`worker_count=10`、SiliconFlow in-flight=3、每unit零重试。8 planned units×4 endpoints，真实provider-call上限32。
+Exp5只用`factor_v2_hard_145 × repeat0`，依次运行三个冻结thinking entry，`worker_count=10`、SiliconFlow in-flight=3、每unit零重试。8 planned units×3 endpoints，真实provider-call上限24。
 
-整个representative的真实provider-call上限为`Exp1 57 + Exp5 32 = 89`；Exp2–4严格为0。自然首次accepted或协议早停可使实际值更低，不得用未发生调用填满上限。
+整个representative的真实provider-call上限为`Exp1 57 + Exp5 24 = 81`；Exp2–4严格为0。自然首次accepted或协议早停可使实际值更低，不得用未发生调用填满上限。
 
 ### 13.6 Representative设施通过标准
 
-- inventory精确为Exp1 4、Exp2 12、Exp3 8+2 auxiliary refs、Exp4 44、Exp5 4；
+- inventory精确为Exp1 4、Exp2 12、Exp3 8+2 auxiliary refs、Exp4 44、Exp5 3；
 - 所有论文root均有结果文件，两个reference均有文件；模型错误/checker rejection允许；
 - Exp1 19个planned source units各有唯一protocol/tail trace，tail不改变protocol runtime；
 - Exp2–4所有attempt`provider_call_made=false`，source三元键和领域语义匹配；
 - Exp3五fault、death两端和simulated字段完整；
 - Exp4 4 plans跨11 modes相同，0 missed opportunity（未到达边界按authority不算missed），pair/quadruple可构造；
-- Exp5四entry的configured/requested/resolved model匹配；
+- Exp5三个thinking entry的configured/requested/resolved model匹配；
 - reducer产生所有表；小cluster导致CI null必须带正确reason，不算设施失败；
 - 人为中断一次后`--resume`不重复任何terminal真实attempt且能完成缺失root/tail；
 - 同一 v2 run 在相同持久化事实下，fresh/resume 的 Exp1 `attempts[]`、tail summary、provider-call/token/cost 计数完全相同；
@@ -919,7 +918,7 @@ estimate = 1.25 × [
 - API key不进入request body dump、raw response、exception message、artifact metadata、event、log、run config或子Agent prompt；
 - provider caller不记录Authorization header；错误只记录`error_kind,http_status,exception_type,bounded_message`；
 - model identity每真实attempt保存configured/requested/resolved三值；resolved缺失/不匹配停止当前condition并写剩余固定rows；不自动换entry/model；
-- 旧provider config内pricing值被忽略，唯一成本常量来自`slim_v2.pricing.2026-08-20`；
+- 旧provider config内pricing值被忽略；前向 Exp1 成本常量来自`slim_v2.pricing.2026-08-23` Flash 表，Exp5 仍来自`slim_v2.pricing.2026-08-20` SiliconFlow 表。已启动 exact run 的已写入 Pro 成本事实不重算；
 - 这里只实施最小secret卫生和正常错误记录，不引入鉴权、注入防护、恶意envelope校验或防伪审计。
 
 ## 16. 风险驱动的非Lean focused verification策略
@@ -949,10 +948,10 @@ review只在三个里程碑触发：现有系统本体闭环、全部实验场�
 |---|---|---|---|---|
 | 1 现有系统本体纵向闭环 | test-local fake submission分别让Factorization + Lean fixed-DAG真实经过公共`run_root`纵链并投影普通结果 | `runtime.py,projector.py,test_system_vertical.py` | 当前公共runtime/plugin | 第一Gate；Task 1当时范围内两领域verifier/checker/canonical/merge/root recheck真实且未发现shared gap；该结论不覆盖Task 4后来证明并获批的结构性旁路缺口，当前口径见§19.1；生产execution adapter留到Task3 |
 | 2 profile、最小schema与普通输出 | 保留并校准已完成schema/profile/case/plan；写Task1结果并resume扫描 | `schema.py,case_source.py,profiles.py,storage.py,cli.py` | Task1事实 | 153 formal metric IDs可由authority §8原始字段合同计算，三项额外mandatory inventory diagnostics闭合；没有第二状态机/通用framework |
-| 3 Exp1/5回答路径 | fake transport通过同一caller/bridge，Exp1 protocol+tail trace闭合，Exp5四endpoint | `provider.py,execution.py,runtime.py,storage.py,projector.py` | Task2 | 16MiB/close/journal/unknown、tail隔离、fixed path无transport |
+| 3 Exp1/5回答路径 | fake transport通过同一caller/bridge，Exp1 protocol+tail trace闭合，Exp5三个thinking endpoint | `provider.py,execution.py,runtime.py,storage.py,projector.py` | Task2 | 16MiB/close/journal/unknown、tail隔离、fixed path无transport |
 | 4 Exp2–4系统场景 | 六worker、五fault/death/reference、11-mode challenge全部真实进system/plugin | `scenarios.py,runtime.py,execution.py,projector.py` | Task3 traces | 0 provider calls；先证明Thread，death使用Process，Slim不生成系统真值 |
-| 5 统一reducer | 一个统计内核生成Exp1–5全部153-ID表及三项mandatory inventory diagnostics | `reducer.py` | Task4普通结果 | fixed denominator、pairs/quadruples/bootstrap/null、流式只读 |
-| 6 CLI/启动脚本图形包装/resume/readiness | 原子命令、Windows双击参数窗口、preflight、串行roots、resume和全离线E2E | `cli.py,gui.py,run_slim_v2.cmd,runtime.py,storage.py,projector.py` | Tasks1–5 | 两profile与Exp1–5/all均映射同一CLI；Representative 72 roots/74 executions/cap89；通过后直接进入真实representative下一阶段 |
+| 5 统一reducer | 一个统计内核生成Exp1–5全部153-ID表及三项mandatory inventory diagnostics；另可显式生成V4 provenance补充表 | `reducer.py` | Task4普通结果 | fixed denominator、pairs/quadruples/bootstrap/null、流式只读；补充表不改正式五表 |
+| 6 CLI/启动脚本图形包装/resume/readiness | 原子命令、Windows双击参数窗口、preflight、串行roots、resume和全离线E2E | `cli.py,gui.py,run_slim_v2.cmd,runtime.py,storage.py,projector.py` | Tasks1–5 | 两profile与Exp1–5/all均映射同一CLI；Representative 71 roots/73 executions/cap81；独立V4比较命令不启动runner；通过后直接进入真实representative下一阶段 |
 
 Task顺序冻结。golden fixture准备、文档核对和只读审计在单个Task内部逻辑上可并行，但实际实现仍保持单一focus。既有schema/profile/plan代码只是Task 2的候选输入；在Task 1两领域纵向金丝雀闭合前，不得以其已存在为由跳过Task 1或宣称新Task 2完成。
 

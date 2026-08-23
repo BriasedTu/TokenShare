@@ -453,6 +453,39 @@ class FixedTraceSubmissionAdapter:
             ingest(captured.get("scenario"))
 
 
+def reconstruct_fixed_trace_attempt(
+    *,
+    request: ExecutionRequest,
+    source_store: RunStore,
+    artifact_store: ArtifactStore,
+    case_id: str,
+    domain: str,
+    provider_entry_id: str,
+    configured_model: str,
+    experiment_id: str = "exp2",
+) -> AttemptResultV1:
+    """只读重建已记录 fixed-trace attempt，不触发 bridge 或写入 artifact。"""
+
+    if experiment_id not in {"exp2", "exp3", "exp4"}:
+        raise ValueError("fixed trace reconstruction requires Exp2, Exp3, or Exp4")
+    planned = _planned_id(request)
+    trace = source_store.read_trace(case_id, 0, planned)
+    if (
+        trace.domain != domain
+        or trace.provider_family != "deepseek"
+        or trace.provider_entry_id != provider_entry_id
+        or trace.configured_model != configured_model
+        or trace.requested_model != configured_model
+        or trace.resolved_model != configured_model
+    ):
+        raise ValueError("fixed trace identity differs from persisted request")
+    _check_semantics(artifact_store, request, trace)
+    selected = select_trace_attempt(trace, request.attempt_ordinal)
+    attempt = _fixed_attempt(request, planned, trace, selected)
+    attempt.validate(experiment_id=experiment_id)
+    return attempt
+
+
 def _submission_from_content(
     *,
     request: ExecutionRequest,

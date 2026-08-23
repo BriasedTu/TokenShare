@@ -196,12 +196,12 @@ call_ai(entry, prompt, timeout_seconds, max_tokens, require_json_mode)
 | 范围 | 当前权威位置 | 复用代码时必须遵守的覆盖规则 |
 |---|---|---|
 | 统一分母、失败、root timing | 指标权威第 1.2 节 | 固定预注册 root 分母；roots 串行；root start 在任何 AI unit 调度前，terminal 在 root 完成/失败后；缺失不是 0 |
-| 价格与 token | 指标权威第 1.4 节 | 固定 `slim_v2.pricing.2026-08-20`；DeepSeek 峰/谷、SiliconFlow 四模型平价表；reasoning 是 completion 子集，不重复计数 |
+| 价格与 token | 指标权威第 1.4 节 | 前向 Exp1 固定 `slim_v2.pricing.2026-08-23` 的 DeepSeek Flash flat 表；Exp5 保留 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 四模型平价表；reasoning 是 completion 子集，不重复计数。已启动 exact run 的 Pro 峰/谷事实不重算 |
 | Experiment 1 | 指标权威第 2 节 | DeepSeek 真实调用；每个 root 的协议 `run_root()` 终态（包括有效`no_final`）后立即对 unscheduled planned units 执行 Slim-local coverage tail，只有统一设施blocker阻断。protocol 与 tail trace origin 分开，tail 资源单列且不延长 root runtime |
 | Experiment 2 | 指标权威第 3 节 | 取消独立 20-way split，完整继承 Exp1 plan；六个 worker 档用相同 source trace/latency 进逻辑调度器；repeat 离散口径以当前权威的 `(max-min)/mean` 为准 |
 | Experiment 3 | 指标权威第 4 节 | 五类 fault 只注入 ordinal 0；按稳定排序均匀选 target；固定 seed 的 token/latency 扰动；模拟资源不得称为真实 provider usage |
 | Experiment 4 | 指标权威第 5 节 | 11 modes、mode-blind challenge、pair/quadruple 与 interaction；五个正式 delta 名称无附加后缀 |
-| Experiment 5 | 指标权威第 6 节 | 四个 SiliconFlow endpoint、三个 repeats、零 replacement；wall-clock 用完整 root lifecycle，不用 first dispatch 代替 root start |
+| Experiment 5 | 指标权威第 6 节 | 四个 SiliconFlow endpoint、只运行repeat0、零 replacement；Full为Factorization hard前28与Lean hard三个topic各前3。wall-clock 用完整 root lifecycle，不用 first dispatch 代替 root start；已解析但未到verification边界的已标记事实只由Slim-local reducer按null规则读取，不补造验证 |
 
 当前权威保留 cost。实现使用独立的普通 pricing projector：保存 provider 原始 cache/prompt/completion usage、provider request start、`pricing_version/pricing_tier` 与 `cost_estimate_cny`，reducer 只聚合。API 调用、调度和恢复路径均不需要 budget、reservation 或 stop gate。
 
@@ -213,7 +213,7 @@ call_ai(entry, prompt, timeout_seconds, max_tokens, require_json_mode)
 |---|---|---|
 | 文本身份 | `experiment_id`、`condition_id`、`case_id`、`repeat_id`、domain、difficulty/topic、model、worker count、mode、fault type/rate | 分组、配对、恢复跳过 |
 | root 结果 | root status、是否产生最终结果、领域正确性判断、failure stage/kind/origin | completion、端到端正确率、设施无效cell、failure breakdown |
-| 时间 | `root_start_at_ms`、`root_terminal_at_ms`、`runtime_wall_clock_ms`；在线调用另存 `provider_request_started_at_utc` 与 `provider_latency_ms` | Exp1/5 真实时间、Exp2 speedup、Exp3/4 逻辑 delta、DeepSeek 峰/谷价格选择 |
+| 时间 | `root_start_at_ms`、`root_terminal_at_ms`、`runtime_wall_clock_ms`；在线调用另存 `provider_request_started_at_utc` 与 `provider_latency_ms` | Exp1/5 真实时间、Exp2 speedup、Exp3/4 逻辑 delta；`provider_request_started_at_utc` 仅为历史 `deepseek-v4-pro` 事实选择峰/谷价格，前向 `deepseek-v4-flash` 为 flat，不得按请求时间选择 tier |
 | usage/价格 | 每 attempt 的 prompt/cache-hit/cache-miss/completion/reasoning/total tokens、`pricing_version/pricing_tier/cost_estimate_cny`；reasoning 是 completion 子集；标记 `actual` 或 `simulated trace-attributed` | token/cost totals、paired multiplier/delta、discarded resources；禁止 reasoning 双算 |
 | unit/调度 | planned/executed/unscheduled unit count、observed peak concurrency、in-flight-at-witness、每 unit source latency | Exp2 解释性并发与自然早停 |
 | attempt | `unit_id`、`attempt_id`、ordinal、result kind、是否 first/replacement、关联的 prior attempt/fault、是否 checkable/accepted/rejected/canonical | Exp3 replacement/reassignment、Exp5 first-attempt 指标 |
@@ -304,4 +304,4 @@ provider 没返回 usage 时对应 token 字段必须保存为 `null`，不能�
 - `codex/slim-v2-baseline` 从 `main` 的 `c963d7f8b9cc2346267279170740910a42de54fd` 建立。清单点名的 39 个公开符号全部可从 baseline 导入；transport、logical scheduler、recovery、coordinator、worker death、Factorization runtime 和 Lean runtime focused suite 为 `81 passed`。
 - 本清单中的 85 个 `path:line[-line]` 代码跨度均已对固定 archive SHA 执行 `git show` 越界/歧义审计，36 个关键公开符号的点名行也逐项匹配；Slim harness 定向测试为 `25 passed`。
 - baseline初始复用审计没有发现缺口；但Task 4在修正`all_true_divisor_ranges` fixture后以fresh focused test实证一个新的shared timing gap：recovery后先replacement、normal merge hook太晚，使M无法观察unsatisfied gate。用户已直接批准结构旁路，第二轮三名reviewer以`3/3 RECOVERY_MERGE_FIRST + authorize=yes`冻结`slim_v2_exp4_structural_bypass_design.md`第8.2节的最小shared范围。该后续证据取代初始无缺口状态结论，但不否定本清单其他初始复用事实。
-- 本轮没有调用真实 API，没有运行 R52/R53/R54、Full 或 LeanAudit，也没有读取历史运行证据。本文仍只是一份支持性复用清单，不冻结 Slim V2 的最终接口和设计规格。官方价格来源见 `Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md`。
+- 本轮没有调用真实 API，没有运行 R52/R53/R54、Full 或 LeanAudit，也没有读取历史运行证据。本文仍只是一份支持性复用清单，不冻结 Slim V2 的最终接口和设计规格。前向 Flash 价格来源见 `Doc/SlimV2/slim_v2_flash_pricing_source_20260823.md`；`slim_v2_official_pricing_sources_20260820.md` 仅保留为 Experiment 5 与旧 Pro 事实的历史来源。

@@ -519,7 +519,6 @@ def _materialize_golden(run_dir: Path) -> None:
         "zai-org/GLM-5.2",
         "Qwen/Qwen3-14B",
         "MiniMaxAI/MiniMax-M2.5",
-        "Pro/deepseek-ai/DeepSeek-V3",
     )
     for index, endpoint in enumerate(endpoints):
         inventory = _inventory(
@@ -771,6 +770,166 @@ def test_reduce_run_golden_all_experiments_and_io_boundary(
         for module in imported
         for banned in ("runtime", "provider", "checker", "scenarios", "execution")
     )
+
+
+def test_exp5_v4_reference_table_keeps_live_latency_and_omits_reused_latency(
+    tmp_path: Path,
+) -> None:
+    """补充表只带入 V4 的质量/资源事实，绝不将 Exp1 时间伪装为 Exp5。"""
+
+    from tokenshare.experiments.slim_v2.reducer import (
+        reduce_exp5_with_exp1_v4_reference,
+    )
+
+    target = RunStore(tmp_path / "exp5-target")
+    source = RunStore(tmp_path / "exp1-flash-source")
+    case_id = "shared-factor-case"
+    models = (
+        "zai-org/GLM-5.2",
+        "Qwen/Qwen3-14B",
+        "MiniMaxAI/MiniMax-M2.5",
+    )
+    target_roots = [
+        _inventory(
+            "exp5",
+            f"target-{ordinal}",
+            case_id,
+            configured_model=model,
+        )
+        for ordinal, model in enumerate(models)
+    ]
+    target.write_frozen_inventories(
+        conditions=[], roots=target_roots, exp3_references=[], exp4_challenges=[]
+    )
+    for ordinal, root in enumerate(target_roots, start=1):
+        target.write_root_result(
+            _result(
+                root,
+                runtime_ms=ordinal * 10,
+                attempt=_attempt("exp5", total_tokens=100 * ordinal, cost=float(ordinal)),
+            )
+        )
+
+    source_root = _inventory(
+        "exp1",
+        "flash-source",
+        case_id,
+        configured_model="deepseek-v4-flash",
+    )
+    source.write_frozen_inventories(
+        conditions=[], roots=[source_root], exp3_references=[], exp4_challenges=[]
+    )
+    source.write_root_result(
+        _result(
+            source_root,
+            runtime_ms=999,
+            attempt=_attempt("exp1", total_tokens=777, cost=7.77),
+        )
+    )
+
+    summary = reduce_exp5_with_exp1_v4_reference(target.run_dir, source.run_dir)
+
+    assert summary["row_count"] == 4
+    output = target.run_dir / "metrics" / "supplemental"
+    rows = _read_rows(output / "exp5_with_exp1_v4_reference.jsonl")
+    assert len(rows) == 4
+    assert (output / "exp5_with_exp1_v4_reference.csv").is_file()
+    live = {row["configured_model"]: row for row in rows if row["observation_origin"] == "exp5_live"}
+    assert set(live) == set(models)
+    assert [live[model]["repeat0_wall_clock_ms"] for model in models] == [10, 20, 30]
+    assert [live[model]["actual_first_attempt_total_tokens"] for model in models] == [100, 200, 300]
+
+    reused = next(row for row in rows if row["observation_origin"] == "exp1_reused_actual")
+    assert reused["configured_model"] == "deepseek-v4-flash"
+    assert reused["source_experiment_id"] == "exp1"
+    assert reused["actual_first_attempt_total_tokens"] == 777
+    assert reused["actual_first_attempt_cost_estimate_cny"] == pytest.approx(7.77)
+    for field in reused["wall_clock_field_names"]:
+        assert reused[field] is None
+        assert reused["not_applicable_reasons"][field] == "not_applicable_or_unavailable"
+    assert not (target.run_dir / "metrics" / "summary.json").exists()
+    assert not (target.run_dir / "metrics" / "tables" / "exp5.jsonl").exists()
+
+
+def _write_exp5_v4_reference_boundary_inputs(
+    tmp_path: Path,
+    *,
+    source_case_id: str = "shared-factor-case",
+    source_attempt_ordinal: int = 0,
+) -> tuple[RunStore, RunStore]:
+    """写入最小 ordinary 输入，以验证补充表在越界来源事实下 fail closed。"""
+
+    target = RunStore(tmp_path / "exp5-target")
+    source = RunStore(tmp_path / "exp1-flash-source")
+    models = (
+        "zai-org/GLM-5.2",
+        "Qwen/Qwen3-14B",
+        "MiniMaxAI/MiniMax-M2.5",
+    )
+    target_roots = [
+        _inventory(
+            "exp5", f"target-{ordinal}", "shared-factor-case",
+            configured_model=model,
+        )
+        for ordinal, model in enumerate(models)
+    ]
+    target.write_frozen_inventories(
+        conditions=[], roots=target_roots, exp3_references=[], exp4_challenges=[]
+    )
+    for root in target_roots:
+        target.write_root_result(_result(root, attempt=_attempt("exp5")))
+
+    source_root = _inventory(
+        "exp1", "flash-source", source_case_id,
+        configured_model="deepseek-v4-flash",
+    )
+    source.write_frozen_inventories(
+        conditions=[], roots=[source_root], exp3_references=[], exp4_challenges=[]
+    )
+    source_attempt = _attempt("exp1")
+    source_attempt.attempt_ordinal = source_attempt_ordinal
+    source.write_root_result(_result(source_root, attempt=source_attempt))
+    return target, source
+
+
+def test_exp5_v4_reference_rejects_source_target_case_set_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Flash source 不能遗漏或替换任一 Exp5 case。"""
+
+    from tokenshare.experiments.slim_v2.reducer import (
+        reduce_exp5_with_exp1_v4_reference,
+    )
+
+    target, source = _write_exp5_v4_reference_boundary_inputs(
+        tmp_path, source_case_id="different-factor-case"
+    )
+
+    with pytest.raises(ValueError, match="source and target case sets must match exactly"):
+        reduce_exp5_with_exp1_v4_reference(target.run_dir, source.run_dir)
+
+    assert not (target.run_dir / "metrics" / "supplemental").exists()
+
+
+def test_exp5_v4_reference_rejects_source_provider_retry(
+    tmp_path: Path,
+) -> None:
+    """Flash source 中任何 ordinal>0 的真实调用都不具备补充比较资格。"""
+
+    from tokenshare.experiments.slim_v2.reducer import (
+        reduce_exp5_with_exp1_v4_reference,
+    )
+
+    target, source = _write_exp5_v4_reference_boundary_inputs(
+        tmp_path, source_attempt_ordinal=1
+    )
+
+    with pytest.raises(
+        ValueError, match="source Exp1 Flash results must not contain ordinal>0 provider calls"
+    ):
+        reduce_exp5_with_exp1_v4_reference(target.run_dir, source.run_dir)
+
+    assert not (target.run_dir / "metrics" / "supplemental").exists()
 
 
 def test_duplicate_inventory_blocks_reduction_before_atomic_replacement(
@@ -1617,6 +1776,162 @@ def test_exp5_infrastructure_invalid_cell_keeps_missing_usage_null(
     for metric in ("actual_total_tokens", "actual_cost_estimate_cny"):
         assert row[metric] is None
         assert row["missing_reasons"][metric] == "usage_missing"
+
+
+def test_exp5_parsed_unsubmitted_attempt_nulls_only_nonpass_quality_metrics(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp5-parsed-unsubmitted")
+    root = _inventory(
+        "exp5",
+        "parsed-unsubmitted-model",
+        "parsed-unsubmitted-case",
+        configured_model="zai-org/GLM-5.2",
+    )
+    attempt = _attempt("exp5")
+    attempt.result_kind = "parsed"
+    attempt.parse_result = "parsed"
+    attempt.verifier_result = None
+    attempt.checker_result = None
+    attempt.canonical_accepted = False
+    attempt.missing_reason["attempts[].verifier_result"] = (
+        "not_applicable_or_unavailable"
+    )
+    attempt.validate(experiment_id="exp5")
+    store.write_frozen_inventories(
+        conditions=[], roots=[root], exp3_references=[], exp4_challenges=[]
+    )
+    store.write_root_result(
+        _result(root, final=False, verified=False, attempt=attempt)
+    )
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp5.jsonl")[0]
+    assert row["actual_first_provider_attempt_count"] == 1
+    assert row["first_attempt_call_coverage"] == 1.0
+    assert row["actual_total_tokens"] == 100
+    assert row["actual_cost_estimate_cny"] == pytest.approx(1.0)
+    assert row["first_attempt_provider_transport_failure_count"] == 0
+    assert row["first_attempt_parse_schema_unusable_count"] == 0
+    assert row["first_attempt_verification_checker_rejection_count"] == 0
+    assert row["first_attempt_checkable_candidate_count"] == 0
+    assert row["first_attempt_explicitly_rejected_by_verifier_count"] == 0
+    for metric in (
+        "first_attempt_without_verifier_accepted_candidate_count",
+        "first_attempt_nonpass_rate",
+    ):
+        assert row[metric] is None
+        assert row["not_applicable_reasons"][metric] == (
+            "not_applicable_or_unavailable"
+        )
+    for suffix in (
+        "ci95_low",
+        "ci95_high",
+        "bootstrap_variance",
+        "bootstrap_standard_error",
+    ):
+        assert row[f"first_attempt_nonpass_rate_{suffix}"] is None
+    assert row["metric_metadata"]["first_attempt_nonpass_rate"][
+        "missing_reason"
+    ] == "not_applicable_or_unavailable"
+    assert row["first_attempt_verification_rejection_rate"] is None
+    assert row["missing_reasons"]["first_attempt_verification_rejection_rate"] == (
+        "zero_denominator"
+    )
+
+
+def test_exp5_parsed_unsubmitted_does_not_pollute_verification_rate_bootstrap(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp5-parsed-unsubmitted-bootstrap")
+    roots = [
+        _inventory(
+            "exp5",
+            "parsed-unsubmitted-bootstrap-model",
+            f"parsed-unsubmitted-bootstrap-case-{index}",
+            configured_model="zai-org/GLM-5.2",
+        )
+        for index in range(6)
+    ]
+    parsed = _attempt("exp5")
+    parsed.result_kind = "parsed"
+    parsed.parse_result = "parsed"
+    parsed.verifier_result = None
+    parsed.checker_result = None
+    parsed.canonical_accepted = False
+    parsed.missing_reason["attempts[].verifier_result"] = (
+        "not_applicable_or_unavailable"
+    )
+    parsed.validate(experiment_id="exp5")
+    results = [_result(roots[0], final=False, verified=False, attempt=parsed)]
+    for index, root in enumerate(roots[1:], start=1):
+        attempt = _attempt("exp5")
+        if index in {2, 4}:
+            attempt.verifier_result = "rejected"
+            attempt.canonical_accepted = False
+            attempt.validate(experiment_id="exp5")
+            results.append(_result(root, final=False, verified=False, attempt=attempt))
+        else:
+            results.append(_result(root, attempt=attempt))
+    store.write_frozen_inventories(
+        conditions=[], roots=roots, exp3_references=[], exp4_challenges=[]
+    )
+    for result in results:
+        store.write_root_result(result)
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp5.jsonl")[0]
+    metric = "first_attempt_verification_rejection_rate"
+    assert row[metric] == pytest.approx(2 / 5)
+    for suffix in (
+        "ci95_low",
+        "ci95_high",
+        "bootstrap_variance",
+        "bootstrap_standard_error",
+    ):
+        assert row[f"{metric}_{suffix}"] is not None
+    assert row["metric_metadata"][metric]["case_cluster_count"] == 5
+    assert row["metric_metadata"][metric]["valid_bootstrap_replicate_count"] == (
+        10_000
+    )
+
+
+def test_exp5_single_repeat_keeps_wall_clock_summary_schema(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp5-single-repeat")
+    root = _inventory(
+        "exp5",
+        "single-repeat-model",
+        "single-repeat-case",
+        configured_model="zai-org/GLM-5.2",
+    )
+    store.write_frozen_inventories(
+        conditions=[], roots=[root], exp3_references=[], exp4_challenges=[]
+    )
+    store.write_root_result(_result(root, runtime_ms=25, attempt=_attempt("exp5")))
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp5.jsonl")[0]
+    assert row["repeat0_wall_clock_ms"] == 25
+    assert row["repeat1_wall_clock_ms"] is None
+    assert row["repeat2_wall_clock_ms"] is None
+    for metric in ("repeat1_wall_clock_ms", "repeat2_wall_clock_ms"):
+        assert row["not_applicable_reasons"][metric] == (
+            "not_applicable_or_unavailable"
+        )
+    assert row["repeat_wall_clock_ms"] == [25]
+    assert row["model_wall_clock_median_ms"] == 25
+    assert row["model_wall_clock_min_ms"] == 25
+    assert row["model_wall_clock_max_ms"] == 25
+    assert row["model_wall_clock_range_ms"] == 0
+    assert row["model_wall_clock_sample_stddev_ms"] is None
+    assert row["missing_reasons"]["model_wall_clock_sample_stddev_ms"] == (
+        "insufficient_observations_for_sample_variance"
+    )
 
 
 def test_exp4_normal_retry_exhaustion_remains_scientifically_valid(tmp_path: Path) -> None:

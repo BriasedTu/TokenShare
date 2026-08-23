@@ -19,7 +19,25 @@ RUN_CONFIG_SCHEMA_VERSION = "tokenshare.slim_v2.run_config.v1"
 ROOT_INVENTORY_SCHEMA_VERSION = "tokenshare.slim_v2.root_inventory.v1"
 UNIT_TRACE_SCHEMA_VERSION = "tokenshare.slim_v2.unit_trace.v1"
 ROOT_RESULT_SCHEMA_VERSION = "tokenshare.slim_v2.root_result.v2"
-PRICING_VERSION = "slim_v2.pricing.2026-08-20"
+# 前向 Experiment 1 与 Experiment 5 使用不同且不可变的价格版本。
+PRICING_VERSION = "slim_v2.pricing.2026-08-23"
+LEGACY_PRICING_VERSION = "slim_v2.pricing.2026-08-20"
+PRICING_VERSIONS = {
+    "exp1": PRICING_VERSION,
+    "exp5": LEGACY_PRICING_VERSION,
+}
+# 该事实 cohort 只允许在 2026-08-23 前向切换后的窄恢复路径中读取。
+PRE_FLASH_REPRESENTATIVE_RUN_ID = (
+    "slim-v2-representative-real-20260822-144900-ef9128fe"
+)
+PRE_FLASH_EXP2_ROOT_KEY = (
+    "exp2",
+    "exp2|worker=1|repeat=0|position=late",
+    "factor_v2_hard_138",
+    0,
+)
+PRE_FLASH_PROVIDER_ENTRY_ID = "deepseek_v4_pro_exp1_baseline"
+PRE_FLASH_CONFIGURED_MODEL = "deepseek-v4-pro"
 
 _OPERATIONAL = "operational"
 _CALL_STATES = frozenset({"not_started", "in_flight", "terminal"})
@@ -992,7 +1010,9 @@ class SlimRunConfigV1(SchemaRecordV1):
         _EXP5_PROVIDER_CONFIG_PATH
     )
     local_secret_config_path: str = _required(_LOCAL_SECRET_CONFIG_PATH)
-    pricing_version: str = _required(PRICING_VERSION)
+    pricing_versions: dict[str, str] = _required_factory(
+        lambda: dict(PRICING_VERSIONS)
+    )
     ordinary_parallel_backend_kind: str = _required("thread")
     response_max_bytes: int = _required(_RESPONSE_MAX_BYTES)
     reducer_workers: int = _required(1)
@@ -1022,8 +1042,10 @@ class SlimRunConfigV1(SchemaRecordV1):
         for field_name, expected in frozen_paths.items():
             if getattr(self, field_name) != expected:
                 raise SchemaValidationError(f"{field_name} must equal its frozen path")
-        if self.pricing_version != PRICING_VERSION:
-            raise SchemaValidationError("pricing_version is not frozen Slim V2 pricing")
+        if self.pricing_versions != PRICING_VERSIONS:
+            raise SchemaValidationError(
+                "pricing_versions must equal frozen Slim V2 mappings"
+            )
         frozen_limits = {"response_max_bytes": _RESPONSE_MAX_BYTES}
         for field_name, expected in frozen_limits.items():
             value = getattr(self, field_name)
@@ -1661,7 +1683,13 @@ class RootResultV2(SchemaRecordV1):
 
 __all__ = [
     "ACTUAL_PROVIDER_FIELDS",
+    "LEGACY_PRICING_VERSION",
+    "PRE_FLASH_CONFIGURED_MODEL",
+    "PRE_FLASH_EXP2_ROOT_KEY",
+    "PRE_FLASH_PROVIDER_ENTRY_ID",
+    "PRE_FLASH_REPRESENTATIVE_RUN_ID",
     "PRICING_VERSION",
+    "PRICING_VERSIONS",
     "ROOT_INVENTORY_SCHEMA_VERSION",
     "ROOT_RESULT_SCHEMA_VERSION",
     "RUN_CONFIG_SCHEMA_VERSION",

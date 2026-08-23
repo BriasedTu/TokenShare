@@ -299,6 +299,25 @@ def _replace_natural_source_attempt_with_failure(
     source_store.write_trace(failed_trace)
 
 
+def _replace_source_attempt_latency(
+    *,
+    source_store: RunStore,
+    case_id: str,
+    planned_ai_unit_id: str,
+    latency_ms: int,
+) -> None:
+    """在临时 source fixture 中制造跨 lease 的真实逻辑延迟。"""
+
+    trace = source_store.read_trace(case_id, 0, planned_ai_unit_id)
+    delayed_trace = replace(
+        trace,
+        attempts=[replace(trace.attempts[0], provider_latency_ms=latency_ms)],
+    )
+    delayed_trace.validate()
+    source_store.trace_path(case_id, 0, planned_ai_unit_id).unlink()
+    source_store.write_trace(delayed_trace)
+
+
 def _run_factor_scenario(
     tmp_path: Path,
     *,
@@ -308,6 +327,7 @@ def _run_factor_scenario(
     challenge_plan: ChallengePlanV1 | None = None,
     process_timeout_seconds: float = 30.0,
     before_run: Callable[[object], None] | None = None,
+    continue_after_terminal_child_failure: bool = True,
 ):
     root = tmp_path / f"{inventory.experiment_id}-{inventory.mode or inventory.fault_type or inventory.worker_count}"
     artifact_store = ArtifactStore(root)
@@ -343,6 +363,7 @@ def _run_factor_scenario(
         hooks=scenario.hooks,
         logical_scheduler=scenario.logical_scheduler,
         trace_delay_policy="logical_source_latency_1x",
+        continue_after_terminal_child_failure=continue_after_terminal_child_failure,
         scenario=scenario,
     )
     if before_run is not None:
@@ -464,6 +485,66 @@ def test_exp2_six_workers_use_thread_facts_logical_time_and_early_stop(
     assert [row.worker_count for row in rows] == [1, 3, 7, 10, 30, 50]
     assert all(row.worker_execution_facts for row in rows)
     assert all(row.observed_peak_concurrency <= row.worker_count for row in rows)
+
+
+def test_exp2_lease_expiry_rejected_succeeded_submission_is_projectable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case, source_store, transport = _acquire_factor_source(tmp_path, monkeypatch)
+    source_transport_count = len(transport.responses)
+    _replace_source_attempt_latency(
+        source_store=source_store,
+        case_id=str(case["case_id"]),
+        planned_ai_unit_id="range_0",
+        latency_ms=625_812,
+    )
+    inventory = _inventory(
+        experiment_id="exp2",
+        case=case,
+        domain="factorization",
+        worker_count=1,
+    )
+
+    scenario, assembly, protocol, row = _run_factor_scenario(
+        tmp_path / "lease-expiry",
+        inventory=inventory,
+        case=case,
+        source_store=source_store,
+        continue_after_terminal_child_failure=False,
+    )
+
+    delayed_attempt_ids = {
+        item.attempt_id
+        for item in scenario.submission_adapter.attempts
+        if item.planned_ai_unit_id == "range_0"
+    }
+    submissions = [
+        event
+        for event in assembly.event_ledger.read_all()
+        if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+        and event.payload.get("attempt_id") in delayed_attempt_ids
+    ]
+    assert protocol.status == "failed"
+    assert len(submissions) == 3
+    assert all(
+        event.payload.get("acceptance_status") == "rejected"
+        and event.payload.get("result_kind") == "succeeded"
+        and event.payload.get("rejection_reason") == "lease_deadline_exceeded"
+        for event in submissions
+    )
+    assert any(
+        event.event_type == EventType.RECOVERY_ACTION_RECORDED
+        and event.payload["recovery_action"].get("trigger") == "lease_expired"
+        and event.payload["recovery_action"].get("new_task_state") == "Failed"
+        for event in assembly.event_ledger.read_all()
+    )
+    assert len(transport.responses) == source_transport_count
+    assert protocol.summary["terminal_failure"]["failure_stage"] == "candidate_acquisition"
+    assert protocol.summary["terminal_failure"]["failure_origin"] == "provider_transport_exhausted"
+    assert row.failure_stage == "candidate_acquisition"
+    assert row.failure_kind == "no_final"
+    assert row.failure_origin == "provider_transport_exhausted"
 
 
 def test_thread_backend_preserves_lean_fixed_dag_checker_and_canonical_facts(

@@ -174,11 +174,11 @@ Slim projector 只把失败映射到冻结顶层 `failure_kind=no_final/incorrec
 
 ### 5.4 普通价格投影
 
-- 唯一价格版本为 `slim_v2.pricing.2026-08-20`；数值、峰/谷区间、四个 SiliconFlow endpoint 和 reasoning 归属严格读取指标权威第 1.4 节，不复用旧 config pricing digest 或 budget authority。
-- DeepSeek 用每个 attempt 的 `provider_request_started_at_utc` 转为 `Asia/Shanghai` 后选择 `peak/off_peak`；SiliconFlow `pricing_tier=flat`。projector 保存 `pricing_version/pricing_tier/cost_estimate_cny`，reducer只求和。
+- 价格版本按实际 attempt 固定：前向 Experiment 1 为 `slim_v2.pricing.2026-08-23` 的 Flash flat 表，Experiment 5 为 `slim_v2.pricing.2026-08-20` 的 SiliconFlow flat 表；数值和 reasoning 归属严格读取指标权威第 1.4 节，不复用旧 config pricing digest 或 budget authority。
+- Flash 与 SiliconFlow 均写 `pricing_tier=flat`。Flash 的 `provider_request_started_at_utc` 仍保存为调用事实，但不选择峰/谷档；projector 保存 `pricing_version/pricing_tier/cost_estimate_cny`，reducer只求和。2026-08-23 前 exact run 已写入的 Pro tier/version 只可原样恢复，不能重价。
 - DeepSeek 与存在独立 cache 价的 SiliconFlow endpoint 缺 cache hit/miss 分项时 cost 为 `null`；Qwen3-14B 没有独立 cache 价，全部 prompt tokens 按 input 价计算，不能把官网的未列价解释为免费。
 - `reasoning_tokens` 只用于诊断拆分，已包含在 `completion_tokens` 中。实际成本与 Exp3 模拟成本都只对完整 completion/output 计一次。
-- 官方页面来源摘要为 `Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md`；实现与 run 不联网更新价格。后续若用户批准新价格，只能创建新的普通 `pricing_version`，不能静默改写已经启动的 run。
+- 前向 Flash 价格来源为用户直接记录 `Doc/SlimV2/slim_v2_flash_pricing_source_20260823.md`；`Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md` 只保留 Experiment 5 与旧 Pro 事实。实现与 run 不联网更新价格。后续若用户批准新价格，只能创建新的普通 `pricing_version`，不能静默改写已经启动的 run。
 
 ## 6. 实验场景接线
 
@@ -278,8 +278,10 @@ policy布尔值只描述配置，不能证明实际机制被删除。结构路�
 
 - 每个 model condition 使用只含该目标 entry 的 config view；请求控制按第一份文档冻结。
 - `ProtocolConfig.max_retries=0`，`ProtocolMechanismPolicy(replacement_attempts_allowed=false)`。
+- Full固定为Factorization hard前28与Lean hard三个topic各前3，共37 roots/model，只运行`repeat_id=0`；四model×四stratum形成16 conditions、148 root-runs和1,136个planned ordinal-0调用上限。Experiment 1–4不因本项缩容改变。
 - 每个 AI unit 的 ordinal=0 provider call 是唯一 provider attempt；自然早停造成的未调用 units保留为 planned-but-unscheduled。
 - 四个 endpoint 都使用 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 平价表；provider raw usage 中的 reasoning 只作 completion 子集诊断，不重复计价。
+- 对已终止 protocol 中已经持久化的`2xx + raw + parsed` provider attempt，若`verifier_result/checker_result`均为null并带既有`not_applicable_or_unavailable`原因，reducer只能读取为未到达 verification 的不可评估事实：不得补造submission、verification、canonical或failure reason，不得重发provider/Lean调用，也不得改写root/call/response。它仍保留实际调用、coverage与资源事实；依赖“未通过”判断的Exp5 quality指标按指标权威第6.2.1节写null。
 
 ## 7. 最小原始字段到实际系统来源的映射
 
@@ -500,7 +502,7 @@ append exactly one normalized root JSONL row
 - 已冻结：Experiment 3 fault target、ordinal 0 注入、五类动作、token/latency perturbation 与 simulated 指标严格按指标权威第 4.2–4.4 节；不得由旧 fault 代码反向定义。
 - 已冻结：roots 串行，root timing 由协议生命周期开始/终止及其差值定义；worker first-start 不是 root start。Exp1 tail 位于两个 roots 之间，正文批次 wall-clock 使用 protocol runtime 之和，tail wall 单列。
 - 已冻结：真实 provider 边界是能力合同，不要求采用旧 `AIAPIExecutor`；Slim 可用薄 caller/bridge 复用底层 transport/parser。
-- 已冻结：价格版本为 `slim_v2.pricing.2026-08-20`；DeepSeek 峰/谷、SiliconFlow 四 endpoint 与 reasoning-as-completion-subset 口径按指标权威第 1.4 节，普通 pricing projector 不构成预算或 gate。
+- 已冻结：前向 Experiment 1 使用 `slim_v2.pricing.2026-08-23` 的 `deepseek-v4-flash` flat 表，Experiment 5 使用 `slim_v2.pricing.2026-08-20` 的四个 SiliconFlow endpoint 平价表；reasoning-as-completion-subset 口径按指标权威第 1.4 节，普通 pricing projector 不构成预算或 gate。2026-08-23 前 exact run 的 Pro 事实只原样保留，不作为前向默认值。
 - 已冻结：除 Experiment 2 的六档 worker 外，Experiment 1、3、4、5 的 `worker_count=10`。
 - 已冻结：Experiment 2/3 在线检查退出 Slim V2，不存在待选 case IDs。
 - 已冻结：Experiment 4采用`slim_v2_exp4_structural_bypass_design.md`的四类实际调用前旁路；`{R,M}`为`RECOVERY_MERGE_FIRST`，M抢先时R-stuck=false；checker未到达为`reached=false/pass=null`，projector不从mode、processing或`not verified_correct`反推事实。

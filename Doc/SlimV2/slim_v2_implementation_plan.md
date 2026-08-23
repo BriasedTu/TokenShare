@@ -277,12 +277,12 @@ CLI/profile/case
 
 ### Experiment 5
 
-1. 每model condition显式解析四个冻结SiliconFlow entry之一，按`ABCD/BDAC/CADB`顺序运行。
+1. 每model condition显式解析四个冻结SiliconFlow entry之一；Full只运行`repeat0`，按`ABCD`顺序运行。
 2. worker执行unit时才调用与Experiment 1相同的bounded caller和submission adapter；`max_retries=0,replacement_attempts_allowed=false`。
 3. 现有Factorization/Lean parser、checker、canonical、merge/root recheck决定结果；configured/requested/resolved model写入普通attempt/root记录。
 4. root结果原子落盘，不运行coverage tail。
 
-外部调用只发生在实际调度的ordinal 0 unit；Full上限4,992，Representative上限32。全Full真实provider hard cap为10,902，Representative总cap为89。
+外部调用只发生在实际调度的ordinal 0 unit；Full固定Factorization前28与Lean三个topic各前3，共37 roots/model，调用上限1,136；Representative上限32。全Full真实provider hard cap为7,046，Representative总cap为89。
 
 ## 7. Run目录和数据生命周期
 
@@ -446,7 +446,7 @@ conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.p
 - 继承的`schema.py/case_source.py/profiles.py/cli.py`成果已按Task 1真实`RootResultV1`纵链校准；新增`storage.py`后，`build_inventory → RootInventoryV1 → inventory/*.jsonl → typed read → Task 1 projector`闭合。Factorization planned IDs使用经catalog count校验的`range_N`，Lean使用`dependency_order`；四个冻结inventory逐文件原子写，重复同规范内容为`skipped`，冲突立即停止且不覆盖已committed文件。
 - 首轮storage/inventory fail-first分别为`3 failed, 6 deselected in 0.29s`与`1 failed in 0.32s`；typed inventory纵链补强RED为`1 failed in 0.27s`。质量review发现的3个Important与3个Minor补强RED为`4 failed, 2 passed in 0.63s`，随后全部关闭。
 - `SlimRunConfigV1`已收窄为设计规格7.2的12个普通字段，`ordinary_parallel_backend_kind="thread"`、`reducer_workers=1`和16 MiB response上限固定，不含日志轮转framework；`select_trace_attempt`只接收并验证typed连续自然ordinal的`UnitTraceV1`。resume只扫精确committed文件名，不repair、compaction或重建协议状态。
-- 冻结profile复核：Full roots/executions=`7,554/7,660`；Exp3 rate/death/planned/upper=`13,920/2,808/16,728/52,992`，references=`468/1,404`；Exp4 planned/upper=`9,669/15,822`且每mode/repeat=`293`；Exp5顺序=`ABCD/BDAC/CADB`。Representative roots/executions/cap=`72/74/89`、Exp3=`42/16/58/190`、Exp4=`209/342`。Exp4 195个challenge的配额=`49/49/48/49`，Factorization composite/prime与Lean delay target均按authority冻结。
+- 冻结profile复核（2026-08-23缩容前的历史证据）：Full roots/executions=`7,554/7,660`；Exp3 rate/death/planned/upper=`13,920/2,808/16,728/52,992`，references=`468/1,404`；Exp4 planned/upper=`9,669/15,822`且每mode/repeat=`293`；Exp5当时顺序=`ABCD/BDAC/CADB`。当前有效规模、顺序和上限以指标权威第6节及本计划第6章Experiment 5条为准。Representative roots/executions/cap=`72/74/89`、Exp3=`42/16/58/190`、Exp4=`209/342`。Exp4 195个challenge的配额=`49/49/48/49`，Factorization composite/prime与Lean delay target均按authority冻结。
 - spec reviewer最终独立复跑为`28 passed in 1.17s`，并重算Full/Representative inventory、153 metric records与168 authority leaves，结论`Critical/Important/Minor/out_of_scope_by_user=0/0/0/0`；implementation-quality reviewer独立复跑为`28 passed in 1.18s`，结论`APPROVED`且`Critical/Important/Minor=0/0/0`。
 - owner最终fresh focused验证为`28 passed in 1.39s`，`git diff --check`通过；provider/network=`0/0`，该Task 2 profile/runtime范围当时未发现shared gap。后续Task 4的recovery-premerge gap见Task 4第11项。未运行representative/full、Lean专项suite、LeanAudit、catalog全量、`lake`或`lean`。
 
@@ -772,7 +772,7 @@ review只在三个里程碑触发：
 - Experiment 2–4 provider calls精确为0，source显式、无transport fallback；
 - Experiment 1 tail不修改正文runtime/status/attempt，Exp5不运行tail；
 - schema与metrics authority保持153/153，reducer固定分母、pair/quadruple/bootstrap/null传播正确；
-- Representative冻结为72论文roots、74 executions、provider hard cap 89；Full为7,554论文roots、7,660 executions、provider hard cap 10,902；Exp3/4 corrected upper均由逐root inventory公式得出；
+- Representative冻结为72论文roots、74 executions、provider hard cap 89；Full为7,054论文roots、7,160 executions、provider hard cap 7,046；Exp3/4 corrected upper均由逐root inventory公式得出；
 - resume跳过committed root/trace/terminal call，不重复同ordinal付费；unknown transport诚实记录；
 - `plan`、source/secret/model/disk preflight和全离线E2E通过；Representative与Full共享同一路径；preflight仅防技术失控、磁盘耗尽和重复调用，不包含价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness，价格表变化不得阻止实验；
 - Windows双击`run_slim_v2.cmd`可打开薄参数选择窗口；窗口能选择`representative/full`和Exp1–5/all，精确生成并运行同一CLI argv，Exp2–4 source显式、单CLI子进程、无隐式provider/重试/fallback/第二runner；
