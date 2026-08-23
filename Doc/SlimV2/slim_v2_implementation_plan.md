@@ -293,12 +293,12 @@ CLI/profile/case
 
 ### Experiment 5
 
-1. 每model condition显式解析四个冻结SiliconFlow entry之一；Full只运行`repeat0`，按`ABCD`顺序运行。
+1. 每model condition显式解析三个冻结SiliconFlow entry（GLM、Qwen、MiniMax）之一；Full只运行`repeat0`，按该固定顺序运行。
 2. worker执行unit时才调用与Experiment 1相同的bounded caller和submission adapter；`max_retries=0,replacement_attempts_allowed=false`。
 3. 现有Factorization/Lean parser、checker、canonical、merge/root recheck决定结果；configured/requested/resolved model写入普通attempt/root记录。
 4. root结果原子落盘，不运行coverage tail。
 
-外部调用只发生在实际调度的ordinal 0 unit；Full固定Factorization前28与Lean三个topic各前3，共37 roots/model，调用上限1,136；Representative上限32。全Full真实provider hard cap为7,046，Representative总cap为89。
+外部调用只发生在实际调度的ordinal 0 unit；Full固定Factorization前28与Lean三个topic各前3，共37 roots/model，调用上限852；Representative Exp5上限24。Full真实provider hard cap为6,762，Representative总cap为81。
 
 ## 7. Run目录和数据生命周期
 
@@ -765,7 +765,7 @@ Representative inventory为Exp1 4、Exp2 12、Exp3 8+2 references、Exp4 44、Ex
 | Exp3恢复语义 | 五fault、ordinal0、replacement、death、reference | 4 | 不由Slim生成recovery/canonical |
 | Exp4真实消融 | mode-blind plan、11 modes、六四端组合 | 4 | 不离线拼接双机制结果 |
 | reducer统计 | 153 IDs、fixed denominator、pairs/quadruples/bootstrap/null | 5 | 不拆五套统计框架 |
-| CLI与恢复 | 显式source、roots串行、unknown、防重复、89 cap、离线E2E | 6 | 不隐式运行Exp1或更换source |
+| CLI与恢复 | 显式source、roots串行、unknown、防重复、81 cap、离线E2E | 6 | 不隐式运行Exp1或更换source |
 | 启动脚本图形包装漂移 | 2 profiles × Exp1–5/all参数映射、Exp2–4 source规则、单CLI子进程、launcher目标与provider=0 | 6 | 不测控件像素，不复制runner/preflight/resume |
 | preflight膨胀 | preflight输入/输出absence合同；成本投影缺失或变化不改变启动结论 | 6 | 不增加价格/余额/budget/人工批准/publication/evidence gate |
 
@@ -788,7 +788,7 @@ review只在三个里程碑触发：
 - Experiment 2–4 provider calls精确为0，source显式、无transport fallback；
 - Experiment 1 tail不修改正文runtime/status/attempt，Exp5不运行tail；
 - schema与metrics authority保持153/153，reducer固定分母、pair/quadruple/bootstrap/null传播正确；
-- Representative冻结为72论文roots、74 executions、provider hard cap 89；Full为7,054论文roots、7,160 executions、provider hard cap 7,046；Exp3/4 corrected upper均由逐root inventory公式得出；
+- Representative冻结为71论文roots、73 executions、provider hard cap 81；Full为7,017论文roots、7,123 executions、provider hard cap 6,762；Exp3/4 corrected upper均由逐root inventory公式得出；
 - resume跳过committed root/trace/terminal call，不重复同ordinal付费；unknown transport诚实记录；
 - `plan`、source/secret/model/disk preflight和全离线E2E通过；Representative与Full共享同一路径；preflight仅防技术失控、磁盘耗尽和重复调用，不包含价格/余额审批、budget authority、人工授权、publication readiness或evidence completeness，价格表变化不得阻止实验；
 - Windows双击`run_slim_v2.cmd`可打开薄参数选择窗口；窗口能选择`representative/full`和Exp1–5/all，精确生成并运行同一CLI argv，Exp2–4 source显式、单CLI子进程、无隐式provider/重试/fallback/第二runner；

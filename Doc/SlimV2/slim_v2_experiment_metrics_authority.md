@@ -654,7 +654,7 @@ Experiment 5 对每个 model endpoint 单独估计，不新增模型、题目或
 
 该表固定四行：三个 `observation_origin="exp5_live"` 行保留正式 Exp5 的质量、ordinal-0 实际 token/成本和各自真实 `repeat0_wall_clock_ms`；第四行固定为`configured_model="deepseek-v4-flash"`、`observation_origin="exp1_reused_actual"`，保留 Exp1 已发生的质量、ordinal-0 实际 token/原始成本和其原有 Flash 价格版本。V4 行的所有 wall-clock 字段必须为 `null + not_applicable_or_unavailable`，不得展示、换算或模拟其 Exp1 latency。
 
-调用前 reducer 必须确认 target 恰为上述三个 Exp5 repeat-0 模型且三者 case 集相同；source 对应 case 必须都是 committed `experiment_id="exp1"`、`configured_model="deepseek-v4-flash"`、`repeat_id=0`，并且没有任何 `attempt_ordinal>0` 的 provider call。source run 中不属于 target case 的 Exp1 roots 不进入该表。该表是明确 provenance 的跨实验参考，不是正式四模型 Exp5 endpoint comparison，不进入 153 个 formal metric occurrences、正文 Exp5 latency 比较或 summary。
+调用前 reducer 必须确认 target 恰为上述三个 Exp5 repeat-0 模型且三者 case 集相同；source 对应 case 必须都是 committed `experiment_id="exp1"`、`configured_model="deepseek-v4-flash"`、`repeat_id=0`，并且没有任何 `attempt_ordinal>0` 的 provider call。source run 中不属于 target case 的 Exp1 roots 不进入该表。该表是明确 provenance 的跨实验参考，不是正式三模型 Exp5 endpoint comparison，不进入 153 个 formal metric occurrences、正文 Exp5 latency 比较或 summary。
 
 ## 7. 仅诊断字段与已退出指标
 

@@ -510,7 +510,7 @@ append exactly one normalized root JSONL row
 - 已冻结：Experiment 3 fault target、ordinal 0 注入、五类动作、token/latency perturbation 与 simulated 指标严格按指标权威第 4.2–4.4 节；不得由旧 fault 代码反向定义。
 - 已冻结：roots 串行，root timing 由协议生命周期开始/终止及其差值定义；worker first-start 不是 root start。Exp1 tail 位于两个 roots 之间，正文批次 wall-clock 使用 protocol runtime 之和，tail wall 单列。
 - 已冻结：真实 provider 边界是能力合同，不要求采用旧 `AIAPIExecutor`；Slim 可用薄 caller/bridge 复用底层 transport/parser。
-- 已冻结：前向 Experiment 1 使用 `slim_v2.pricing.2026-08-23` 的 `deepseek-v4-flash` flat 表，Experiment 5 使用 `slim_v2.pricing.2026-08-20` 的四个 SiliconFlow endpoint 平价表；reasoning-as-completion-subset 口径按指标权威第 1.4 节，普通 pricing projector 不构成预算或 gate。2026-08-23 前 exact run 的 Pro 事实只原样保留，不作为前向默认值。
+- 已冻结：前向 Experiment 1 使用 `slim_v2.pricing.2026-08-23` 的 `deepseek-v4-flash` flat 表，Experiment 5 使用 `slim_v2.pricing.2026-08-20` 的三个 SiliconFlow endpoint（GLM、Qwen、MiniMax）平价表；reasoning-as-completion-subset 口径按指标权威第 1.4 节，普通 pricing projector 不构成预算或 gate。2026-08-23 前 exact run 的 Pro 事实只原样保留，不作为前向默认值。
 - 已冻结：除 Experiment 2 的六档 worker 外，Experiment 1、3、4、5 的 `worker_count=10`。
 - 已冻结：Experiment 2/3 在线检查退出 Slim V2，不存在待选 case IDs。
 - 已冻结：Experiment 4采用`slim_v2_exp4_structural_bypass_design.md`的四类实际调用前旁路；`{R,M}`为`RECOVERY_MERGE_FIRST`，M抢先时R-stuck=false；checker未到达为`reached=false/pass=null`，projector不从mode、processing或`not verified_correct`反推事实。
