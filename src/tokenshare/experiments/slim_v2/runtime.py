@@ -1263,7 +1263,9 @@ def execute_root_context(context: Any) -> RootResultV2:
                     protocol_result,
                     required_by_downstream=tail_required_by_downstream,
                 )
-                if not acquisition_failure
+                # 非来源政策独立于协议是否因设施失败而阻断tail：它仍须
+                # 持久化明确的not-required事实，不能伪装为普通not_needed。
+                if not acquisition_failure or not tail_required_by_downstream
                 else None
             )
             protocol_projection = project_root_result(

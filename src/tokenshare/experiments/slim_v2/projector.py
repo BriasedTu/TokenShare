@@ -271,7 +271,11 @@ def project_root_result(
     )
     if inventory.experiment_id == "exp1":
         acquisition_failure = coverage_tail_blocked(protocol_result.summary)
-        if acquisition_failure and tail_summary is not None:
+        if (
+            acquisition_failure
+            and tail_summary is not None
+            and tail_summary.trace_tail_status != "not_required_by_downstream"
+        ):
             raise RootProjectionError("acquisition-failed Exp1 root cannot carry a coverage tail")
         if not acquisition_failure and unscheduled_ai_unit_ids and tail_summary is None:
             raise RootProjectionError(
