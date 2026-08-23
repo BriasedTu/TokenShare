@@ -393,6 +393,7 @@ def test_pre_flash_exp2_terminal_ledger_reprojects_once_without_transport(
         continue_after_terminal_child_failure=False,
         protocol_execution_attempt_upper=9,
         provider_call_upper=0,
+        coverage_tail_required_by_downstream=False,
     )
     assembly = runtime._build_root_assembly(context)
     terminal = runtime.run_root_slice(assembly)
@@ -538,6 +539,7 @@ def test_pre_flash_terminal_reprojection_rejects_duplicate_submission_identity(
         continue_after_terminal_child_failure=False,
         protocol_execution_attempt_upper=9,
         provider_call_upper=0,
+        coverage_tail_required_by_downstream=False,
     )
     assembly = runtime._build_root_assembly(context)
     terminal = runtime.run_root_slice(assembly)
@@ -644,6 +646,7 @@ def test_pre_flash_terminal_reprojection_rejects_nonterminal_context(
         challenge_plan=None, is_reference=False, provider_entries={}, max_retries=2,
         continue_after_terminal_child_failure=False,
         protocol_execution_attempt_upper=3, provider_call_upper=0,
+        coverage_tail_required_by_downstream=False,
     )
 
     with pytest.raises(ValueError, match="terminal ledger"):
@@ -798,7 +801,11 @@ def test_fresh_process_protocol_resume_uses_typed_files_only(
         "call_provider_once",
         lambda *args, **kwargs: pytest.fail("protocol resume must not call provider"),
     )
-    context = SimpleNamespace(inventory=root, run_store=fresh)
+    context = SimpleNamespace(
+        inventory=root,
+        run_store=fresh,
+        coverage_tail_required_by_downstream=True,
+    )
     actual = runtime.resume_exp1_root_context(
         context,
         fresh.read_root_protocol(*key),
@@ -1073,6 +1080,7 @@ def test_fresh_protocol_resume_calls_only_the_missing_factor_tail_target(
         "continue_after_terminal_child_failure": True,
         "protocol_execution_attempt_upper": 9,
         "provider_call_upper": 9,
+        "coverage_tail_required_by_downstream": True,
     }
     production_tail = runtime.run_coverage_tail
 
@@ -1208,6 +1216,39 @@ def test_non_tail_exp1_protocol_resume_never_constructs_provider_or_coverage_tai
 
     assert resumed == result
     assert len(factory.responses) == len(result.attempts)
+
+
+def test_exp1_tail_policy_is_required_boolean_before_root_assembly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """遗漏/非bool政策不能静默恢复为全量tail或启动provider装配。"""
+
+    from tokenshare.experiments.slim_v2 import runtime
+
+    inventory = next(
+        root
+        for root in project_root_inventory_rows(
+            build_inventory("representative")
+        ).roots
+        if root.experiment_id == "exp1"
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_build_root_assembly",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invalid tail policy reached root/provider assembly"
+        ),
+    )
+
+    with pytest.raises(AttributeError, match="coverage_tail_required_by_downstream"):
+        runtime.execute_root_context(SimpleNamespace(inventory=inventory))
+    with pytest.raises(TypeError, match="coverage tail policy must be a bool"):
+        runtime.execute_root_context(
+            SimpleNamespace(
+                inventory=inventory,
+                coverage_tail_required_by_downstream=1,
+            )
+        )
 
 
 def test_non_tail_blocked_exp1_persists_policy_and_resumes_without_provider(
@@ -1404,6 +1445,7 @@ def test_normal_parse_exhaustion_completes_unscheduled_coverage_tail(
         continue_after_terminal_child_failure=False,
         protocol_execution_attempt_upper=3,
         provider_call_upper=9,
+        coverage_tail_required_by_downstream=True,
     )
     responses: list[_FakeResponse] = []
 
@@ -1548,6 +1590,7 @@ def test_lean_parse_exhaustion_completes_unscheduled_coverage_tail(
         continue_after_terminal_child_failure=False,
         protocol_execution_attempt_upper=3,
         provider_call_upper=3 * len(planned),
+        coverage_tail_required_by_downstream=True,
     )
     result = runtime.execute_root_context(context)
 
@@ -1896,6 +1939,7 @@ def test_production_fixed_root_uses_system_runtime_with_zero_new_provider_calls(
         continue_after_terminal_child_failure=True,
         protocol_execution_attempt_upper=len(inventory.planned_ai_unit_ids) * 3,
         provider_call_upper=0,
+        coverage_tail_required_by_downstream=False,
     )
 
     result = runtime.execute_root_context(context)

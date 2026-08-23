@@ -1207,10 +1207,17 @@ def _with_persisted_tail_attempts(
 def execute_root_context(context: Any) -> RootResultV2:
     """CLI 生产 seam：唯一装配并运行一个 root，再冻结可恢复投影。"""
 
-    assembly = _build_root_assembly(context)
-    protocol_result = run_root_slice(assembly)
     inventory = context.inventory
     experiment_id = str(inventory.experiment_id)
+    tail_required_by_downstream: bool | None = None
+    if experiment_id == "exp1":
+        # 这是付费边界，绝不以默认值猜测政策；遗漏或非bool context 必须
+        # 在装配provider/root前失败，避免错误恢复为全量tail。
+        tail_required_by_downstream = context.coverage_tail_required_by_downstream
+        if not isinstance(tail_required_by_downstream, bool):
+            raise TypeError("coverage tail policy must be a bool")
+    assembly = _build_root_assembly(context)
+    protocol_result = run_root_slice(assembly)
     scenario = assembly.scenario
     tail_summary: TailSummaryV1 | None = None
     protocol_projection: RootResultV2 | None = None
@@ -1228,9 +1235,7 @@ def execute_root_context(context: Any) -> RootResultV2:
         provider_family = str(entry.provider_family)
         reasoning_mode = _reasoning_mode(entry)
         if experiment_id == "exp1":
-            tail_required_by_downstream = bool(
-                getattr(context, "coverage_tail_required_by_downstream", True)
-            )
+            assert tail_required_by_downstream is not None
             traces = _protocol_traces(
                 protocol_result=protocol_result,
                 submission_adapter=adapter,

@@ -278,9 +278,9 @@ policy布尔值只描述配置，不能证明实际机制被删除。结构路�
 
 - 每个 model condition 使用只含该目标 entry 的 config view；请求控制按第一份文档冻结。
 - `ProtocolConfig.max_retries=0`，`ProtocolMechanismPolicy(replacement_attempts_allowed=false)`。
-- Full固定为Factorization hard前28与Lean hard三个topic各前3，共37 roots/model，只运行`repeat_id=0`；四model×四stratum形成16 conditions、148 root-runs和1,136个planned ordinal-0调用上限。Experiment 1–4不因本项缩容改变。
+- Full固定为Factorization hard前28与Lean hard三个topic各前3，共37 roots/model，只运行`repeat_id=0`；GLM、Qwen、MiniMax三个thinking model×四stratum形成12 conditions、111 root-runs和852个planned ordinal-0调用上限。Experiment 1–4不因本项缩容改变。
 - 每个 AI unit 的 ordinal=0 provider call 是唯一 provider attempt；自然早停造成的未调用 units保留为 planned-but-unscheduled。
-- 四个 endpoint 都使用 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 平价表；provider raw usage 中的 reasoning 只作 completion 子集诊断，不重复计价。
+- 三个 endpoint 都使用 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 平价表；provider raw usage 中的 reasoning 只作 completion 子集诊断，不重复计价。
 - 对已终止 protocol 中已经持久化的`2xx + raw + parsed` provider attempt，若`verifier_result/checker_result`均为null并带既有`not_applicable_or_unavailable`原因，reducer只能读取为未到达 verification 的不可评估事实：不得补造submission、verification、canonical或failure reason，不得重发provider/Lean调用，也不得改写root/call/response。它仍保留实际调用、coverage与资源事实；依赖“未通过”判断的Exp5 quality指标按指标权威第6.2.1节写null。
 
 ## 7. 最小原始字段到实际系统来源的映射

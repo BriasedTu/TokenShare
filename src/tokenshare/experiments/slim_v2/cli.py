@@ -87,7 +87,7 @@ class _CliRootContext:
     continue_after_terminal_child_failure: bool
     protocol_execution_attempt_upper: int
     provider_call_upper: int
-    coverage_tail_required_by_downstream: bool = True
+    coverage_tail_required_by_downstream: bool
 
 
 @dataclass(frozen=True, slots=True)

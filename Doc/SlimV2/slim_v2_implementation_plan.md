@@ -22,7 +22,7 @@ run_scope: representative_only
 
 实施检查（2026-08-23，已完成）：
 
-- [x] 以`profiles.py`纯consumer-closure helper从冻结inventory推导政策，并由CLI只对336个非来源Exp1 context显式传`False`；默认值保持`True`以来源路径fail-closed。
+- [x] 以`profiles.py`纯consumer-closure helper从冻结inventory推导政策，并由CLI向每个root context显式传bool；`_CliRootContext`无默认值，Exp1 runtime在装配provider/root前直接读取并严格校验bool，遗漏或非法值fail-fast，不能默默恢复全量tail。
 - [x] 在runtime、projector、schema、storage与CLI resume preflight贯穿冻结base projection的`not_required_by_downstream`事实；非来源不生成tail material/trace、不能构造provider或secret请求。
 - [x] 保持来源root原`run_coverage_tail()`与strict source closure不变；跨Exp2/3/4最小Full fixture证实只消费来源trace且删除一个planned trace必定拒绝。
 - [x] 增加非来源、非空unscheduled且无UnitTrace的reducer golden；正式五表和summary仍可原子发布且不全局扫描trace。Exp5 V4 supplemental也被断言只读RootResult。

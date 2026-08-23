@@ -1492,6 +1492,53 @@ def test_full_source_closure_checks_only_exp2_to_exp4_consumers_and_fails_closed
         cli._source_closure(selected_targets, source.run_dir, cli._case_inputs())
 
 
+def test_cli_passes_exp1_tail_policy_explicitly_to_each_root_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """CLI必须把冻结consumer闭包明确传给每个root context。"""
+
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.profiles import (
+        build_inventory,
+        project_root_inventory_rows,
+    )
+
+    exp1_roots = [
+        root
+        for root in project_root_inventory_rows(
+            build_inventory("representative")
+        ).roots
+        if root.experiment_id == "exp1"
+    ]
+    required_case_id = str(exp1_roots[0].case_id)
+    monkeypatch.setattr(
+        cli,
+        "downstream_trace_consumer_case_ids",
+        lambda profile_id: frozenset({required_case_id}),
+    )
+    observed: dict[str, bool] = {}
+
+    def execute(context) -> RootResultV2:
+        policy = context.coverage_tail_required_by_downstream
+        assert isinstance(policy, bool)
+        observed[str(context.inventory.case_id)] = policy
+        return _success(context.inventory, context.challenge_plan)
+
+    services = replace(_fake_services(cli, []), execute_root=execute)
+    assert cli.main(
+        [
+            "run", "--experiment", "exp1", "--profile", "representative",
+            "--run-id", "explicit-tail-policy", "--output-root", str(tmp_path),
+        ],
+        _services=services,
+    ) == 0
+    assert observed == {
+        str(root.case_id): str(root.case_id) == required_case_id
+        for root in exp1_roots
+    }
+
+
 def test_representative_cap_secret_disk_and_price_are_run_safety_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
