@@ -196,12 +196,12 @@ call_ai(entry, prompt, timeout_seconds, max_tokens, require_json_mode)
 | 范围 | 当前权威位置 | 复用代码时必须遵守的覆盖规则 |
 |---|---|---|
 | 统一分母、失败、root timing | 指标权威第 1.2 节 | 固定预注册 root 分母；roots 串行；root start 在任何 AI unit 调度前，terminal 在 root 完成/失败后；缺失不是 0 |
-| 价格与 token | 指标权威第 1.4 节 | 前向 Exp1 固定 `slim_v2.pricing.2026-08-23` 的 DeepSeek Flash flat 表；Exp5 保留 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 四模型平价表；reasoning 是 completion 子集，不重复计数。已启动 exact run 的 Pro 峰/谷事实不重算 |
+| 价格与 token | 指标权威第 1.4 节 | 前向 Exp1 固定 `slim_v2.pricing.2026-08-23` 的 DeepSeek Flash flat 表；Exp5 保留 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 三模型（GLM、Qwen、MiniMax）平价表；reasoning 是 completion 子集，不重复计数。已启动 exact run 的 Pro 峰/谷事实不重算 |
 | Experiment 1 | 指标权威第 2 节 | DeepSeek 真实调用；每个 root 的协议 `run_root()` 终态（包括有效`no_final`）后立即对 unscheduled planned units 执行 Slim-local coverage tail，只有统一设施blocker阻断。protocol 与 tail trace origin 分开，tail 资源单列且不延长 root runtime |
 | Experiment 2 | 指标权威第 3 节 | 取消独立 20-way split，完整继承 Exp1 plan；六个 worker 档用相同 source trace/latency 进逻辑调度器；repeat 离散口径以当前权威的 `(max-min)/mean` 为准 |
 | Experiment 3 | 指标权威第 4 节 | 五类 fault 只注入 ordinal 0；按稳定排序均匀选 target；固定 seed 的 token/latency 扰动；模拟资源不得称为真实 provider usage |
 | Experiment 4 | 指标权威第 5 节 | 11 modes、mode-blind challenge、pair/quadruple 与 interaction；五个正式 delta 名称无附加后缀 |
-| Experiment 5 | 指标权威第 6 节 | 四个 SiliconFlow endpoint、只运行repeat0、零 replacement；Full为Factorization hard前28与Lean hard三个topic各前3。wall-clock 用完整 root lifecycle，不用 first dispatch 代替 root start；已解析但未到verification边界的已标记事实只由Slim-local reducer按null规则读取，不补造验证 |
+| Experiment 5 | 指标权威第 6 节 | GLM、Qwen、MiniMax三个 SiliconFlow endpoint、只运行repeat0、零 replacement；Full为12 conditions、111 roots、852 planned ordinal-0 calls，取Factorization hard前28与Lean hard三个topic各前3。wall-clock 用完整 root lifecycle，不用 first dispatch 代替 root start；已解析但未到verification边界的已标记事实只由Slim-local reducer按null规则读取，不补造验证 |
 
 当前权威保留 cost。实现使用独立的普通 pricing projector：保存 provider 原始 cache/prompt/completion usage、provider request start、`pricing_version/pricing_tier` 与 `cost_estimate_cny`，reducer 只聚合。API 调用、调度和恢复路径均不需要 budget、reservation 或 stop gate。
 
