@@ -1061,7 +1061,11 @@ def _protocol_result_from_document(
     )
 
 
-def _placeholder_tail(protocol_result: ProtocolRunResult) -> TailSummaryV1 | None:
+def _placeholder_tail(
+    protocol_result: ProtocolRunResult,
+    *,
+    required_by_downstream: bool,
+) -> TailSummaryV1 | None:
     observation = protocol_result.summary.get("runtime_observation")
     targets = (
         observation.get("unscheduled_ai_unit_ids")
@@ -1072,6 +1076,20 @@ def _placeholder_tail(protocol_result: ProtocolRunResult) -> TailSummaryV1 | Non
         not isinstance(item, str) or not item for item in targets
     ):
         raise ValueError("protocol result lacks typed tail targets")
+    if not required_by_downstream:
+        return TailSummaryV1(
+            None,
+            None,
+            0,
+            "not_required_by_downstream",
+            [],
+            [],
+            0,
+            0,
+            0,
+            0,
+            0.0,
+        )
     if not targets:
         return None
     return TailSummaryV1(
@@ -1210,6 +1228,9 @@ def execute_root_context(context: Any) -> RootResultV2:
         provider_family = str(entry.provider_family)
         reasoning_mode = _reasoning_mode(entry)
         if experiment_id == "exp1":
+            tail_required_by_downstream = bool(
+                getattr(context, "coverage_tail_required_by_downstream", True)
+            )
             traces = _protocol_traces(
                 protocol_result=protocol_result,
                 submission_adapter=adapter,
@@ -1229,12 +1250,19 @@ def execute_root_context(context: Any) -> RootResultV2:
                     domain=str(inventory.domain),
                     case_id=str(inventory.case_id),
                 )
-                if not acquisition_failure and unscheduled
+                if (
+                    not acquisition_failure
+                    and tail_required_by_downstream
+                    and unscheduled
+                )
                 else ({}, {})
             )
             target_requests, pre_dispatch_traces = tail_preparation
             placeholder = (
-                _placeholder_tail(protocol_result)
+                _placeholder_tail(
+                    protocol_result,
+                    required_by_downstream=tail_required_by_downstream,
+                )
                 if not acquisition_failure
                 else None
             )
@@ -1262,7 +1290,11 @@ def execute_root_context(context: Any) -> RootResultV2:
             )
             for trace in snapshot_traces:
                 context.run_store.write_trace(trace)
-            if not acquisition_failure and unscheduled:
+            if (
+                not acquisition_failure
+                and tail_required_by_downstream
+                and unscheduled
+            ):
                 tail_summary = run_coverage_tail(
                     store=context.run_store,
                     case_id=str(inventory.case_id),
@@ -1344,6 +1376,9 @@ def resume_exp1_root_context(
     base = snapshot.protocol_projection
     if base is None:
         raise RuntimeError("protocol snapshot lacks a typed base projection")
+    if base.trace_tail_status == "not_required_by_downstream":
+        base.validate()
+        return base
     summary = snapshot.protocol_result.get("summary")
     if isinstance(summary, Mapping) and coverage_tail_blocked(summary):
         base.validate()

@@ -617,6 +617,18 @@ def test_schema_contains_no_forbidden_authority_fields() -> None:
     with pytest.raises(SchemaValidationError, match="tail fields"):
         replace(_valid_root(), trace_tail_total_tokens=None).validate()
 
+    non_tail_exp1 = replace(
+        _valid_root(),
+        trace_tail_status="not_required_by_downstream",
+        unscheduled_ai_unit_ids=["range_1"],
+    )
+    non_tail_exp1.validate()
+    with pytest.raises(SchemaValidationError, match="not-required"):
+        replace(
+            non_tail_exp1,
+            trace_tail_target_ai_unit_ids=["range_1"],
+        ).validate()
+
     exp4 = _valid_root(experiment_id="exp4")
     exp4.validate()
     with pytest.raises(SchemaValidationError, match="challenge_plan_id"):

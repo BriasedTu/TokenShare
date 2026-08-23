@@ -4,6 +4,13 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
+## Slim V2 当前 focus：选择性 Exp1 coverage tail（2026-08-23，已实施待提交）
+
+- **已批准范围与实现**：每个 Exp1 root 仍原样执行一次既有 `run_root()`；仅同 profile 中 Exp2–4 实际 trace-consumer `case_id` 并集的来源 root 进入既有 `run_coverage_tail()`。`profiles.py`以冻结 inventory 纯派生该闭包并由 CLI 固化到 root context；Full 计算为99来源与336非来源，互斥且并为435 Exp1 roots，未硬编码。Exp5 V4 supplemental只读 committed `RootResultV2`，不加入该集合；协议核心、plugins、executor、request/prompt、正文指标、正式五表与supplemental reducer均未改。
+- **持久化/恢复语义**：非来源 Exp1 root 在协议自然 terminal 后保留protocol attempts与`unscheduled_ai_unit_ids`，以`trace_tail_status=not_required_by_downstream`、空tail target/recorded IDs和零tail资源提交，不写未调度trace；schema、projector与`protocol.json`均校验该显式政策。其`--resume`只读冻结base projection，不构造provider、不请求secret、不补tail。来源root维持既有tail/strict source closure与避免重复trace/call语义。最终RootResult仍保留所有必填tail字段，正式reducer/summary不扫描非来源的UnitTrace。
+- **风险驱动验证证据**：先观察两个预期红灯：缺纯consumer-closure helper，以及non-source协议路径错误调用coverage tail；随后转绿。最终focused：`test_profiles.py + test_schema.py`=`32 passed in 1.32s`，`test_runtime_resume.py`=`26 passed in 26.24s`，`test_answer_paths.py`=`20 passed in 15.08s`，`test_cli_e2e.py -k 'not representative_fake_transport'`=`27 passed, 1 deselected in 22.95s`（刻意不运行历史超过60秒的fake Representative E2E），`test_reducer_golden.py`=`38 passed in 13.43s`。新增Full跨Exp2/3/4最小source-closure fixture证明只读来源trace、忽略无trace的336补集root，并在删去一个consumer planned trace后fail-closed；新增无UnitTrace非来源Exp1 golden证明五表和summary可发布且不作全局trace扫描，Exp5 V4补充表也被断言不读trace。
+- **零调用计划/静态检查**：`python -m tokenshare.experiments.slim_v2.cli plan --profile full --run-id selective-tail-plan-20260823`输出paper roots=`7017`、executions=`7123`、online provider-call upper=`6762`，数值未变；没有运行Full或真实provider。Slim源码/测试`compileall -q`与`git diff --check`均exit 0（仅既有LF/CRLF warning）。权威README/charter/metrics/integration、当前implementation plan、final-summary说明、design spec和code map已同步；下一步为提交本项单一commit。
+
 ## Slim V2 当前 focus：Exp5 三模型实测与 Exp1 Flash V4 补充比较（已实施，等待新 Representative）
 
 - **用户决定（2026-08-23）**：Exp5 从 GLM、Qwen、MiniMax、DeepSeek V3 四模型改为前三个 SiliconFlow thinking 模型；三者 `thinking_budget=100000`、`max_tokens=100000`、`repeat0`、真实 Exp5 延迟保持并列。DeepSeek V3 已从 Exp5 inventory/config 删除。

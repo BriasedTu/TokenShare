@@ -16,7 +16,7 @@ scope: Slim V2 agent routing and boundaries
 
 Slim V2 要以最小设施完成：
 
-- 为 Experiment 1 的正式运行和 Experiment 5 调用真实 AI API；Experiment 1 每个 root 先按现有协议终态完成，再立即用 Slim-local coverage tail 补齐该 root 尚未调度的 planned units，使每个 planned unit 都有唯一 per-unit trace；有效`no_final`仍补tail，只有condition/runtime或infrastructure-invalid终态阻断；
+- 为 Experiment 1 的正式运行和 Experiment 5 调用真实 AI API；Experiment 1 每个 root 先按现有协议终态完成；只有同一 profile 的 Experiment 2–4 实际会消费其 trace 的 case 才立即用 Slim-local coverage tail 补齐该 root 尚未调度的 planned units。有效`no_final`的来源 root仍补tail，只有condition/runtime或infrastructure-invalid终态阻断；非来源 root 以`not_required_by_downstream`终态停止且不补trace；
 - 调用现有 TokenShare 协议本体、Factorization 插件和真实 Lean 插件；
 - 表达并运行 Experiment 1–5 的冻结场景；
 - 让 Experiment 2–4 原样继承 Experiment 1 的任务切分、子任务语义、prompt 与依赖，并按 `case_id × source_repeat_id × planned_ai_unit_id` 精确复用 Experiment 1 的 protocol/coverage-tail trace；其中下游 `source_repeat_id=0`，与各实验自己的 `repeat_id` 分离；请求 ordinal 缺失时只回退到同一 trace 最后一个自然 attempt，不新增 AI 调用；
@@ -24,7 +24,7 @@ Slim V2 要以最小设施完成：
 - 用冻结的官方普通价格表把 provider usage 换算为成本；reasoning token 只按 completion/output 计一次；
 - 从普通输出文件夹枚举 JSONL 并生成 CSV/JSON 指标。
 
-所有 roots 在 runner 层串行执行；Experiment 1 的 coverage tail 在当前 root terminal 之后、下一个 root start 之前完成，tail 时间与资源单列，不进入正常协议正文指标。`worker_count` 只控制单个 root 内的 AI-unit 并发。真实 API 边界按“单 provider entry 输入、raw/usage/latency/model 输出、薄 execution bridge”的能力设计，不要求复用旧 `AIAPIExecutor` 整类。
+所有 roots 在 runner 层串行执行；Experiment 1 来源 root 的 coverage tail 在当前 root terminal 之后、下一个 root start 之前完成，tail 时间与资源单列，不进入正常协议正文指标；非来源 root 不进入tail。`worker_count` 只控制单个 root 内的 AI-unit 并发。真实 API 边界按“单 provider entry 输入、raw/usage/latency/model 输出、薄 execution bridge”的能力设计，不要求复用旧 `AIAPIExecutor` 整类。
 
 Slim V2 的非目标是论文级审计、防伪、复杂来源追踪、旧实验设施修复或生产级运行平台。不要重新引入 receipt、预算授权、digest/lineage closure、publication gate、evidence closure 或 paper eligibility。前向 Experiment 1 使用 `slim_v2.pricing.2026-08-23` 的 Flash 静态成本常量；Experiment 5 保留其 `slim_v2.pricing.2026-08-20` 的 SiliconFlow 快照。两者都不是预算或门禁。已在 2026-08-23 变更前启动的具体 run 必须保留其实际写入的 model/pricing 事实，不能借此重标前向默认值。
 
@@ -83,7 +83,7 @@ TokenShareData/outputs/slim_v2/<run_id>/
 - 真实 API 能调用，secret 不进入输出。
 - Factorization 和 Lean 各至少跑通一个 root；Lean 使用真实 checker 和 root recheck。
 - Experiment 1–5 的冻结 condition 参数都可表达。
-- Experiment 1 每个 root 先冻结协议终态（包括有效`no_final`），再立即补齐 unscheduled planned units；每个 planned unit 只有一条标明 `protocol/coverage_tail` 的 trace，tail 不重复调用 protocol unit、不延长 root runtime，且在下一 root 前完成；只有设施终态阻断tail。
+- Experiment 1 每个 root 先冻结协议终态；只有同 profile 的 Exp2–4 trace-consumer case 并集中的来源 root（Full 当前inventory实证为99，不硬编码）才立即补齐 unscheduled planned units，并使这些来源 root 的每个 planned unit 有一条标明`protocol/coverage_tail`的 trace。非来源 root 保留 protocol attempts 与 unscheduled IDs，以`not_required_by_downstream`和零tail资源停止；tail不重复调用protocol unit、不延长root runtime，且只在来源root的下一root前完成。Exp5 V4 supplemental 只读committed `RootResultV2`，不属于trace consumer。
 - Experiment 2–4 能严格按 `case_id × source_repeat_id × planned_ai_unit_id` 复用 Experiment 1 trace，普通字段核对一致，exact ordinal 缺失时确定性使用同 trace 最后自然 attempt，且运行期间 provider calls 为 0；Experiment 2 不使用独立 split profile。
 - Experiment 3 能按 planned first-attempt units、ordinal 0 和冻结扰动公式执行五类 fault；正文 token/latency 资源明确标为 simulated trace-attributed。
 - roots 串行，`root_start_at_ms`、`root_terminal_at_ms` 与 `runtime_wall_clock_ms` 满足冻结生命周期定义；Exp1 正文批次 wall-clock 使用 protocol runtime 之和，`trace_tail_wall_clock_ms/tokens/cost` 单列。

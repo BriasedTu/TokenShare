@@ -21,6 +21,8 @@ from .profiles import (
     build_inventory,
     build_plan,
     build_profile,
+    coverage_tail_required_by_downstream,
+    downstream_trace_consumer_case_ids,
     project_root_inventory_rows,
 )
 from .schema import (
@@ -85,6 +87,7 @@ class _CliRootContext:
     continue_after_terminal_child_failure: bool
     protocol_execution_attempt_upper: int
     provider_call_upper: int
+    coverage_tail_required_by_downstream: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,6 +710,12 @@ def _protocol_tail_pending(store: RunStore, root: RootInventoryV1) -> bool:
     """只把 snapshot 中尚无 committed coverage trace 的 target 视为付费待办。"""
 
     snapshot = store.read_root_protocol_snapshot(*_root_key(root))
+    if (
+        snapshot.protocol_projection is not None
+        and snapshot.protocol_projection.trace_tail_status
+        == "not_required_by_downstream"
+    ):
+        return False
     summary = snapshot.protocol_result.get("summary")
     if not isinstance(summary, Mapping):
         raise ValueError("protocol snapshot lacks typed summary")
@@ -734,6 +743,12 @@ def _protocol_tail_requires_provider(store: RunStore, root: RootInventoryV1) -> 
     """仅当缺失 trace 的当前 ordinal 没有既有 journal 时才需要 secret。"""
 
     snapshot = store.read_root_protocol_snapshot(*_root_key(root))
+    if (
+        snapshot.protocol_projection is not None
+        and snapshot.protocol_projection.trace_tail_status
+        == "not_required_by_downstream"
+    ):
+        return False
     summary = snapshot.protocol_result.get("summary")
     if not isinstance(summary, Mapping) or coverage_tail_blocked(summary):
         return False
@@ -1180,6 +1195,7 @@ def _run_experiment_locked(
 
     cases = _case_inputs()
     challenges = _challenge_map(inventory)
+    trace_consumer_case_ids = downstream_trace_consumer_case_ids(profile_id)
     resume_view = scan_resume(run_dir) if resume else None
     selected_by_experiment = {
         experiment_id: _selected_roots(inventory, experiment_id)
@@ -1375,6 +1391,9 @@ def _run_experiment_locked(
                 continue_after_terminal_child_failure=continue_after_failure,
                 protocol_execution_attempt_upper=protocol_cap,
                 provider_call_upper=provider_cap,
+                coverage_tail_required_by_downstream=coverage_tail_required_by_downstream(
+                    root, trace_consumer_case_ids
+                ),
             )
             if key in lean_environment_invalid_keys:
                 result = _invalid_root_result(

@@ -1132,6 +1132,84 @@ def test_fresh_protocol_resume_calls_only_the_missing_factor_tail_target(
     assert not list((fresh.run_dir / "calls").glob("*.outcome.json"))
 
 
+def test_non_tail_exp1_protocol_resume_never_constructs_provider_or_coverage_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.slim_v2 import cli, provider, runtime
+    from tokenshare.experiments.slim_v2.storage import RunStore
+    from tests.experiments.slim_v2.test_answer_paths import (
+        _PromptResponseFactory,
+        _answer_path_factor_case,
+        _entry,
+    )
+    from tests.experiments.slim_v2.test_system_vertical import _inventory
+
+    entry = _entry(family="deepseek", model="deepseek-v4-pro")
+    factory = _PromptResponseFactory(entry.configured_model)
+    monkeypatch.setenv("SLIM_V2_TEST_KEY", "secret")
+    monkeypatch.setattr(provider, "_open_response", factory)
+    case = _answer_path_factor_case()
+    inventory = replace(
+        _inventory(case=case, domain="factorization"),
+        condition_id="non_tail_resume",
+        provider_entry_id=entry.entry_id,
+        configured_model=entry.configured_model,
+        planned_ai_unit_ids=["range_0", "range_1", "range_2"],
+    )
+    inventory.validate()
+    store = RunStore(tmp_path / "run")
+    context = SimpleNamespace(
+        run_id="non-tail-resume",
+        profile_id="representative",
+        inventory=inventory,
+        root_input=case,
+        run_store=store,
+        source_run_dir=None,
+        challenge_plan=None,
+        is_reference=False,
+        provider_entries={entry.entry_id: entry},
+        max_retries=2,
+        continue_after_terminal_child_failure=True,
+        protocol_execution_attempt_upper=9,
+        provider_call_upper=9,
+        coverage_tail_required_by_downstream=False,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "run_coverage_tail",
+        lambda **_kwargs: pytest.fail("non-tail root invoked coverage tail"),
+    )
+
+    result = runtime.execute_root_context(context)
+
+    assert result.unscheduled_ai_unit_ids
+    assert result.trace_tail_status == "not_required_by_downstream"
+    assert result.trace_tail_target_ai_unit_ids == []
+    assert result.trace_tail_recorded_ai_unit_ids == []
+    assert result.trace_tail_provider_attempt_count == 0
+    assert result.trace_tail_total_tokens == 0
+    assert result.trace_tail_cost_estimate_cny == 0.0
+    assert cli._protocol_tail_pending(store, inventory) is False
+    assert cli._protocol_tail_requires_provider(store, inventory) is False
+
+    protocol = store.read_root_protocol(
+        inventory.experiment_id,
+        inventory.condition_id,
+        inventory.case_id,
+        inventory.repeat_id,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_provider_entry",
+        lambda _context: pytest.fail("non-tail resume constructed provider entry"),
+    )
+    resumed = runtime.resume_exp1_root_context(context, protocol)
+
+    assert resumed == result
+    assert len(factory.responses) == len(result.attempts)
+
+
 def test_completed_factor_tail_resume_matches_fresh_attempts_and_resources(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1174,6 +1252,7 @@ def test_completed_factor_tail_resume_matches_fresh_attempts_and_resources(
         protocol_execution_attempt_upper=9,
         provider_call_upper=9,
         run_store=store,
+        coverage_tail_required_by_downstream=True,
     )
 
     fresh = runtime.execute_root_context(context)

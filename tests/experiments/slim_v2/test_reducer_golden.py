@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 import json
 from pathlib import Path
 from typing import Any
@@ -423,7 +423,11 @@ def _challenge_plan(
     }
 
 
-def _materialize_golden(run_dir: Path) -> None:
+def _materialize_golden(
+    run_dir: Path,
+    *,
+    non_tail_exp1_without_trace: bool = False,
+) -> None:
     store = RunStore(run_dir)
     roots: list[RootInventoryV1] = []
     results: list[RootResultV2] = []
@@ -434,10 +438,20 @@ def _materialize_golden(run_dir: Path) -> None:
     )
     exp1_missing = _inventory("exp1", "exp1-hard-b", "exp1-hard-b")
     roots.extend((exp1_easy, exp1_no_final, exp1_missing))
+    non_tail_result = _result(
+        exp1_no_final, runtime_ms=20, final=False, verified=False
+    )
+    if non_tail_exp1_without_trace:
+        non_tail_result = replace(
+            non_tail_result,
+            trace_tail_status="not_required_by_downstream",
+            unscheduled_ai_unit_ids=["range_0"],
+        )
+        non_tail_result.validate()
     results.extend(
         (
             _result(exp1_easy, attempt=_attempt("exp1"), tail_tokens=1000),
-            _result(exp1_no_final, runtime_ms=20, final=False, verified=False),
+            non_tail_result,
         )
     )
 
@@ -772,8 +786,32 @@ def test_reduce_run_golden_all_experiments_and_io_boundary(
     )
 
 
+def test_non_tail_exp1_without_unit_trace_still_reduces_all_formal_tables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_golden(run_dir, non_tail_exp1_without_trace=True)
+
+    assert not (run_dir / "traces").exists()
+    monkeypatch.setattr(
+        RunStore,
+        "read_trace",
+        lambda *_args, **_kwargs: pytest.fail(
+            "formal five-table reducer must not globally scan UnitTrace"
+        ),
+    )
+    summary = reduce_run(run_dir)
+
+    assert summary["formal_metric_id_count"] == 153
+    tables = run_dir / "metrics" / "tables"
+    assert all((tables / f"exp{number}.jsonl").is_file() for number in range(1, 6))
+    assert (run_dir / "metrics" / "summary.json").is_file()
+
+
 def test_exp5_v4_reference_table_keeps_live_latency_and_omits_reused_latency(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """补充表只带入 V4 的质量/资源事实，绝不将 Exp1 时间伪装为 Exp5。"""
 
@@ -825,6 +863,14 @@ def test_exp5_v4_reference_table_keeps_live_latency_and_omits_reused_latency(
             runtime_ms=999,
             attempt=_attempt("exp1", total_tokens=777, cost=7.77),
         )
+    )
+    assert not (source.run_dir / "traces").exists()
+    monkeypatch.setattr(
+        RunStore,
+        "read_trace",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Exp5 V4 supplemental must not read UnitTrace"
+        ),
     )
 
     summary = reduce_exp5_with_exp1_v4_reference(target.run_dir, source.run_dir)

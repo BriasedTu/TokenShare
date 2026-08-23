@@ -9,6 +9,8 @@ run_scope: representative_only
 
 # Slim V2 最终汇总轻量修复计划
 
+> **后续获批覆盖（2026-08-23）**：本计划既有“全部Exp1 coverage-tail traces”表述只描述当时的全覆盖实现背景，不能覆盖后续已批准的选择性tail政策。当前规则以指标权威与接线合同为准：同profile Exp2–4 trace-consumer来源root才补tail；非来源root以`not_required_by_downstream`、空tail IDs和零资源完成。最终reducer/summary仍读取所有必填RootResult tail字段，但不得把非来源root视为已覆盖或把Exp5 V4 supplemental视为trace consumer。
+
 ## 1. 决策与目标
 
 本计划由用户于 2026-08-22 批准并冻结。目标是以最小 Slim-local 改动消除最终 reducer 发布阻断、恢复冻结失败分类与精确事实统计，并保证新 `RootResultV2` 的同一 run crash/resume 能稳定形成实验指标和结果文件。

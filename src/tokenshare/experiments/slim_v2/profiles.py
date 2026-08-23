@@ -1466,6 +1466,31 @@ def build_inventory(profile_id: str | ProfileV1) -> InventoryV1:
     )
 
 
+def downstream_trace_consumer_case_ids(
+    profile_id: str | ProfileV1,
+) -> frozenset[str]:
+    """从同一冻结 inventory 派生实际消费 Exp1 trace 的 case 闭包。"""
+
+    inventory = build_inventory(profile_id)
+    return frozenset(
+        str(root.case_id)
+        for root in (*inventory.roots, *inventory.references)
+        if root.experiment_id in {"exp2", "exp3", "exp4"}
+    )
+
+
+def coverage_tail_required_by_downstream(
+    root: RootInventoryV1,
+    trace_consumer_case_ids: frozenset[str],
+) -> bool:
+    """把冻结的下游case闭包映射为单个Exp1 root的tail政策。"""
+
+    return (
+        root.experiment_id == "exp1"
+        and root.case_id in trace_consumer_case_ids
+    )
+
+
 def _planned_ai_unit_ids(
     root: RootRunV1,
     factor: Mapping[str, dict[str, Any]],

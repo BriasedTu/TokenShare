@@ -12,7 +12,7 @@ run_scope: representative_only
 
 ## 0. 规格结论与权威顺序
 
-Slim V2 采用一条独立、最小的论文实验路径：冻结 profile 生成普通 root inventory；每个 root 只调用一次现有 `ProtocolRunCoordinator.run_root()`；Experiment 1/5 通过 single-entry 薄 provider caller 取得真实回答，Experiment 2–4 只读 Experiment 1 的普通 per-unit traces；Slim-local projector 把同一次 run 的系统、插件、checker 和 hook 事实写成普通记录；离线 reducer 只读取该 run 目录并生成 CSV/JSON。旧 paper/formal runner、预算、receipt、digest/lineage、response-bank authority 和 publication gate 不在依赖图中。
+Slim V2 采用一条独立、最小的论文实验路径：冻结 profile 生成普通 root inventory；每个 root 只调用一次现有 `ProtocolRunCoordinator.run_root()`；Experiment 1/5 通过 single-entry 薄 provider caller 取得真实回答，Experiment 2–4 只读其实际来源 Experiment 1 case 的普通 per-unit traces；Slim-local projector 把同一次 run 的系统、插件、checker 和 hook 事实写成普通记录；离线 reducer 只读取该 run 目录并生成 CSV/JSON。旧 paper/formal runner、预算、receipt、digest/lineage、response-bank authority 和 publication gate 不在依赖图中。
 
 本规格服从以下优先级：
 
@@ -58,7 +58,7 @@ Slim V2 只交付以下能力：
 ### 1.3 不可改变的运行语义
 
 - roots 严格串行；Experiment 1、3、4、5 固定 `worker_count=10`，Experiment 2 固定 `{1,3,7,10,30,50}`；
-- Experiment 1 每 root 是 `run_root()` 正常协议阶段后紧接 coverage tail，tail 完成前不能开始下一 root；
+- Experiment 1 每 root 先完成 `run_root()` 正常协议阶段；只有同一 profile Exp2–4 实际消费 trace 的来源 case 才紧接 coverage tail，来源 tail 完成前不能开始下一 root；非来源 root 直接以明确的零 tail 状态提交；
 - `root_terminal_at_ms` 在协议 terminal（包括有效`no_final`）冻结，tail 不延长正文 runtime，tail wall/token/cost 单列；
 - Experiment 2 完整继承 Experiment 1 的 split、unit、prompt 和依赖；
 - Experiment 2–4 只按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 取 trace；exact ordinal 缺失只回退同 trace 最后自然 attempt；
@@ -186,7 +186,7 @@ flowchart LR
 
 #### 4.2.2 跨域失败语义与 Lean 环境 pass（2026-08-22用户批准）
 
-Lean prompt必须给出完整proof-candidate JSON skeleton，并显式冻结`schema_version="lean_proof.proof_candidate.v1"`。Factorization与Lean共享结构化retry终态：parser、正常verifier/checker rejection、provider-only或混合耗尽均投影为顶层`no_final`，细因只写`failure_origin`；不得再由普通`RuntimeError`投影为设施失败。有效`no_final/incorrect_final`及其他非设施 terminal 仍执行 Exp1 coverage tail，只有 condition/runtime wiring failure 或 infrastructure-invalid terminal 阻断。Lean checker的`environment_error/timeout/helper_error`首次出现即停止root，顶层为`infrastructure_invalid`、`failure_origin=checker_environment_error`；预注册worker-death耗尽仍是有效`no_final`，保留`child_execution/worker_death_exhausted`。
+Lean prompt必须给出完整proof-candidate JSON skeleton，并显式冻结`schema_version="lean_proof.proof_candidate.v1"`。Factorization与Lean共享结构化retry终态：parser、正常verifier/checker rejection、provider-only或混合耗尽均投影为顶层`no_final`，细因只写`failure_origin`；不得再由普通`RuntimeError`投影为设施失败。tail-required 来源 root 的有效`no_final/incorrect_final`及其他非设施 terminal 仍执行 Exp1 coverage tail，只有 condition/runtime wiring failure 或 infrastructure-invalid terminal 阻断；非来源 root 不执行 tail。Lean checker的`environment_error/timeout/helper_error`首次出现即停止root，顶层为`infrastructure_invalid`、`failure_origin=checker_environment_error`；预注册worker-death耗尽仍是有效`no_final`，保留`child_execution/worker_death_exhausted`。
 
 Lean环境验证是独立命令：覆盖全部checker-backed catalog nodes，全部accepted后才原子写持久pass。实验启动只校验pass、关键输入digest与`LemmaGraphCases.olean/LemmaGraphOracle.olean`哈希，不运行Lean/lake；pass缺失或失效时，只把全部pending Lean ordinary/reference roots在provider前写成`failure_stage=preflight`的infrastructure-invalid，Factorization继续且fixed-source closure排除这些Lean-invalid keys。Reducer保留固定预注册库存；任一cell含infrastructure-invalid时科学rate为null，任一配对端为infrastructure-invalid时pair不接纳。
 
@@ -223,8 +223,8 @@ Projector忽略 `event_refs`、`artifact_refs` 的防伪含义和 `ledger_bindin
 2. 前向 condition 在 root loop 前解析唯一 entry `deepseek_v4_flash_exp1_baseline`；caller 固定 `deepseek-v4-flash`、thinking enabled、`reasoning_effort=high`、600秒、300000 max tokens。配置的provider全局上限为50，但root内只有10 workers，故实际有效in-flight上限为10。2026-08-23 前已启动的 exact run 只按其持久化 Pro identity 恢复，不能因此反向覆盖该前向 entry。
 3. runner记录`root_start_at_ms`后运行一次`run_root()`；每自然协议attempt立即写call intent、response/result和raw response；provider caller每次只调用一次，协议`max_retries=2`决定最多三个自然attempts。
 4. coordinator terminal后立即冻结`root_terminal_at_ms`和`runtime_wall_clock_ms`，projector形成protocol结果和每个已执行unit的`trace_origin=protocol` trace。
-5. runner计算`tail_targets=unscheduled_ai_unit_ids - protocol_trace_ids`，保持冻结runtime observation的原始顺序而不重新排序。Tail使用相同request、prompt、依赖、provider和控制；每unit从ordinal 0开始，首次accepted停止，最多三次；parser/checker只决定tail是否继续，不向已终止root提交。Lean依赖canonical不可用时不伪造依赖，而是写带真实`lemma_node_id/dependency_path`且`provider_call_made=false`的typed`pre_dispatch_failure`。
-6. 所有target形成唯一trace后写tail summary和root result，随后才开始下一root。每个target由领域接受事实判定success：Factorization verifier accepted或Lean checker accepted；用尽三次或明确pre-dispatch/provider/parse/verifier/checker terminal failure且无领域接受事实算failure。coverage-tail attempt不创建协议canonical，其`canonical_accepted`固定为null/false并带`not_applicable`；tail provider count/token/cost只累计真实`provider_call_made=true`的attempt；`trace_tail_success_unit_count + trace_tail_failure_unit_count = |trace_tail_target_ai_unit_ids|`。
+5. runner先从同一冻结 profile 的 Exp2、Exp3、Exp4 实际 trace-consumer `case_id` 并集判定是否为 tail-required 来源 root；不得把 Exp5 V4 supplemental 当作消费者。只有来源 root 计算`tail_targets=unscheduled_ai_unit_ids - protocol_trace_ids`，保持冻结runtime observation的原始顺序而不重新排序。Tail使用相同request、prompt、依赖、provider和控制；每unit从ordinal 0开始，首次accepted停止，最多三次；parser/checker只决定tail是否继续，不向已终止root提交。Lean依赖canonical不可用时不伪造依赖，而是写带真实`lemma_node_id/dependency_path`且`provider_call_made=false`的typed`pre_dispatch_failure`。非来源root不生成未调度unit trace。
+6. 来源root的所有target形成唯一trace后写tail summary和root result，随后才开始下一root。每个target由领域接受事实判定success：Factorization verifier accepted或Lean checker accepted；用尽三次或明确pre-dispatch/provider/parse/verifier/checker terminal failure且无领域接受事实算failure。coverage-tail attempt不创建协议canonical，其`canonical_accepted`固定为null/false并带`not_applicable`；tail provider count/token/cost只累计真实`provider_call_made=true`的attempt；`trace_tail_success_unit_count + trace_tail_failure_unit_count = |trace_tail_target_ai_unit_ids|`。非来源root保留protocol attempts与原始`unscheduled_ai_unit_ids`，以`trace_tail_status=not_required_by_downstream`、空target/recorded IDs和零tail资源提交，绝不伪装为已覆盖或普通`not_needed`。
 
 正常协议的completion/correctness/runtime/provider latency/token/cost不读取tail；tail资源只进入诊断字段。provider/parse/checker自然失败仍写trace/root；同键重复、tail target非法或tail写失败为接线错误并停止下一root。
 
@@ -434,7 +434,7 @@ TokenShareData/outputs/slim_v2/<run_id>/
 | Exp4 pair | `case_id × repeat_id × challenge_plan_id × mode` |
 | Exp4 quadruple | `case_id × repeat_id × challenge_plan_id × {FULL,NO_i,NO_j,NO_i__NO_j}` |
 
-路径段使用profile中已冻结的普通ID；不计算内容hash。每个root、trace和call terminal对象是一个原子JSON文件，避免JSONL尾部半行和跨文件提交协议。Inventory与最终metrics可用JSONL，因为它们可从profile和`roots/<experiment>/<root_key>/result.json`完整重建。`protocol.json`是`run_root`返回后的不可变普通投影：冻结protocol result/projection与全部protocol-origin trace素材；Exp1在tail material准备后还冻结确定性tail request snapshots及已知pre-dispatch `coverage_tail` failure traces，并要求它们与unscheduled集合闭合。resume以它幂等物化全部已知trace，再只执行剩余tail requests；最终 v2 result 的 attempts 从 snapshot protocol attempts 与全部已持久化 tail trace attempts 稳定合并，fresh/resume 投影相同。`protocol.json`不是协议checkpoint或第二个root状态。
+路径段使用profile中已冻结的普通ID；不计算内容hash。每个root、trace和call terminal对象是一个原子JSON文件，避免JSONL尾部半行和跨文件提交协议。Inventory与最终metrics可用JSONL，因为它们可从profile和`roots/<experiment>/<root_key>/result.json`完整重建。`protocol.json`是`run_root`返回后的不可变普通投影：冻结protocol result/projection与全部protocol-origin trace素材。tail-required Exp1来源root在tail material准备后还冻结确定性tail request snapshots及已知pre-dispatch `coverage_tail` failure traces，并要求它们与unscheduled集合闭合；非来源Exp1 root以同一typed base projection中持久化的`not_required_by_downstream`事实允许空tail material、并禁止tail request/pre-dispatch trace。resume以该冻结事实幂等物化已知trace：来源只执行剩余tail requests，非来源直接提交而不构造provider；最终v2 result分别稳定合并protocol+tail attempts或只保留protocol attempts。`protocol.json`不是协议checkpoint或第二个root状态。
 
 ### 8.2 写入和文件句柄
 
@@ -466,7 +466,7 @@ Root结果的 `schema_version` 固定为 `tokenshare.slim_v2.root_result.v2`，�
 | ablation | `challenge_observations[],ablation_observations[]` |
 | null reasons | `missing_reason,not_applicable_reason`；对象级字段可按字段名映射多个原因 |
 
-时间全部为整数毫秒；真实UTC请求时间使用RFC3339字符串。`runtime_wall_clock_ms`必须等于terminal-start。Exp1无tail target时`trace_tail_started_at_ms/terminal_at_ms=null,trace_tail_wall_clock_ms=0,trace_tail_status=not_needed`且两个unit count和attempt/token/cost count为0。Exp2–4 actual provider usage字段为null，source字段保留。
+时间全部为整数毫秒；真实UTC请求时间使用RFC3339字符串。`runtime_wall_clock_ms`必须等于terminal-start。Exp1来源root无tail target时`trace_tail_started_at_ms/terminal_at_ms=null,trace_tail_wall_clock_ms=0,trace_tail_status=not_needed`且两个unit count和attempt/token/cost count为0；非来源root使用同样的空/零字段但`trace_tail_status=not_required_by_downstream`，即使保留非空`unscheduled_ai_unit_ids`。Exp2–4 actual provider usage字段为null，source字段保留。
 
 ### 9.3 `AttemptResultV1`
 
@@ -511,7 +511,7 @@ provider_family, provider_entry_id, configured_model, requested_model, resolved_
 attempts[]  # 自然ordinal严格递增，至少一条成功或失败记录
 ```
 
-每个planned unit恰好一条trace。Prompt、request controls和dependency inputs不在trace重复保存：Exp2–4从同一冻结Slim profile、当前catalog和同一plugin plan重建当前`ExecutionRequest`，并用Factorization range或Lean node/dependency普通字段核对命中；focused test逐字断言重建prompt/依赖等于Exp1同一计划产物。Raw body保存在response文件，trace只含普通source attempt、相对路径和权威所需语义字段，不形成额外回答库。
+每个tail-required来源root的planned unit恰好一条trace；非来源root只保存正常协议实际执行的trace，不生成未调度unit trace。Prompt、request controls和dependency inputs不在trace重复保存：Exp2–4从同一冻结Slim profile、当前catalog和同一plugin plan重建当前`ExecutionRequest`，并用Factorization range或Lean node/dependency普通字段核对命中；focused test逐字断言重建prompt/依赖等于Exp1同一计划产物。Raw body保存在response文件，trace只含普通source attempt、相对路径和权威所需语义字段，不形成额外回答库。
 
 ### 9.5 fault/recovery/death/challenge/ablation数组
 
@@ -760,25 +760,25 @@ Slim不定义root、task、attempt、retry、recovery、canonical、merge或sett
 ### 11.2 正常提交顺序
 
 1. provider caller使用显式call context与注入的`RunStore`，send前写intent；response或错误后写terminal；
-2. `run_root()`返回并产生现有协议终态后，projector写包含protocol result/projection、全部protocol-origin trace素材、确定性tail requests及已知pre-dispatch tail traces的不可变`protocol.json`；
-3. Exp1先从snapshot幂等物化全部已知traces，再只执行剩余tail requests；有效`no_final`同样补tail，只有统一设施blocker阻断；其他实验直接投影最终result；
-4. 所需trace/投影完整后，以 protocol projection attempts 加全部已持久化 tail trace attempts 按冻结 target/ordinal 顺序重建最终 v2 `attempts[]`，再写`result.json`；下一个root才能开始；
+2. `run_root()`返回并产生现有协议终态后，projector写包含protocol result/projection与全部protocol-origin trace素材的不可变`protocol.json`；来源root另冻结确定性tail requests及已知pre-dispatch tail traces，非来源root将`not_required_by_downstream`写入typed base projection且保持tail material为空；
+3. 来源Exp1从snapshot幂等物化已知traces，再只执行剩余tail requests；来源有效`no_final`同样补tail，只有统一设施blocker阻断。非来源Exp1从base projection直接投影最终result，不构造provider或请求secret；其他实验直接投影最终result；
+4. 来源所需trace/投影完整后，以protocol projection attempts加全部已持久化tail trace attempts按冻结target/ordinal顺序重建最终v2 `attempts[]`；非来源只保留protocol projection attempts。随后写`result.json`，下一个root才能开始；
 5. reducer只读取inventory、committed result和Exp3 reference，不读取system events作为报告输入。
 
 ### 11.3 Resume扫描与未知终态
 
 - `result.json`存在：跳过整个root；这只是Slim调度完成键，不是Slim重新宣布协议终态；
-- Exp1已有`protocol.json`但缺`result.json`：不重跑`run_root`；先按三元键从snapshot重建缺失的protocol-origin与已知pre-dispatch tail traces，再只执行snapshot中剩余tail request keys，最后从snapshot protocol attempts与所有已持久化tail attempts稳定重建 v2 result 并提交；
+- Exp1已有`protocol.json`但缺`result.json`：不重跑`run_root`；先按三元键从snapshot重建缺失的protocol-origin与已知pre-dispatch tail traces。若base projection持久化为`not_required_by_downstream`，直接从protocol attempts提交且不构造provider/请求secret；否则只执行snapshot中剩余tail request keys，最后从snapshot protocol attempts与所有已持久化tail attempts稳定重建v2 result并提交；
 - trace存在：不再次取得该planned unit回答；
 - terminal call存在：复用原结果，不再次调用；
 - intent存在而terminal缺失：先检查当前进程和response。response存在时从已存response完成terminal；确认无活跃owner且无response时写`unknown_transport_outcome`，同一ordinal不重调；若现有engine后续请求replacement，只能使用下一自然ordinal；
 - root已经进入`run_root`但进程死亡且没有`protocol.json`：不第二次运行同一论文root，写固定身份`infrastructure_invalid`结果并继续未开始roots；若要重做该样本，使用新run ID。
 
-这样每个正常论文root精确调用一次`run_root`，而resume仍能完成已terminal的Exp1 tail和未开始roots，不通过重建第二套状态机假装恢复协议。
+这样每个正常论文root精确调用一次`run_root`，而resume仍能完成已terminal来源Exp1 tail、立即提交已terminal非来源Exp1和未开始roots，不通过重建第二套状态机假装恢复协议。
 
 ### 11.4 覆盖tail边界
 
-coverage tail是唯一协议terminal后的Slim-local例外。它只能读取已经冻结的`ProtocolRunResult`、plan和`unscheduled_ai_unit_ids`，调用同一answer/parser/checker路径形成普通trace；不得向终止协议提交、创建protocol attempt/canonical/merge、改写root status/correctness/runtime，或把tail资源计入Experiment 1正文。
+coverage tail是唯一协议terminal后的Slim-local例外，但仅适用于由同profile Exp2–4 trace-consumer closure选出的Exp1来源root。它只能读取已经冻结的`ProtocolRunResult`、plan和`unscheduled_ai_unit_ids`，调用同一answer/parser/checker路径形成普通trace；不得向终止协议提交、创建protocol attempt/canonical/merge、改写root status/correctness/runtime，或把tail资源计入Experiment 1正文。非来源root以`not_required_by_downstream`明确终态停止。
 
 ## 12. Full profile
 
@@ -809,7 +809,7 @@ Representative与Full使用同一CLI、runner、adapter、provider、schema、st
 | `lean_v2_simple_induction_direct_nat_01` | Lean simple/induction | 1 |
 | `lean_v2_simple_pure_logic_direct_prop_01` | Lean simple/pure_logic | 2 |
 
-四题均属于冻结Exp1 inventory；两个Factorization同时属于Exp2 hard、Exp3/4 shared hard slice和Exp5 hard selection。Exp1 planned units共19，每unit最多3自然attempts，因此真实provider-call上限57；coverage tail仍必须闭合全部19个trace keys。`2026-08-21`用户确认按当前catalog和公共fixed-plan事实执行本项一致性勘误；四个case IDs、数据集和实验语义均不改变。
+四题均属于冻结Exp1 inventory；两个Factorization同时属于Exp2 hard、Exp3/4 shared hard slice和Exp5 hard selection。它们均落入当前Exp2–4 trace-consumer closure，故此Representative切片的Exp1 planned units共19，每unit最多3自然attempts，真实provider-call上限57，来源coverage tail闭合全部19个trace keys。`2026-08-21`用户确认按当前catalog和公共fixed-plan事实执行本项一致性勘误；四个case IDs、数据集和实验语义均不改变。
 
 ### 13.2 Experiment 2
 

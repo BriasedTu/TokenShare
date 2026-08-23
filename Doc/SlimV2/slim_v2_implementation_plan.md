@@ -4,13 +4,29 @@ document: slim_v2_implementation_plan
 scope: Slim V2 system assembly and offline focused verification
 owner: Stage 2 blueprint rewrite owner
 created: 2026-08-21
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 run_scope: representative_only
 ---
 
 # TokenShare Slim V2 实施蓝图
 
 > **当前获批修复覆盖（2026-08-22）**：用户已批准 `slim_v2_final_summary_lightweight_repair_plan.md`。该计划以六个轻量 Task 修复最终汇总阻断并覆盖本文件此前“实施完成/直接 Representative”的过时结论；冲突时以该计划及同步更新的三份权威/规格为准。Exp4 route evidence 实现、v1 迁移、shared code、安全/门禁和新增指标均不在本轮范围。六项完成并通过离线真实 reducer E2E 后，才用全新 run ID/目录启动真实 AI Representative。
+
+### 2026-08-23 已批准：选择性 Exp1 coverage tail
+
+本项只减少实际 Exp1 tail acquisition，不改变任何协议 root、provider request/prompt、正文指标、正式五表、Exp5 live model 或 V4 supplemental reducer。每个 Exp1 root 仍先原样运行一次 `run_root()`；随后仅当该 `case_id` 属于同一 profile 中 Experiment 2、3、4 实际消费 Exp1 trace 的 case 并集时，才按既有 `run_coverage_tail()` 语义补齐其 protocol 未调度的 planned units。该闭包由当前冻结 inventory 纯派生，Full 必须实证为 99 个 case；绝不硬编码 99。Exp5 V4 supplemental 只读 committed `RootResultV2`，不是 trace consumer，绝不加入该集合。
+
+非来源 Exp1 root 在协议自然 terminal 后直接提交明确 `trace_tail_status=not_required_by_downstream` 的最终结果；其 tail target/recorded arrays 为空，tail wall/token/cost/provider resources 均为零，保留协议 attempts 和原有 `unscheduled_ai_unit_ids`，不得伪装成已覆盖或普通 `not_needed`。来源 root 的 tail 和 Exp2–4 的 strict source closure 不变：来源 root 的每个 planned trace 缺失仍 fail-closed。是否需要 tail 必须在 `_CliRootContext` 固化，并能从持久化 `protocol.json` 的 base projection 恢复；已 terminal 的非来源 root `--resume` 不构造 provider、不请求 secret、不补 tail。资源 cap/Full zero-call plan 继续使用安全上界，保持 paper roots/executions/provider upper 为 `7017/7123/6762`，不因实际 tail 降量改变。
+
+风险驱动验证仅覆盖：Full inventory trace-consumer closure=99且不含Exp5 supplemental；来源/非来源 root 的 tail、RootResult 完整字段和 schema；两类 Exp1 resume 的 provider/secret 边界；Exp2–4 完整/缺 trace source closure；相关 CLI fake/plan、reducer/summary contract。禁止运行真实 provider、Representative/Full、Lean suite/Audit或生产 fake Representative E2E。
+
+实施检查（2026-08-23，已完成）：
+
+- [x] 以`profiles.py`纯consumer-closure helper从冻结inventory推导政策，并由CLI只对336个非来源Exp1 context显式传`False`；默认值保持`True`以来源路径fail-closed。
+- [x] 在runtime、projector、schema、storage与CLI resume preflight贯穿冻结base projection的`not_required_by_downstream`事实；非来源不生成tail material/trace、不能构造provider或secret请求。
+- [x] 保持来源root原`run_coverage_tail()`与strict source closure不变；跨Exp2/3/4最小Full fixture证实只消费来源trace且删除一个planned trace必定拒绝。
+- [x] 增加非来源、非空unscheduled且无UnitTrace的reducer golden；正式五表和summary仍可原子发布且不全局扫描trace。Exp5 V4 supplemental也被断言只读RootResult。
+- [x] 已验证Full闭包=`99`、补集=`336`、互斥/全集；Full零调用plan仍为`7017/7123/6762`，相关focused suites、`compileall`与`git diff --check`通过（完整命令/输出见`progress.md`顶部）。
 
 本计划取代旧横向微任务工作分解。实施以六个风险驱动纵向里程碑推进，每个里程碑都交付一条可运行切片；测试只证明高风险业务行为和跨模块合同，不为内部 helper、DTO、配置或覆盖率制造施工步骤。
 

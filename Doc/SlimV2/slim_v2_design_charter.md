@@ -149,7 +149,7 @@ roots 串行，单 root 内并发；结果逐 root/attempt 增量落盘；响应
 - 调用现有 core/local_runtime/plugin/storage 公共接口；
 - Factorization/Lean 领域语义不进入通用 runner；
 - shared code 默认只读；
-- coordinator 协议终态（包括有效`no_final`）后由 Slim-local coverage tail补齐未调度 unit，不修改 coordinator；只有condition/runtime或infrastructure-invalid终态阻断。
+- coordinator 协议终态后不修改 coordinator；只有同一profile的Exp2–4实际消费其trace的Exp1来源root（由冻结inventory派生）才由Slim-local coverage tail补齐未调度unit。来源root的有效`no_final`仍补tail，只有condition/runtime或infrastructure-invalid终态阻断；非来源root明确以`not_required_by_downstream`、空tail IDs和零tail资源停止。
 - Experiment 4 的消融采用同一协议本体上的结构性局部旁路，不复制 runner、scheduler、状态机或 event ledger；只有真实调用边界早于现有 hook、且 Slim-local 无法得到 required evidence 时，才能按获批设计增加默认零影响的 shared optional seam。
 
 ### 5.4 两种回答执行能力
@@ -206,7 +206,7 @@ roots 串行，单 root 内并发；结果逐 root/attempt 增量落盘；响应
 本文不重复实验公式，但以下架构后果不可改变：
 
 - 所有 roots 在 runner 层串行，`worker_count` 只控制当前 root 内 AI units；
-- Experiment 1 协议 terminal（包括有效`no_final`）后立即运行 coverage tail，只有设施终态阻断；tail资源单列且不回写 root runtime；
+- Experiment 1 的来源root在协议terminal（包括有效`no_final`）后立即运行coverage tail，只有设施终态阻断；非来源root不运行tail。两类root都保留完整协议结果，tail资源单列且不回写root runtime；
 - Experiment 2 完整继承 Experiment 1 plan，不使用独立 split；
 - Experiment 2–4 的来源键固定为 `case_id × source_repeat_id=0 × planned_ai_unit_id`，普通字段核对后才可消费；
 - Experiment 2–4 provider calls 为 0，ordinal缺失只允许同 trace last-attempt fallback；

@@ -134,6 +134,7 @@ def _validate_protocol_snapshot_traces(
     traces: Iterable[UnitTraceV1],
     tail_request_keys: Iterable[str],
     protocol_projection_present: bool,
+    tail_not_required_by_downstream: bool,
 ) -> None:
     """校验 Exp1 snapshot 中 protocol 与已知 pre-dispatch tail 事实。"""
 
@@ -183,9 +184,12 @@ def _validate_protocol_snapshot_traces(
     tail_material_prepared = (
         protocol_projection_present or bool(request_keys) or bool(pre_dispatch_ids)
     )
+    if tail_not_required_by_downstream and (request_keys or pre_dispatch_ids):
+        raise ValueError("not-required Exp1 tail snapshot cannot carry tail material")
     if (
         experiment_id == "exp1"
         and tail_material_prepared
+        and not tail_not_required_by_downstream
         and not coverage_tail_blocked(
             summary if isinstance(summary, Mapping) else {}
         )
@@ -491,15 +495,6 @@ class RunStore:
             for key, value in requests.items()
         ):
             raise ValueError("protocol tail requests must be keyed objects")
-        _validate_protocol_snapshot_traces(
-            experiment_id=experiment_id,
-            case_id=case_id,
-            protocol_result=protocol_body,
-            traces=trace_rows,
-            tail_request_keys=requests,
-            protocol_projection_present=protocol_projection is not None,
-        )
-        projection_body = None
         if protocol_projection is not None:
             protocol_projection.validate()
             projection_key = (
@@ -510,6 +505,22 @@ class RunStore:
             )
             if projection_key != key:
                 raise ValueError("protocol projection identity differs from root")
+        tail_not_required_by_downstream = bool(
+            protocol_projection is not None
+            and protocol_projection.experiment_id == "exp1"
+            and protocol_projection.trace_tail_status == "not_required_by_downstream"
+        )
+        _validate_protocol_snapshot_traces(
+            experiment_id=experiment_id,
+            case_id=case_id,
+            protocol_result=protocol_body,
+            traces=trace_rows,
+            tail_request_keys=requests,
+            protocol_projection_present=protocol_projection is not None,
+            tail_not_required_by_downstream=tail_not_required_by_downstream,
+        )
+        projection_body = None
+        if protocol_projection is not None:
             projection_body = asdict(protocol_projection)
             projection_body["schema_version"] = ROOT_RESULT_SCHEMA_VERSION
         return self.write_root_protocol(
@@ -559,6 +570,11 @@ class RunStore:
         if raw_projection is not None and not isinstance(raw_projection, Mapping):
             raise ValueError("protocol snapshot projection must be an object or null")
         traces = tuple(_trace_from_document(item) for item in raw_traces)
+        projection = (
+            _root_result_from_document(raw_projection)
+            if isinstance(raw_projection, Mapping)
+            else None
+        )
         _validate_protocol_snapshot_traces(
             experiment_id=experiment_id,
             case_id=case_id,
@@ -566,11 +582,11 @@ class RunStore:
             traces=traces,
             tail_request_keys=raw_requests,
             protocol_projection_present=raw_projection is not None,
-        )
-        projection = (
-            _root_result_from_document(raw_projection)
-            if isinstance(raw_projection, Mapping)
-            else None
+            tail_not_required_by_downstream=bool(
+                projection is not None
+                and projection.experiment_id == "exp1"
+                and projection.trace_tail_status == "not_required_by_downstream"
+            ),
         )
         if projection is not None and (
             projection.experiment_id,

@@ -1482,7 +1482,6 @@ class RootResultV2(SchemaRecordV1):
                 self.trace_tail_started_at_ms,
                 self.trace_tail_terminal_at_ms,
                 self.trace_tail_wall_clock_ms,
-                self.trace_tail_status,
                 self.trace_tail_recorded_ai_unit_ids,
                 self.trace_tail_success_unit_count,
                 self.trace_tail_failure_unit_count,
@@ -1490,10 +1489,19 @@ class RootResultV2(SchemaRecordV1):
                 self.trace_tail_total_tokens,
                 self.trace_tail_cost_estimate_cny,
             )
-            if expected != (None, None, 0, "not_needed", [], 0, 0, 0, 0, 0):
+            if expected != (None, None, 0, [], 0, 0, 0, 0, 0):
                 raise SchemaValidationError("Exp1 no-target tail fields are inconsistent")
+            if self.trace_tail_status not in {
+                "not_needed",
+                "not_required_by_downstream",
+            }:
+                raise SchemaValidationError("Exp1 no-target tail status is invalid")
             return
 
+        if self.trace_tail_status == "not_required_by_downstream":
+            raise SchemaValidationError(
+                "not-required Exp1 tail cannot carry target identities"
+            )
         if self.trace_tail_started_at_ms is None or self.trace_tail_terminal_at_ms is None:
             raise SchemaValidationError("Exp1 target tail requires start and terminal")
         _require_nonnegative_int(

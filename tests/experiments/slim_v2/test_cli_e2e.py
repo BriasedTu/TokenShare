@@ -1397,6 +1397,101 @@ def test_source_closure_failure_is_scoped_to_condition(tmp_path: Path) -> None:
     }
 
 
+def test_full_source_closure_checks_only_exp2_to_exp4_consumers_and_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full 的99个来源闭包由 inventory 定义；closure 不扫描336个非来源 Exp1 root。"""
+
+    from tokenshare.experiments.slim_v2 import cli
+    from tokenshare.experiments.slim_v2.profiles import (
+        build_inventory,
+        downstream_trace_consumer_case_ids,
+        project_root_inventory_rows,
+    )
+    from tokenshare.experiments.slim_v2.storage import RunStore
+
+    inventory = build_inventory("full")
+    projected = project_root_inventory_rows(inventory)
+    consumer_case_ids = downstream_trace_consumer_case_ids("full")
+    assert len(consumer_case_ids) == 99
+
+    selected_targets: list[RootInventoryV1] = []
+    used_case_ids: set[str] = set()
+    for experiment_id in ("exp2", "exp3", "exp4"):
+        target = next(
+            root
+            for root in projected.roots
+            if (
+                root.experiment_id == experiment_id
+                and root.domain == "factorization"
+                and str(root.case_id) not in used_case_ids
+            )
+        )
+        selected_targets.append(target)
+        used_case_ids.add(str(target.case_id))
+    assert {root.experiment_id for root in selected_targets} == {"exp2", "exp3", "exp4"}
+    assert {str(root.case_id) for root in selected_targets} <= consumer_case_ids
+
+    selected_sources = [
+        next(
+            root
+            for root in projected.roots
+            if root.experiment_id == "exp1" and root.case_id == target.case_id
+        )
+        for target in selected_targets
+    ]
+    non_source = next(
+        root
+        for root in projected.roots
+        if (
+            root.experiment_id == "exp1"
+            and str(root.case_id) not in consumer_case_ids
+        )
+    )
+    source = RunStore(tmp_path / "source")
+    source.write_frozen_inventories(
+        conditions=inventory.conditions,
+        roots=[*selected_sources, non_source],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    for root in selected_sources:
+        source.write_root_result(_success(root, None))
+        _write_factor_source(source, root)
+    # 这份最终结果合法，但无 trace；它不能成为跨实验的隐式来源需求。
+    non_source_result = replace(
+        _success(non_source, None),
+        trace_tail_status="not_required_by_downstream",
+    )
+    non_source_result.validate()
+    source.write_root_result(non_source_result)
+
+    observed_trace_case_ids: list[str] = []
+    original_read_trace = RunStore.read_trace
+
+    def spy_read_trace(
+        store: RunStore,
+        case_id: str,
+        repeat_id: int,
+        planned_ai_unit_id: str,
+    ) -> UnitTraceV1:
+        observed_trace_case_ids.append(case_id)
+        return original_read_trace(store, case_id, repeat_id, planned_ai_unit_id)
+
+    monkeypatch.setattr(RunStore, "read_trace", spy_read_trace)
+    cli._source_closure(selected_targets, source.run_dir, cli._case_inputs())
+    assert set(observed_trace_case_ids) == {str(root.case_id) for root in selected_targets}
+    assert str(non_source.case_id) not in observed_trace_case_ids
+
+    missing_target = selected_targets[1]
+    source.trace_path(
+        str(missing_target.case_id), 0, str(missing_target.planned_ai_unit_ids[0])
+    ).unlink()
+    with pytest.raises(RuntimeError, match="source closure is incomplete"):
+        cli._source_closure(selected_targets, source.run_dir, cli._case_inputs())
+
+
 def test_representative_cap_secret_disk_and_price_are_run_safety_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -256,6 +256,40 @@ def test_exp3_and_exp4_case_id_tuples_match_frozen_selection_rules_exactly() -> 
     assert profiles.EXP3_FACTORIZATION_CASE_IDS == profiles.EXP4_FACTORIZATION_CASE_IDS
 
 
+def test_full_trace_consumer_closure_uses_only_exp2_to_exp4_cases() -> None:
+    profiles = _profiles()
+
+    consumers = profiles.downstream_trace_consumer_case_ids("full")
+    full_rows = profiles.project_root_inventory_rows(
+        profiles.build_inventory("full")
+    ).roots
+    exp1_rows = [row for row in full_rows if row.experiment_id == "exp1"]
+    tail_required = {
+        row.case_id
+        for row in exp1_rows
+        if profiles.coverage_tail_required_by_downstream(row, consumers)
+    }
+    tail_not_required = {
+        row.case_id
+        for row in exp1_rows
+        if not profiles.coverage_tail_required_by_downstream(row, consumers)
+    }
+    expected = frozenset(
+        profiles.EXP2_FACTORIZATION_CASE_IDS
+        + profiles.EXP3_FACTORIZATION_CASE_IDS
+        + profiles.EXP3_LEAN_CASE_IDS
+        + profiles.EXP4_FACTORIZATION_CASE_IDS
+        + profiles.EXP4_LEAN_CASE_IDS
+    )
+
+    assert consumers == expected
+    assert tail_required == consumers
+    assert tail_required.isdisjoint(tail_not_required)
+    assert tail_required | tail_not_required == {row.case_id for row in exp1_rows}
+    assert len(tail_required) == 99
+    assert len(tail_not_required) == 336
+
+
 def test_representative_case_ids_and_strata_are_exact() -> None:
     profiles = _profiles()
     expected_case_ids = (

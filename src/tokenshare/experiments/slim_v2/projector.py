@@ -282,6 +282,7 @@ def project_root_result(
         )
         if (
             not acquisition_failure
+            and tail.trace_tail_status != "not_required_by_downstream"
             and tail.trace_tail_target_ai_unit_ids != unscheduled_ai_unit_ids
         ):
             raise RootProjectionError(
