@@ -454,11 +454,23 @@ if ($LASTEXITCODE -ne 0 -or $postSkeletonStatus.Count -ne 0) { throw 'target wor
 
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
-conda run -n tokenshare python -m pytest tests/executors/test_ai_api_descriptor.py -q
-Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'descriptor RED pytest'
+$descriptorRedOutput = @(conda run -n tokenshare python -m pytest tests/executors/test_ai_api_descriptor.py -q 2>&1)
+$descriptorRedExitCode = $LASTEXITCODE
+$descriptorRedOutput | ForEach-Object { Write-Host $_ }
+if ($descriptorRedExitCode -eq 0) { throw 'descriptor RED gate unexpectedly passed before descriptor extraction' }
+$descriptorRedText = $descriptorRedOutput -join "`n"
+$descriptorRedPatterns = @(
+    '(?im)ModuleNotFoundError:\s+No module named [''"]tokenshare\.executors\.descriptors[''"]',
+    '(?im)ImportError:.*(?:build_ai_api_executor_descriptor|tokenshare\.executors\.descriptors)',
+    '(?im)cannot import name [''"]build_ai_api_executor_descriptor[''"].*tokenshare\.executors(?:\.descriptors)?'
+)
+$descriptorRedMatched = @($descriptorRedPatterns | Where-Object { $descriptorRedText -match $_ })
+if ($descriptorRedMatched.Count -eq 0) {
+    throw "descriptor RED gate failed for an unexpected reason (exit $descriptorRedExitCode):`n$descriptorRedText"
+}
 ```
 
-预期：因 `descriptors.py` 尚不存在或 adapter 尚未改接而失败；失败原因必须与预期一致。
+预期：pytest 必须非零退出，且捕获的 stdout/stderr 必须明确显示 `tokenshare.executors.descriptors` module 缺失，或 `build_ai_api_executor_descriptor` 从目标 module/package 导入失败；意外通过、环境故障、其他 collection/runtime failure 都立即停止，不得进入 GREEN。
 
 - [ ] 在 `descriptors.py` 实现唯一所需 descriptor builder。其 descriptor ID/type、两种 request schema、capabilities、environment policy、status 和 metadata 必须与 frozen `ai_api.py` 的函数结果逐字段一致。
 
