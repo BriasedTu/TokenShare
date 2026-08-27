@@ -7,9 +7,14 @@ Use Python 3 and install the tracked dependencies in an isolated environment:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
+$env:PYTHONPATH = (Resolve-Path .\src).Path
 ```
 
-## Deterministic plan and focused checks
+The current skeleton contains the package roots, documentation, and launcher only. Later extraction commits will add the system and experiment implementation, `benchmarks/experiments/`, `configs/experiments/`, `results/experiments/`, `verification/`, and `Doc/Experiments/` before publication.
+
+## Publication-stage checks
+
+The commands below become available after those later extraction commits. They are publication gates, not commands that the current skeleton claims can already run.
 
 Generate the full experiment plan without contacting a provider:
 
@@ -26,9 +31,9 @@ Run the focused offline verification entry points:
 
 These checks use deterministic or fake executors. Do not supply real provider credentials unless a separate run is explicitly authorized.
 
-## Official metrics
+## Official metrics after result extraction
 
-Tracked official metrics are verified read-only against their manifest and Git index bytes:
+The official metrics and their verifier will be added by a later extraction commit before publication. Once present, verify them read-only against their manifest and Git index bytes:
 
 ```powershell
 .\.venv\Scripts\python verification/verify_official_results.py --verify-worktree-index
