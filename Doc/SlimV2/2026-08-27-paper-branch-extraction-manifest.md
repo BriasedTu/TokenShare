@@ -203,19 +203,35 @@ git restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_
 | `tests/plugins/lean_proof/test_lean_child_proof_flow.py` | child proof artifacts |
 | `tests/plugins/lean_proof/test_lean_descriptor_and_schemas.py` | descriptor/schema |
 | `tests/plugins/lean_proof/test_lean_environment.py` | environment manifest/path |
-| `tests/plugins/lean_proof/test_lean_fixed_plan.py` | fixed plan |
+| `tests/plugins/lean_proof/test_lean_fixed_plan.py` | `keep_then_synthesize`；fixed plan；只改 lemma-graph catalog physical path |
 | `tests/plugins/lean_proof/test_lean_fixture_project_manifest.py` | 13-file fixture authority |
 | `tests/plugins/lean_proof/test_lean_lemma_graph_certificate.py` | lemma graph certificate |
-| `tests/plugins/lean_proof/test_lean_lemma_graph_merge_policy.py` | lemma graph merge |
+| `tests/plugins/lean_proof/test_lean_lemma_graph_merge_policy.py` | `keep_then_synthesize`；lemma graph merge；只改 lemma-graph catalog physical path |
 | `tests/plugins/lean_proof/test_lean_merge_policy.py` | direct/fixed merge |
 | `tests/plugins/lean_proof/test_lean_preflight.py` | preflight identity/path |
 | `tests/plugins/lean_proof/test_lean_prompt_and_parse_policy.py` | prompt/parser |
-| `tests/plugins/lean_proof/test_lean_runtime_adapter.py` | runtime adapter |
+| `tests/plugins/lean_proof/test_lean_runtime_adapter.py` | `keep_then_synthesize`；runtime adapter；只改两个 catalog physical paths |
 | `tests/plugins/lean_proof/test_lean_split_helper.py` | split helper |
 | `tests/plugins/lean_proof/test_lean_split_strategy.py` | split strategy |
 | `tests/plugins/lean_proof/test_lean_validator.py` | checker-backed validator/root check |
 
 `test_lean_replay_evidence.py` 只服务被删 evidence pipeline；`test_lean_checker_injection.py` 以 checker injection 为威胁模型，按用户范围裁决为 `out_of_scope_by_user`，两者均排除。
+
+上述三个 `keep_then_synthesize` tests 的 path-only 变换是关闭集合：
+
+- `tests/plugins/lean_proof/test_lean_runtime_adapter.py`：把 `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 改为 `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl`，并把 `benchmarks/paper/lean_catalog.v1.jsonl` 改为 `benchmarks/experiments/lean_catalog.v1.jsonl`。
+- `tests/plugins/lean_proof/test_lean_fixed_plan.py`：只把 `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 改为 `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl`。
+- `tests/plugins/lean_proof/test_lean_lemma_graph_merge_policy.py`：只把 `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 改为 `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl`。
+
+不得改 test node、assertion、fixture content 或预期结果；semantic sidecar 内 frozen logical keys 继续保持旧值。Focused verification 必须逐项执行：
+
+```powershell
+conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_runtime_adapter.py -q
+conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_fixed_plan.py -q
+conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_lemma_graph_merge_policy.py -q
+```
+
+期望三个文件与 frozen blobs 的唯一文本差异分别等于上述 2、1、1 个 exact path substitutions；收集到的 catalog records、plan shape、merge results 与 frozen tests 等价，且三个 target test files 不再含 `benchmarks/paper/`。
 
 ### 2.10 Executor test selectors
 
@@ -483,6 +499,9 @@ Raw 不变量：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，metadat
 | `src/tokenshare/plugins/lean_proof/fixtures.py` | frozen blob + fixture physical root | 只解析 `benchmarks/experiments/fixtures/lean_proof_project` |
 | `src/tokenshare/plugins/lean_proof/preflight.py` | frozen blob + logical→physical mapping | sidecar bytes 不改，600 entries 对等 |
 | `src/tokenshare/plugins/lean_proof/semantic_authority.py` | frozen blob + logical→physical mapping | semantic-authority SHA 仍为第 3.4 节值 |
+| `tests/plugins/lean_proof/test_lean_runtime_adapter.py` | frozen blob + 第 2.9 节两个 exact catalog path substitutions | 除两个 path literals 外 diff 为空；records 与 assertions 等价 |
+| `tests/plugins/lean_proof/test_lean_fixed_plan.py` | frozen blob + 第 2.9 节一个 exact lemma-graph path substitution | 除该 path literal 外 diff 为空；plan assertions 等价 |
+| `tests/plugins/lean_proof/test_lean_lemma_graph_merge_policy.py` | frozen blob + 第 2.9 节一个 exact lemma-graph path substitution | 除该 path literal 外 diff 为空；merge assertions 等价 |
 | `src/tokenshare/experiments/__init__.py` | 原 `slim_v2/__init__.py` 的当前 schema/public 面 | 新轻量 initializer；绝不合并 legacy initializer；无 wrapper |
 | 第 3.1 节其余 13 个 experiment targets | 对应唯一 frozen source blob | imports/public names/runtime paths 按下文改名，科学与序列化合同不变 |
 | `tests/executors/test_ai_api_descriptor.py` | frozen descriptor tests + 监督裁决 | 新 import、三 provider families、invalid family、registry 等价、旧 export absence |
@@ -715,6 +734,7 @@ Doc/Experiments/corpus-manifest.md
 以下每行都是唯一 exact value→exact tracked path set；未列路径不得出现该值：
 
 - `tokenshare.slim_v2.schema.v1` → `src/tokenshare/experiments/__init__.py`。
+- `slim-v2-representative-real-20260822-144900-ef9128fe` → `src/tokenshare/experiments/schema.py`。
 - `tokenshare.slim_v2.run_config.v1` → `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/run.json`；`src/tokenshare/experiments/cli.py`；`src/tokenshare/experiments/schema.py`；`tests/experiments/test_runtime_resume.py`。
 - `tokenshare.slim_v2.root_inventory.v1` → `src/tokenshare/experiments/schema.py`。
 - `tokenshare.slim_v2.unit_trace.v1` → `src/tokenshare/experiments/schema.py`。
@@ -727,6 +747,8 @@ Doc/Experiments/corpus-manifest.md
 - `tokenshare.slim_v2.lean_environment_pass.v1` → `src/tokenshare/experiments/lean_environment.py`。
 - `tokenshare.slim_v2.reducer_summary.v1` → `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/summary.json`；`src/tokenshare/experiments/reducer.py`；`tests/experiments/test_cli_e2e.py`。
 - `tokenshare.slim_v2.exp5_v4_reference_comparison.v1` → `src/tokenshare/experiments/reducer.py`。
+- `tokenshare.slim_v2.authority_contract.v1` → `tests/experiments/fixtures/authority_contract.v1.json`。
+- `tokenshare.slim_v2.reducer_golden_run.v1` → `tests/experiments/fixtures/reducer_golden_run.v1.json`。
 - `slim_v2.protocol_material.v1` → `src/tokenshare/experiments/storage.py`。
 - `slim_v2.provider_terminal.v1` → `src/tokenshare/experiments/provider.py`；`src/tokenshare/experiments/storage.py`。
 - `slim_v2.exp3_perturbation.v1` → `src/tokenshare/experiments/scenarios.py`；`src/tokenshare/experiments/schema.py`；`tests/experiments/test_reducer_golden.py`；`tests/experiments/test_schema.py`。
