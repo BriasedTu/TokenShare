@@ -1,6 +1,6 @@
 ---
 status: frozen_for_extraction
-document: paper_branch_extraction_manifest
+document: experiments_clean_extraction_manifest
 audit_head: 0b204ce3d6767dddf09a9e9b0af3531badb78544
 target_branch: codex/experiments-clean-extraction
 target_worktree: E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction
@@ -8,11 +8,11 @@ source_freeze_tag: experiments-pre-cleanup-20260827
 date: 2026-08-27
 ---
 
-# 论文分支精确抽取 Manifest
+# Experiments 干净分支精确抽取 Manifest
 
 ## 1. 执行合同
 
-本文把 `audit_head` 上的三路只读审计结论冻结为机械抽取边界。`audit_head` 只用于证明清单来源；实际抽取必须等 Task B 完成论文修正、reducer 修正和来源整理后，解析本地 annotated tag `experiments-pre-cleanup-20260827^{}` 得到唯一的 `frozen_sha`。任何 writer 只能使用：
+本文把 `audit_head` 上的三路只读审计结论冻结为机械抽取边界。`audit_head` 只用于证明清单来源；实际抽取必须等 Task B 完成 reducer 修正、非 `paper/**` 来源整理和 baseline 后，解析 annotated tag `experiments-pre-cleanup-20260827^{}` 得到唯一的 `frozen_sha`。顶层 `paper/**` 完全排除：不读取、不复制、不验证、不审查，也不因其在来源工作树持续变化而阻塞。历史目录名 `benchmarks/paper/**` 是正式题库/配置来源，不属于顶层排除项。任何 writer 只能使用：
 
 ```powershell
 $freezeTag = 'experiments-pre-cleanup-20260827'
@@ -30,7 +30,7 @@ git restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_
 if ($LASTEXITCODE -ne 0) { throw 'target restore failed' }
 ```
 
-禁止从 live HEAD、其他 branch、其他 worktree 的工作区内容、未跟踪文件或绝对路径复制实现。目标固定为 branch `codex/experiments-clean-extraction`、worktree `E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction`。本阶段不创建该 branch/worktree/tag，也不运行 provider、实验或测试。
+禁止从 live HEAD、其他 branch、其他 worktree 的工作区内容、未跟踪文件或绝对路径复制实现。来源分支后续可以移动；这不会改变 `$freezeTag^{}`。目标固定为 branch `codex/experiments-clean-extraction`、worktree `E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction`。本阶段不创建该 branch/worktree/tag，也不运行 provider、实验或测试。
 
 清单术语是机械的：
 
@@ -49,13 +49,12 @@ if ($LASTEXITCODE -ne 0) { throw 'target restore failed' }
 
 | Source = target | 职责 | 审计证据 / 内容规则 |
 |---|---|---|
-| `.gitignore` | 排除 cache、secret、本地 raw 与 LaTeX cache | 保留 `/TokenShareData/`、`local/*.local.json`、`local/cache/` 与论文 cache ignore；byte-identical |
 | `LICENSE` | 对外许可证 | 根级公开必要文件；byte-identical |
 | `requirements.txt` | 最小 Python/pytest 依赖 | 当前 runtime 为标准库、验证用 pytest；byte-identical |
 | `src/tokenshare/__init__.py` | package 入口 | 系统闭包入口；byte-identical |
 | `src/tokenshare/protocol_engine.py` | 协议 facade | retained tests 与系统纵向路径的公共入口；byte-identical |
 
-`.gitattributes` 不在本表；它必须按第 5 节综合生成，不能保留旧 paper/archive 路径规则。
+`.gitattributes` 与 `.gitignore` 都不在本表；它们必须按第 5 节综合生成，不能照搬来源规则。
 
 ### 2.2 Core（13 个文件）
 
@@ -335,15 +334,18 @@ test_deepseek_executor_timeout_marks_usage_missing
 
 第 3.4 节所有 SHA-256 都是审计时 working-file raw bytes 的内容哈希，不是 Git object ID。Task B 必须在创建 freeze commit 与 annotated tag 之前完成以下 raw-byte 前置条件，否则抽取不得开始：
 
-Task B writer 第一次触碰 `.gitattributes` 前必须执行以下 source guard。所有已有 source working-tree changes 必须先以各自 thematic commit 提交；不得把它们混入 raw freeze commit：
+Task B writer 第一次触碰 `.gitattributes` 前必须执行以下 source guard。所有非顶层 `paper/**` 的 source working-tree changes 必须先以各自 thematic commit 提交；顶层排除项保持原样且不得混入 raw freeze commit：
 
 ```powershell
 $sourceCached = @(git diff --cached --name-only)
 if ($LASTEXITCODE -ne 0 -or $sourceCached.Count -ne 0) { throw 'source index must be empty before raw freeze work' }
 $attributeDrift = @(git diff --name-only -- '.gitattributes')
 if ($LASTEXITCODE -ne 0 -or $attributeDrift.Count -ne 0) { throw '.gitattributes already has an unstaged change' }
-$sourceStatus = @(git status --porcelain=v1)
-if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0) { throw 'all existing source changes require prior thematic commits' }
+git diff --quiet -- . ':(exclude)paper/**'
+if ($LASTEXITCODE -eq 1) { throw 'tracked non-paper worktree changes require prior thematic commits' }
+if ($LASTEXITCODE -ne 0) { throw "cannot inspect tracked non-paper worktree: exit $LASTEXITCODE" }
+$sourceUntracked = @(git ls-files --others --exclude-standard -- . ':(exclude)paper/**')
+if ($LASTEXITCODE -ne 0 -or $sourceUntracked.Count -ne 0) { throw 'untracked non-paper worktree changes require resolution' }
 ```
 
 1. 用 `apply_patch` 先删除或替换任何对同一路径生效的旧 exact `text` 或 `eol=` rule，再在 source `.gitattributes` EOF 逐行加入以下 20 个 final exact source path 的 `-text`；不得使用目录规则或 glob。只追加 `-text` 而保留冲突 `eol=` line 不合格：
@@ -468,7 +470,7 @@ foreach ($path in $rawPaths) {
 normal `git add` 可省略其认为与当前 index 相同的 raw path；但已观察到的 stat-cache 条件会让它在 attributes 变化后仍不重新读取 working raw bytes，因此上述强制 raw index step 是 raw freeze 的必要闭包。强制步骤完成后，`$actualStaged` 仍只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。attribute gate 明确从 index 中读取已 staged 的 `.gitattributes`，并在此之前证明 working tree 没有 `.gitattributes` drift。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256；20 项必须全部通过该 gate。
 
 3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
-4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
+4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout，也不得要求 live source HEAD 或 status 保持不变。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
 
 Target synthesized `.gitattributes` 必须逐行包含以下 20 个 exact public path 的 `-text`，保证启用 `core.autocrlf` 的 fresh checkout 仍保持 frozen raw bytes；不得以旧 source EOL 推断或转换：
 
@@ -574,37 +576,7 @@ for path, wanted in expected.items():
 
 Sidecar 中的旧路径是冻结 logical identity，不能重写 sidecar。实现必须先以旧 key 校验记录的 digest，再把 key 映射到上表 public physical path 读取 bytes。严格旧 key allowlist 见第 10 节。Sidecar exact structure counts 是：top-level fields=`4`，字段名为 `schema_version`、`authority`、`semantic_projection`、`sidecar_digest`；`authority.raw_files=3`；`semantic_projection.environment.files=12`；`semantic_projection.checker.files=1`。验证器必须同时比较这些计数、键名、raw SHA-256 与逐项 mapping。
 
-### 3.5 Paper 的 pre-freeze 归一化与 target keep
-
-Task B 必须先完成下列来源归一化；抽取 writer 随后只从 `frozen_sha` 的 `paper/` 同路径恢复 10 个文件。
-
-| Audit source | Frozen/target path | 内容规则 / 证据 |
-|---|---|---|
-| `paper.bbl` | `paper/paper.bbl` | exact move，bytes 不变；构建复现输入 |
-| `reference.bib` | `paper/reference.bib` | exact move，bytes 不变；唯一 bibliography database |
-| `paper.tex` | `paper/paper.tex` | 不是纯移动；Task B 必须先按下表纠正权威冲突并冻结 |
-| `paper/AGENTS.md` | `paper/AGENTS.md` | keep exact；论文 workspace 规则 |
-| `paper/DETAIL_REQUESTS.md` | `paper/DETAIL_REQUESTS.md` | keep exact；代码细节提问通道 |
-| `paper/IMPLEMENTATION_DETAILS.md` | `paper/IMPLEMENTATION_DETAILS.md` | keep exact；代码级参考 |
-| `paper/LEAN_FOUR_NODE_DAG_EXAMPLES.md` | `paper/LEAN_FOUR_NODE_DAG_EXAMPLES.md` | keep exact；Lean DAG 例子 |
-| `paper/PAPER_TERMINOLOGY_MAPPING.md` | `paper/PAPER_TERMINOLOGY_MAPPING.md` | keep exact；术语映射 |
-| `paper/PAPER_WRITING_BRIEF.md` | `paper/PAPER_WRITING_BRIEF.md` | keep exact；论文共同基线 |
-| `paper/PROFESSOR_REVISION_GUIDANCE.md` | `paper/PROFESSOR_REVISION_GUIDANCE.md` | keep exact；论文修订指导 |
-
-Task B 对 `paper/paper.tex` 的冻结阻断项：
-
-| 当前冲突位置 | 必须冻结的事实 |
-|---|---|
-| lines 1086–1096、1114–1115 | Exp1 是 300 Factorization + 135 Lean，provider/model 为 DeepSeek V4 Flash，不是 GLM-5.2，也不是 500 Factorization |
-| lines 1029–1032、1138–1157 | Exp2 是 50 个 hard Factorization roots，完整继承 Exp1 plan；不得保留独立 20-way split/166 roots |
-| lines 1168–1198 | Exp3 使用 50-root trace replay，provider calls=0；不得描述 fault/replacement 新真实调用或 500-root条件 |
-| lines 1209–1219 | Exp4 是 FULL + 4 single + 6 pair 共 11 modes，50 Factorization + 15 Lean；不得保留五模式/500 Factorization |
-| lines 1237–1246 | Exp5 models 为 `zai-org/GLM-5.2`、`Qwen/Qwen3-14B`、`MiniMaxAI/MiniMax-M2.5`；每 model 37 roots，`repeat_id=0` |
-| lines 1616–1617 | bibliography 必须从 `paper/reference.bib` 对应的 `\bibliography{reference}` 读取，不得保留 `wine2026/reference` |
-
-Task B 修正并提交后，抽取 writer 必须验证 `paper/` 仅含上述 10 个 tracked files；`paper/out/` 与 LaTeX cache 不进入 freeze-to-target 抽取集。
-
-### 3.6 正式结果：12 个发布文件
+### 3.5 正式结果：12 个发布文件
 
 只读 source root：`TokenShareData/outputs/slim_v2/slim-v2-full-flash-20260823-233000-b4c8e951/`。Target root：`results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/`。下列相对路径不变：
 
@@ -627,7 +599,9 @@ Task B 修正并提交后，抽取 writer 必须验证 `paper/` 仅含上述 10 
 
 正式 summary 事实必须同时验证：formal metric occurrences=`153`、unique metric IDs=`129`；observed provider calls Exp1–5=`2124/0/0/0/808`；roots/references/calls/responses/traces=`7017/106/5889/2565/1964`。Raw 保留状态固定为 `pending_advisor_archive_decision`；不复制 7.14 GB raw，不虚构 URL。
 
-Raw 不变量：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，metadata fingerprints=`9aa66fec8352982279de3e87fc1eae81` 与 `d59f593eeb7604374f05efecad4c142d`，critical files=`21,260`，critical-file manifest SHA-256=`96dc9ea143d7532c0e54482907bb12017247df4286a6656fbdc45f84705fea47`。
+当前可复现 raw gates：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，critical files=`21,260`，critical-file manifest SHA-256=`96dc9ea143d7532c0e54482907bb12017247df4286a6656fbdc45f84705fea47`，第 3.4 节 20 个 authoritative blobs，以及本节 12 个发布结果。
+
+`9aa66fec8352982279de3e87fc1eae81` 与 `d59f593eeb7604374f05efecad4c142d` 只记录在 baseline JSON 的 `historical_pre_post_audit_evidence`：算法没有持久化，且可能依赖 Git 不保证的 mtime，不能重算、不能作为 current/target gate。
 
 ## 4. 完整 selection / corpus identity
 
@@ -638,23 +612,36 @@ Raw 不变量：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，metadat
 | Factorization catalog sorted case-ID SHA-256 | `b05d785aa1f4ec2202ffa4f6f43f36fc11d6aaf2f61004591f3c2f1392c0d513` |
 | Lean lemma-graph catalog sorted case-ID SHA-256 | `9be5537cddf2a280e74ce85a202c8d8667b36a023e2b1796ca4c0d26fe907adc` |
 | Exp1–5 unique case counts | `435 / 50 / 53 / 65 / 37` |
-| Exp1–5 paper roots | `435 / 600 / 3726 / 2145 / 111`；总计 `7017` |
+| Exp1–5 roots | `435 / 600 / 3726 / 2145 / 111`；总计 `7017` |
 | Exp3 references | `106` |
 | execution roots | `7123` |
 | Exp1–5 condition counts | `12 / 48 / 342 / 33 / 12` |
 | downstream trace-consuming case union | `99` |
-| ordered root identity SHA-256 | `b6ae545102c57f73b1b6c7641b630944d024ba0e757b637a3253b26c6c68bdb7` |
-| ordered reference identity SHA-256 | `9e67170af1c15400c50fc5c8d79ce29695838a4aef1d9d6b909410a10323c351` |
+| `full_root_identities` | count=`7017`；canonical items bytes=`1,448,798`；items SHA-256=`ec5ca012faffc148be5eff65d43394b2d7861c666468e59841c716c88dea7c07` |
+| `full_reference_identities` | count=`106`；canonical items bytes=`22,055`；items SHA-256=`b537bd614ac9c86f2f864afb0e6a7f3c1fe22e38d772784c1fc8c0c914f43cdb` |
 | Exp4 challenge plans | `195`，SHA-256=`396bde3849cc3c0f37e67a9b880a34e114a8f1215b5e438b62c62c14b34bc057` |
 | provider-call upper bound | total `6762`；Exp1–5=`5910/0/0/0/852` |
 
-验证必须比较 source baseline JSON 中完整的 ordered case IDs、root identity tuples、reference identity tuples、condition objects、195 challenge objects 与 provider-bound objects，同位置逐元素相等；摘要 SHA 只作为第二重证据。
+Baseline JSON 中 `full_root_identities` 与 `full_reference_identities` 必须各自是自描述对象，并完整包含以下字段：
+
+- `schema_version`：固定为 `tokenshare.experiments.identity_set.v1`；
+- `count`：必须等于 `items` 长度；
+- `identity_fields`：固定为 `['root_run_id','experiment_id','condition_id','case_id','repeat_id']`；
+- `sort_fields`：固定为 `['experiment_id','condition_id','case_id','repeat_id','root_run_id']`；
+- `canonical_json`：对象，固定记录 `python_expression="json.dumps(items,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')"`、`encoding="utf-8"`、`bom=false`、`trailing_newline=false` 与对应 `byte_length`；
+- `items_sha256`：只对 canonical `items` 数组 bytes 计算；
+- `items`：完整对象数组，每个 item 恰有 `{root_run_id,experiment_id,condition_id,case_id,repeat_id}` 五个字段。
+
+排序按 `(experiment_id,condition_id,case_id,repeat_id,root_run_id)` 的 Python/Unicode code-point 升序。哈希输入严格为 `json.dumps(items,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')`，无 BOM、无尾换行，不得把 wrapper fields 纳入哈希。验证必须检查 schema/count/字段集/排序/byte length/SHA，并将 source baseline 与 target 完整 `items` 同位置逐元素比较。
+
+旧值 `b6ae545102c57f73b1b6c7641b630944d024ba0e757b637a3253b26c6c68bdb7` 和 `9e67170af1c15400c50fc5c8d79ce29695838a4aef1d9d6b909410a10323c351` 的 tuple/schema/serialization 未持久化，必须只放在 baseline JSON 的 `historical_unreproducible_hashes`，不得作为 current/target gate。其余 ordered case IDs、condition objects、195 challenge objects 与 provider-bound objects 仍须完整保存并逐元素相等；可复现摘要 SHA 只作为第二重证据。
 
 ## 5. `synthesize`
 
 | Target | 唯一输入 / 职责 | 必须验证 |
 |---|---|---|
-| `.gitattributes` | 逐行写入第 3.4 节列出的 20 个 exact public path `-text`；不保留旧 paper/archive/output 规则 | fresh checkout raw bytes 的 SHA-256 与第 3.4 节一致；无 glob、无 EOL 转换、无旧路径规则 |
+| `.gitattributes` | 逐行写入第 3.4 节列出的 20 个 exact public path `-text`；不保留旧 archive/output 规则 | fresh checkout raw bytes 的 SHA-256 与第 3.4 节一致；无 glob、无 EOL 转换、无旧路径规则 |
+| `.gitignore` | 综合 `/TokenShareData/`、`local/*.local.json`、`local/cache/`、Python bytecode、pytest/coverage cache、常见虚拟环境与编辑器临时文件规则 | 不复制来源文件；不含只服务 LaTeX 或顶层 `paper/**` 的规则；secret/raw/cache 保持 ignored |
 | `src/tokenshare/executors/descriptors.py` | 只从 frozen `src/tokenshare/executors/ai_api.py:251-284` 拆出 `build_ai_api_executor_descriptor` | siliconflow/openai/deepseek 逐字段等价；非法 family `ValueError`；文件名不得为 `ai_api_descriptor.py` |
 | `src/tokenshare/executors/__init__.py` | 重写为 contracts/registry/deterministic/mock/config/transport/artifacts/descriptors 的轻量导出 | 不导出/导入 `AIAPIExecutor`、local config、selector、replay、response bank 或 trace-backed |
 | `src/tokenshare/plugins/factorization/runtime_adapter.py` | frozen blob + descriptor import 变更 | 不 import `executors.ai_api`；其余 diff 为空 |
@@ -671,7 +658,7 @@ Raw 不变量：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，metadat
 | `tests/executors/test_ai_api_deepseek_transport.py` | 第 2.10 节六个 exact functions | 不 import `_usage_summary`/`AIAPIExecutor` |
 | `benchmarks/experiments/manifest.v1.json` | 第 3.4、4 节完整 arrays/hashes/mappings | 完整 identity 对等，不抽样 |
 | `tests/experiments/test_authoritative_corpus.py` | manifest 与 public corpus | 完整 arrays、SHA、13 fixture 与 sidecar mapping |
-| `README.md` | 系统、唯一 experiments 入口、paper/results 路由 | 不把工程代号当产品名，不链接旧主线 |
+| `README.md` | 系统、唯一 experiments 入口、正式 corpus/results 路由 | 不把工程代号当产品名，不链接旧主线，不介绍顶层 `paper/**` |
 | `AGENTS.md` | clean repository 工作/范围/验证规则 | 只描述当前系统与 experiments；不带 Rxx/relay |
 | `REPRODUCIBILITY.md` | install、plan、fake smoke、official reducer 只读复核 | 无本机绝对 source dependency；raw pending 状态真实 |
 | `RESULTS.md` | 12 发布文件与 raw archive 状态 | 历史 run ID 说明；不声称外部 archive 已存在 |
@@ -682,12 +669,12 @@ Raw 不变量：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，metadat
 | `Doc/Experiments/system-integration.md` | core/runtime/plugin/executor 接线 | 不带旧 gate/authority |
 | `Doc/Experiments/corpus-manifest.md` | corpus/selection 人类说明 | 与机器 manifest 全量事实一致 |
 | `Doc/Experiments/code-map.md` | retained source/tests/verification 路由 | 与最终 tree 一致 |
-| `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/manifest.json` | 第 3.6 节 12 files、`frozen_sha`、run ID、raw 状态 | 12 SHA/bytes/rows 全匹配；不含 raw body/secret |
+| `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/manifest.json` | 第 3.5 节 12 files、`frozen_sha`、run ID、raw 状态 | 12 SHA/bytes/rows 全匹配；不含 raw body/secret |
 | `verification/run_verification.py` | system/experiments 两个 focused gate 编排 | 只运行第 11 节 exact commands；network calls=0 |
 | `verification/fast-tests.txt` | retained 非 Lean system selectors + experiment selectors | 无 legacy paper/formal/LeanAudit profile |
 | `verification/verify_authoritative_corpus.py` | 第 3.4、4 节 corpus/完整 arrays | 完整数组与 identity 逐元素对等，非抽样 |
-| `verification/verify_official_results.py` | 第 3.6 节 result/reducer 只读验证 | 第 8 节 tripwire 合同 |
-| `verification/verify_extraction.py` | ancestry、tracked boundary、absence、allowlist | default-deny 与第 9、10 节全量扫描 |
+| `verification/verify_official_results.py` | 第 3.5 节 result/reducer 只读验证 | 第 8 节 tripwire 合同 |
+| `verification/verify_extraction.py` | freeze-tag ancestry、tracked boundary、absence、allowlist | default-deny 与第 9、10 节全量扫描；`git ls-files -- 'paper/**'` 必须为空 |
 
 ### 5.1 Byte-level closed-transform gate
 
@@ -789,6 +776,7 @@ SLIM_V2_SCHEMA_VERSION -> EXPERIMENT_SCHEMA_VERSION
 | Frozen source path / selector | 唯一允许结果 |
 |---|---|
 | `.gitattributes` | 第 3.4、5 节的 public raw-byte rules |
+| `.gitignore` | 第 5 节的 clean target ignore rules；不照搬来源规则 |
 | `README.md` | 第 5 节公开入口 |
 | `AGENTS.md` | 第 5 节 clean-repository 规则 |
 | `Doc/**` | 只生成第 5 节六个 exact `Doc/Experiments/` targets |
@@ -797,7 +785,7 @@ SLIM_V2_SCHEMA_VERSION -> EXPERIMENT_SCHEMA_VERSION
 | audit/freeze `tests/experiments/**` minus 第 3.2 节 14 个 exact move sources | 不复制 legacy tests/helper；final target 仅由 allow set 决定 |
 | audit/freeze `verification/**` minus `verification/pytest_network_tripwire.py` 与 `verification/sitecustomize.py` | 只生成第 5 节五个 exact verification targets |
 
-`.gitattributes`、`README.md`、`AGENTS.md`、六个 `Doc/Experiments/` targets 与五个 synthesized verification targets 明确不属于 `forbid_target_exact`。`verification/verify_extraction.py` 必须先断言 `synthesize target ∩ forbid_target_exact = ∅`，再分别执行 source-not-copied 与 final-target-absent 两类检查。
+`.gitattributes`、`.gitignore`、`README.md`、`AGENTS.md`、六个 `Doc/Experiments/` targets 与五个 synthesized verification targets 明确不属于 `forbid_target_exact`。`verification/verify_extraction.py` 必须先断言 `synthesize target ∩ forbid_target_exact = ∅`，再分别执行 source-not-copied 与 final-target-absent 两类检查。
 
 ### 6.2 `forbid_target_exact`: runtime/tests
 
@@ -867,13 +855,11 @@ benchmarks/paper/paper_suite_scale_profile.v1.json
 
 另排除 `fixtures/lean_proof_project/.lake/**`；只允许第 3.4 节 13 个 tracked fixture files。
 
-### 6.4 Paper/docs/root/harness/process artifacts
+### 6.4 顶层排除、docs/root/harness/process artifacts
 
 | Exact path / selector | 原因 |
 |---|---|
-| `paper/out/**` | LaTeX build cache |
-| `paper/**/*.synctex.gz`, `paper/**/*.aux`, `paper/**/*.log`, `paper/**/*.fls`, `paper/**/*.fdb_latexmk`, `paper/**/*.toc`, `paper/**/*.blg` | 生成缓存；selector 对 `paper/` tracked tree 全量匹配 |
-| audit/freeze `paper/**` minus 第 3.5 节 10 个 exact target paths | 论文 workspace 只保留获批 10 文件 |
+| top-level `paper/**` | 整个 workspace 完全排除；不得读取、复制、验证或审查，final target `git ls-files -- 'paper/**'` 必须为空。此规则不匹配必须保留并迁移的 `benchmarks/paper/**` |
 | `Doc/SlimV2/**` | 工程代号、阶段/修复/relay 过程文档；不原样进入公开分支 |
 | `progress.md`、`feature_list.json`、`session-handoff.md` | 开发过程状态，不是公开事实 |
 | `init.ps1`、`init.sh` | 旧全局/Full/LeanAudit launcher |
@@ -885,7 +871,7 @@ benchmarks/paper/paper_suite_scale_profile.v1.json
 | `verification/profiles/paper-l3-new-real-smoke-audit.txt` | legacy network/paper profile |
 | `verification/profiles/paper-l4-cell-lineage.txt` | legacy lineage profile |
 | `local/**` | tracked pytest/Rxx/历史过程产物；不得进入目标 |
-| `outputs/**` | tracked 历史输出；正式发布只取第 3.6 节 12 文件 |
+| `outputs/**` | tracked 历史输出；正式发布只取第 3.5 节 12 文件 |
 | `TokenShareData/**` | ignored raw；不得跟踪或复制，12 个发布文件写入独立 target root |
 
 ## 7. Authoritative corpus 映射合同
@@ -902,12 +888,12 @@ benchmarks/paper/paper_suite_scale_profile.v1.json
 
 `verification/verify_official_results.py` 必须在 raw root 上只读执行，且满足：
 
-1. 先比较第 3.6 节 12 个发布文件的 SHA/bytes/rows；
+1. 先比较第 3.5 节 12 个发布文件的 SHA/bytes/rows；
 2. monkeypatch `tokenshare.experiments.reducer._stage_payloads`，把 target path→serialized bytes 捕获到内存字典，不创建 stage/temp/metrics 文件；
 3. monkeypatch `tokenshare.experiments.reducer._commit_staged_metrics` 为立即抛错 tripwire；任何调用都使验证失败；
 4. 仅调用 `_reduce_run_staged(raw_root, {})`，捕获 5 CSV + 5 JSONL + `summary.json` 共 11 payload；逐 target relative path、逐 bytes 与 Git 发布 metrics 比较；
 5. 禁止调用 `reduce_run()`；静态检查脚本 AST/源码也必须证明不存在该 call；
-6. 运行前后复核 raw 非 metrics file/bytes/fingerprints/critical manifest；任一变化即失败；
+6. 运行前后复核 raw 非 metrics file count/bytes 与 critical-file count/manifest SHA-256；任一变化即失败。两个 opaque metadata fingerprints 只作 historical evidence，不重算、不作 gate；
 7. raw 缺失时默认只检查 Git result manifest；显式 `--require-raw` 才要求 raw 存在。
 
 ## 9. Verification harness 保留与门
@@ -957,7 +943,6 @@ results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/e
 results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/manifest.json
 RESULTS.md
 REPRODUCIBILITY.md
-paper/paper.tex
 Doc/Experiments/metrics.md
 Doc/Experiments/corpus-manifest.md
 ```
@@ -1054,10 +1039,10 @@ conda run -n tokenshare python -m compileall -q src/tokenshare tests/core tests/
 ```powershell
 conda run -n tokenshare python verification/run_verification.py --focused experiments
 conda run -n tokenshare python -m compileall -q src/tokenshare/experiments tests/experiments verification
-conda run -n tokenshare python -m tokenshare.experiments.cli plan --profile full --format json
+conda run -n tokenshare python -m tokenshare.experiments.cli plan --profile full --run-id extraction-target-plan
 ```
 
-期望：12 moved tests + corpus test、fake Exp1–5、resume、reducer golden、GUI/CLI/import 通过；plan 完整数组与第 4 节相等；Exp2–4 provider calls=0；network=0。
+期望：12 moved tests + corpus test、fake Exp1–5、resume、reducer golden、GUI/CLI/import 通过；plan 完整数组与第 4 节相等，`full_root_identities`/`full_reference_identities` 的 items、canonical bytes 与 SHA 全部一致；Exp2–4 provider calls=0；network=0。
 
 ### 11.4 单个有界 Lean checker smoke
 
@@ -1080,8 +1065,8 @@ if ($proc.ExitCode -ne 0) { throw "Lean checker smoke failed with exit code $($p
 ```powershell
 conda run -n tokenshare python verification/verify_official_results.py --raw-root 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline\TokenShareData\outputs\slim_v2\slim-v2-full-flash-20260823-233000-b4c8e951' --require-raw
 conda run -n tokenshare python verification/verify_extraction.py --frozen-sha $frozenSha
-$cacheHits = @(git ls-files -- 'paper/out/**' '*.synctex.gz' '*.aux' '*.log' '*.fls' '*.fdb_latexmk' '*.toc' '*.blg')
-if ($LASTEXITCODE -ne 0 -or $cacheHits.Count -ne 0) { throw 'tracked paper cache is present' }
+$paperTracked = @(git ls-files -- 'paper/**')
+if ($LASTEXITCODE -ne 0 -or $paperTracked.Count -ne 0) { throw 'top-level paper workspace is tracked in target' }
 ```
 
 期望：12 result hashes、11 in-memory reducer payloads、raw invariants、ancestry、双向 default-deny、`exclude_source_exact` 未原样复制、`forbid_target_exact` absence、synthesized-target disjointness、第 5.1 节逐 bytes closed transforms 与历史 allowlist 全部通过；最后命令无输出。`verify_official_results.py` 不调用 `reduce_run()` 且 `_commit_staged_metrics` tripwire 未触发。
@@ -1089,7 +1074,7 @@ if ($LASTEXITCODE -ne 0 -or $cacheHits.Count -ne 0) { throw 'tracked paper cache
 ### 11.6 Manifest 本身自检
 
 ```powershell
-$manifestPath = 'Doc/SlimV2/2026-08-27-paper-branch-extraction-manifest.md'
+$manifestPath = 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-manifest.md'
 $manifestCommit = git log -1 --format=%H $frozenSha -- $manifestPath
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($manifestCommit)) { throw 'cannot resolve manifest commit' }
 git show --check --oneline $manifestCommit -- $manifestPath
@@ -1111,7 +1096,7 @@ $forbidStart = ($manifestLines | Select-String '^### 6\.2 ').LineNumber
 $forbidEnd = ($manifestLines | Select-String '^## 7\. ').LineNumber
 if (@($forbidStart).Count -ne 1 -or @($forbidEnd).Count -ne 1) { throw 'forbid-target section bounds are ambiguous' }
 $forbiddenTargets = $manifestLines[($forbidStart - 1)..($forbidEnd - 2)] -join "`n"
-$mustSynthesize = @('.gitattributes', 'README.md', 'AGENTS.md', 'Doc/Experiments/README.md', 'Doc/Experiments/design.md', 'Doc/Experiments/metrics.md', 'Doc/Experiments/system-integration.md', 'Doc/Experiments/corpus-manifest.md', 'Doc/Experiments/code-map.md', 'verification/run_verification.py', 'verification/fast-tests.txt', 'verification/verify_authoritative_corpus.py', 'verification/verify_official_results.py', 'verification/verify_extraction.py')
+$mustSynthesize = @('.gitattributes', '.gitignore', 'README.md', 'AGENTS.md', 'Doc/Experiments/README.md', 'Doc/Experiments/design.md', 'Doc/Experiments/metrics.md', 'Doc/Experiments/system-integration.md', 'Doc/Experiments/corpus-manifest.md', 'Doc/Experiments/code-map.md', 'verification/run_verification.py', 'verification/fast-tests.txt', 'verification/verify_authoritative_corpus.py', 'verification/verify_official_results.py', 'verification/verify_extraction.py')
 foreach ($target in $mustSynthesize) {
     if ($forbiddenTargets.Contains("``$target``")) { throw "synthesized target is forbidden: $target" }
 }
@@ -1162,4 +1147,4 @@ if ($null -ne $request.symbol) {
 
 ## 13. 冻结结论
 
-本 manifest 的分类是关闭集合：目标 writer 按 `keep_exact`、`move_exact`、`synthesize` 构造；其余由双向 default-deny、`exclude_source_exact` 和 `forbid_target_exact` 排除。任何扩展只能走第 12 节，且不能改变正式 corpus、selection、实验参数、12 个结果文件、历史字符串 allowlist 或 raw `pending_advisor_archive_decision` 状态。
+本 manifest 的分类是关闭集合：目标 writer 按 `keep_exact`、`move_exact`、`synthesize` 构造；其余由双向 default-deny、`exclude_source_exact` 和 `forbid_target_exact` 排除。顶层 `paper/**` 始终在关闭集合之外且 target tracked 命中数必须为 0；`benchmarks/paper/**` 中被第 3.4 节点名的正式资产仍必须完整迁移。任何扩展只能走第 12 节，且不能改变正式 corpus、selection、实验参数、12 个结果文件、历史字符串 allowlist 或 raw `pending_advisor_archive_decision` 状态。
