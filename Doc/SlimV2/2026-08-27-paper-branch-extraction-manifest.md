@@ -1035,16 +1035,18 @@ if ($LASTEXITCODE -ne 0 -or $cacheHits.Count -ne 0) { throw 'tracked paper cache
 
 ```powershell
 $manifestPath = 'Doc/SlimV2/2026-08-27-paper-branch-extraction-manifest.md'
-$manifestCommit = git log -1 --format=%H -- $manifestPath
+$manifestCommit = git log -1 --format=%H $frozenSha -- $manifestPath
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($manifestCommit)) { throw 'cannot resolve manifest commit' }
 git show --check --oneline $manifestCommit -- $manifestPath
 if ($LASTEXITCODE -ne 0) { throw 'committed manifest patch has whitespace errors' }
+$manifestText = @(git show "$manifestCommit`:$manifestPath")
+if ($LASTEXITCODE -ne 0 -or $manifestText.Count -eq 0) { throw 'cannot read committed manifest from frozen history' }
 $anglePattern = ([char]60) + '[^' + ([char]62) + ']+' + ([char]62)
 $wordPattern = @(('TO' + 'DO'), ('T' + 'BD'), ('FIX' + 'ME'), (([char]31867) + ([char]20284) + ([char]25991) + ([char]20214)), (([char]30456) + ([char]20851) + ([char]27979) + ([char]35797))) -join '|'
 $shortHashPattern = '[0-9a-f]{8}' + ([char]8230)
-$hits = Select-String -LiteralPath $manifestPath -Encoding UTF8 -Pattern $anglePattern,$wordPattern,$shortHashPattern
+$hits = @($manifestText | Select-String -Pattern $anglePattern,$wordPattern,$shortHashPattern)
 if ($hits) { $hits; throw 'manifest contains a forbidden placeholder or abbreviated hash' }
-$manifestLines = Get-Content -LiteralPath $manifestPath -Encoding UTF8
+$manifestLines = $manifestText
 $allowStart = ($manifestLines | Select-String '^## 10\. ').LineNumber
 $allowEnd = ($manifestLines | Select-String '^## 11\. ').LineNumber
 if (@($allowStart).Count -ne 1 -or @($allowEnd).Count -ne 1) { throw 'allowlist section bounds are ambiguous' }
@@ -1060,7 +1062,7 @@ foreach ($target in $mustSynthesize) {
 }
 ```
 
-期望：`git show --check --oneline $manifestCommit -- $manifestPath` 退出码 0；它检查该 manifest 最近一次 committed patch，后续 Task B commits 不会改变检查对象。角括号占位、禁用词、allowlist wildcard、abbreviated SHA 与 synthesized-target contradiction 扫描均无输出。不得以 mutable `HEAD` 或 clean working tree 的 `git diff --check` 代替该 committed-content 检查。
+该 gate 从 target/review worktree 执行，但 `$manifestCommit` 的 history search 被 `$frozenSha` 限定，且扫描文本来自 `git show "$manifestCommit`:$manifestPath"`；即使后续 Task B commit 删除该 path，empty-tree deletion 也不能成为解析结果，final target 无需 tracked `Doc/SlimV2`。期望 `git show --check --oneline $manifestCommit -- $manifestPath` 退出码 0；角括号占位、禁用词、allowlist wildcard、abbreviated SHA 与 synthesized-target contradiction 扫描均无输出。不得以 mutable `HEAD`、target working path 或 clean working tree 的 `git diff --check` 代替该 frozen-history committed-content 检查。
 
 ## 12. `minimum_dependency_request`
 
