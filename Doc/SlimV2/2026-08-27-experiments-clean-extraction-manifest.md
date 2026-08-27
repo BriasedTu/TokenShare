@@ -43,6 +43,12 @@ if ($LASTEXITCODE -ne 0) { throw 'target restore failed' }
 
 目录 selector 以 `git ls-tree -r --name-only $frozenSha -- 'src/tokenshare'` 这类带本清单已枚举 exact path 的命令取得 tracked 全集；本文对每个 selector 给出完整保留或完整排除集合，不读取 ignored/untracked 内容。唯一例外是第 8 节点名的正式 raw 目录 12 个只读发布文件。
 
+Freeze evidence 分两阶段，禁止 baseline 自引用：
+
+1. Baseline JSON 只记录 `pre_baseline_source_sha`，即提交两份 baseline 文档前的权威 source evidence commit；baseline 文件不得包含 `frozen_sha`、tag object SHA 或 peeled commit SHA。Baseline commit 只能提交两份 baseline 文档，且其父提交必须精确等于 `pre_baseline_source_sha`。
+2. Baseline 文档提交后，当前 commit 才是候选 frozen commit。创建 tag 前必须证明 `refs/tags/experiments-pre-cleanup-20260827` 不存在；检查命令只接受 exit `1`，exit `0` 或其他错误都停止。`git tag -a` 必须退出 0；随后 `git cat-file -t refs/tags/experiments-pre-cleanup-20260827` 必须精确为 `tag`，记录 tag object SHA，并断言 peeled SHA 等于当前 baseline commit。
+3. 真正的 freeze identity 只在 tag 创建后写入 target-side `verification/extraction_manifest.json` 与验收证据。该文件固定记录 `pre_baseline_source_sha`、`source_tag`、`tag_object_sha`、`peeled_commit_sha` 和 target ancestry check；验证器必须重新解析 tag object/type/peeled commit，不能信任文件自报值。
+
 ## 2. `keep_exact`
 
 ### 2.1 根与 package 入口
@@ -507,6 +513,8 @@ benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Unsupport
 | `benchmarks/paper/exp1_baseline_provider_config.v3.json` | `configs/experiments/exp1_baseline_provider_config.v3.json` | `12a958510d1204738c162ad0e6754e550e41dce507dc796977c86da351bab30c` | byte-identical；新 physical default 由代码选择 |
 | `benchmarks/paper/exp5_siliconflow_provider_config.v3.json` | `configs/experiments/exp5_siliconflow_provider_config.v3.json` | `4760850bc7929dd97d8c1fe6d811359aee4c6f3e663f49faf532b0e6a0481af3` | byte-identical；新 physical default 由代码选择 |
 
+上述 7 个正式 catalog/config/semantic-sidecar 文件全部是 closed byte-identical moves：不允许格式化、解析后重写、修改内部 logical path 或改变任意 byte。目标物理路径变化只能由 consumer code 的 logical→physical resolution 处理。
+
 实际 Lean project source 是根 `fixtures/lean_proof_project/`，不是 `benchmarks/paper/fixtures/`。13 个 tracked files 全部 byte-identical 映射如下；`.lake/` 明确排除。
 
 | Source | Target | SHA-256 |
@@ -605,7 +613,7 @@ Sidecar 中的旧路径是冻结 logical identity，不能重写 sidecar。实�
 
 ## 4. 完整 selection / corpus identity
 
-`benchmarks/experiments/manifest.v1.json` 与 `verification/verify_authoritative_corpus.py` 必须保存并比较完整排序数组，不得只保存下面摘要或抽样：
+Baseline JSON、`benchmarks/experiments/manifest.v1.json` 与 `verification/verify_authoritative_corpus.py` 必须保存并比较完整排序数组，不得只保存下面摘要或抽样。Baseline JSON 的 commit identity 字段只能是第 1 节定义的 `pre_baseline_source_sha`：
 
 | Identity | 冻结值 |
 |---|---|
@@ -669,12 +677,13 @@ Baseline JSON 中 `full_root_identities` 与 `full_reference_identities` 必须�
 | `Doc/Experiments/system-integration.md` | core/runtime/plugin/executor 接线 | 不带旧 gate/authority |
 | `Doc/Experiments/corpus-manifest.md` | corpus/selection 人类说明 | 与机器 manifest 全量事实一致 |
 | `Doc/Experiments/code-map.md` | retained source/tests/verification 路由 | 与最终 tree 一致 |
-| `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/manifest.json` | 第 3.5 节 12 files、`frozen_sha`、run ID、raw 状态 | 12 SHA/bytes/rows 全匹配；不含 raw body/secret |
+| `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/manifest.json` | 第 3.5 节 12 files、run ID、raw 状态 | 12 SHA/bytes/rows 全匹配；freeze provenance 只由 target `verification/extraction_manifest.json` 承担；不含 raw body/secret |
 | `verification/run_verification.py` | system/experiments 两个 focused gate 编排 | 只运行第 11 节 exact commands；network calls=0 |
 | `verification/fast-tests.txt` | retained 非 Lean system selectors + experiment selectors | 无 legacy paper/formal/LeanAudit profile |
 | `verification/verify_authoritative_corpus.py` | 第 3.4、4 节 corpus/完整 arrays | 完整数组与 identity 逐元素对等，非抽样 |
 | `verification/verify_official_results.py` | 第 3.5 节 result/reducer 只读验证 | 第 8 节 tripwire 合同 |
-| `verification/verify_extraction.py` | freeze-tag ancestry、tracked boundary、absence、allowlist | default-deny 与第 9、10 节全量扫描；`git ls-files -- 'paper/**'` 必须为空 |
+| `verification/extraction_manifest.json` | annotated tag 创建后的 target-side freeze evidence | exact fields=`pre_baseline_source_sha/source_tag/tag_object_sha/peeled_commit_sha/target_ancestry_check`；不得由 baseline 预填 |
+| `verification/verify_extraction.py` | freeze-tag ancestry、extraction manifest、tracked boundary、absence、allowlist | 重解析 tag object/type/peeled commit；default-deny 与第 9、10 节全量扫描；`git ls-files -- 'paper/**'` 必须为空 |
 
 ### 5.1 Byte-level closed-transform gate
 
@@ -783,9 +792,9 @@ SLIM_V2_SCHEMA_VERSION -> EXPERIMENT_SCHEMA_VERSION
 | `src/tokenshare/experiments/__init__.py` | 不复制 legacy initializer；只从第 3.1 节嵌套 initializer 生成轻量 target |
 | audit/freeze `src/tokenshare/experiments/**` minus 第 3.1 节 14 个 exact move sources | 不复制 legacy paper/formal/gate/budget/evidence files；final target 仅由 allow set 决定 |
 | audit/freeze `tests/experiments/**` minus 第 3.2 节 14 个 exact move sources | 不复制 legacy tests/helper；final target 仅由 allow set 决定 |
-| audit/freeze `verification/**` minus `verification/pytest_network_tripwire.py` 与 `verification/sitecustomize.py` | 只生成第 5 节五个 exact verification targets |
+| audit/freeze `verification/**` minus `verification/pytest_network_tripwire.py` 与 `verification/sitecustomize.py` | 只生成第 5 节六个 exact verification targets |
 
-`.gitattributes`、`.gitignore`、`README.md`、`AGENTS.md`、六个 `Doc/Experiments/` targets 与五个 synthesized verification targets 明确不属于 `forbid_target_exact`。`verification/verify_extraction.py` 必须先断言 `synthesize target ∩ forbid_target_exact = ∅`，再分别执行 source-not-copied 与 final-target-absent 两类检查。
+`.gitattributes`、`.gitignore`、`README.md`、`AGENTS.md`、六个 `Doc/Experiments/` targets 与六个 synthesized verification targets 明确不属于 `forbid_target_exact`。`verification/verify_extraction.py` 必须先断言 `synthesize target ∩ forbid_target_exact = ∅`，再分别执行 source-not-copied 与 final-target-absent 两类检查。
 
 ### 6.2 `forbid_target_exact`: runtime/tests
 
@@ -913,9 +922,10 @@ verification/fast-tests.txt
 verification/verify_authoritative_corpus.py
 verification/verify_official_results.py
 verification/verify_extraction.py
+verification/extraction_manifest.json
 ```
 
-`run_verification.py --focused system` 只能编排第 2.8、2.9、2.10 节保留 tests 中的无网络、非真实 Lean checker部分，并必须包含 Factorization multi-worker 纵向路径。`--focused experiments` 必须编排第 3.2 节 12 tests、2 fixtures、`test_authoritative_corpus.py`、fake Exp1–5 vertical、resume、reducer golden 与 network tripwire；Exp2–4 observed provider calls 必须为 0。两个 gate 都不得执行 provider、Representative/Full、LeanAudit、全量 Lean catalog、旧 paper/formal runner或跨 worktree import。
+`run_verification.py --focused system` 只能编排第 2.8、2.9、2.10 节保留 tests 中的无网络、非真实 Lean checker部分，并必须包含 Factorization multi-worker 纵向路径。`--focused experiments` 必须编排第 3.2 节 12 tests、2 fixtures、`test_authoritative_corpus.py`、`verify_authoritative_corpus.py`、fake Exp1–5 vertical、resume、reducer golden 与 network tripwire；Exp2–4 observed provider calls 必须为 0。两个 gate 都不得执行 provider、Representative/Full、LeanAudit、全量 Lean catalog、旧 paper/formal runner或跨 worktree import。
 
 唯一真实 Lean checker 验证在两个 gate 之后单独执行第 11.4 节 exact pytest node；其 request 自带 `timeout_seconds=30`，外层进程再设 60 秒上限。不得扩张成 file/suite/catalog。
 
@@ -1096,7 +1106,7 @@ $forbidStart = ($manifestLines | Select-String '^### 6\.2 ').LineNumber
 $forbidEnd = ($manifestLines | Select-String '^## 7\. ').LineNumber
 if (@($forbidStart).Count -ne 1 -or @($forbidEnd).Count -ne 1) { throw 'forbid-target section bounds are ambiguous' }
 $forbiddenTargets = $manifestLines[($forbidStart - 1)..($forbidEnd - 2)] -join "`n"
-$mustSynthesize = @('.gitattributes', '.gitignore', 'README.md', 'AGENTS.md', 'Doc/Experiments/README.md', 'Doc/Experiments/design.md', 'Doc/Experiments/metrics.md', 'Doc/Experiments/system-integration.md', 'Doc/Experiments/corpus-manifest.md', 'Doc/Experiments/code-map.md', 'verification/run_verification.py', 'verification/fast-tests.txt', 'verification/verify_authoritative_corpus.py', 'verification/verify_official_results.py', 'verification/verify_extraction.py')
+$mustSynthesize = @('.gitattributes', '.gitignore', 'README.md', 'AGENTS.md', 'Doc/Experiments/README.md', 'Doc/Experiments/design.md', 'Doc/Experiments/metrics.md', 'Doc/Experiments/system-integration.md', 'Doc/Experiments/corpus-manifest.md', 'Doc/Experiments/code-map.md', 'verification/run_verification.py', 'verification/fast-tests.txt', 'verification/verify_authoritative_corpus.py', 'verification/verify_official_results.py', 'verification/verify_extraction.py', 'verification/extraction_manifest.json')
 foreach ($target in $mustSynthesize) {
     if ($forbiddenTargets.Contains("``$target``")) { throw "synthesized target is forbidden: $target" }
 }

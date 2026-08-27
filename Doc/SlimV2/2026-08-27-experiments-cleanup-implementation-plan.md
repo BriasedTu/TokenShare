@@ -158,7 +158,7 @@ conda run -n tokenshare python -m compileall -q src/tokenshare/experiments/slim_
 
 - [ ] harness/docs writer 只在实际状态需要时更新 dirty 文档。`progress.md` 中已有的其他工作必须保留，不允许为了“干净”而抹除用户修改。
 
-- [ ] 每个主题提交前运行 `git diff --cached --name-only`，确认没有夹带其他 dirty path；每个提交后重新执行 `git status --short`。
+- [ ] 每个主题提交前运行 `git diff --cached --name-only`，确认没有夹带其他 dirty path；每个提交后只用 `git diff --quiet -- . ':(exclude)paper/**'` 与 `git ls-files --others --exclude-standard -- . ':(exclude)paper/**'` 复核非顶层排除项，不运行会枚举顶层 `paper/**` 的裸 status 命令。
 
 - [ ] 冻结前只要求来源 index 为空且顶层 `paper/**` 之外的工作树干净。用 pathspec 排除顶层 `paper/**`，不得为了通过 guard 读取、提交、暂存、恢复或移动其中内容：
 
@@ -170,13 +170,13 @@ if ($LASTEXITCODE -eq 1) { throw 'tracked non-paper worktree changes remain' }
 if ($LASTEXITCODE -ne 0) { throw "cannot inspect tracked non-paper status: exit $LASTEXITCODE" }
 $sourceUntracked = @(git ls-files --others --exclude-standard -- . ':(exclude)paper/**')
 if ($LASTEXITCODE -ne 0 -or $sourceUntracked.Count -ne 0) { throw 'untracked non-paper worktree changes remain' }
-$frozenSha = git rev-parse HEAD
-git show --no-patch --format='%H %s' $frozenSha
+$preBaselineSourceSha = git rev-parse HEAD
+git show --no-patch --format='%H %s' $preBaselineSourceSha
 ```
 
-预期：index 为空、非 `paper/**` tracked/untracked status 为空；show 返回一个完整 SHA 和最后一个主题提交。顶层 `paper/**` 可以继续变化。
+预期：index 为空、非 `paper/**` tracked/untracked status 为空；show 返回 `pre_baseline_source_sha` 及最后一个来源主题提交。顶层 `paper/**` 可以继续变化。
 
-- [ ] 以只读方式生成 baseline JSON。至少记录：`frozen_sha`、正式题库逐文件 SHA-256、case ID 排序集摘要、profile 选择结果摘要、正式结果 12 个文件逐文件 SHA-256、运行目录文件/字节统计、reducer golden 结果、实验 plan 输出及 provider-call bounds，以及第 4 节定义的完整 root/reference identity 自描述对象。不得把 API key、响应正文或 7.14 GB raw 文件纳入 Git。
+- [ ] 以只读方式生成 baseline JSON。至少记录：`pre_baseline_source_sha=$preBaselineSourceSha`、正式题库逐文件 SHA-256、case ID 排序集摘要、profile 选择结果摘要、正式结果 12 个文件逐文件 SHA-256、运行目录文件/字节统计、reducer golden 结果、实验 plan 输出及 provider-call bounds，以及 manifest 第 4 节定义的完整 root/reference identity 自描述对象。Baseline 文档不能记录包含自身的 `frozen_sha`，也不能预言随后 tag 的 object/peeled SHA；不得把 API key、响应正文或 7.14 GB raw 文件纳入 Git。
 
 - [ ] baseline 必须确认以下已知事实；若实际值不同，停止并调查，不得更新计划来迎合差异：
 
@@ -211,19 +211,36 @@ conda run -n tokenshare python -m tokenshare.experiments.slim_v2.cli plan --prof
 git add -- 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-baseline.md' 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-baseline.json'
 git diff --cached --name-only
 git commit -m 'docs(experiments): record extraction baseline'
+$baselineCommit = git rev-parse HEAD
+$baselineParent = git rev-parse "$baselineCommit^"
+if ($baselineParent -ne $preBaselineSourceSha) { throw "baseline parent $baselineParent does not match pre-baseline evidence $preBaselineSourceSha" }
 ```
 
-- [ ] 创建本地 annotated tag 并验证 peeled commit：
+预期：baseline commit 只包含两份 baseline 文档，且其唯一父提交精确等于 JSON 中的 `pre_baseline_source_sha`。
+
+- [ ] Baseline 提交完成后创建本地 annotated tag，并以 fail-closed gate 验证 tag object 与 peeled commit：
 
 ```powershell
-$frozenSha = git rev-parse HEAD
-git tag -a $freezeTag $frozenSha -m 'Freeze source for experiments clean extraction on 2026-08-27'
-$peeledSha = git rev-parse "$freezeTag^{}"
-if ($peeledSha -ne $frozenSha) { throw "freeze tag peeled to $peeledSha, expected $frozenSha" }
-git cat-file -t $freezeTag
+$tagRef = "refs/tags/$freezeTag"
+git show-ref --verify --quiet $tagRef
+$tagExistsExit = $LASTEXITCODE
+if ($tagExistsExit -eq 0) { throw "freeze tag already exists: $tagRef" }
+if ($tagExistsExit -ne 1) { throw "cannot inspect freeze tag: exit $tagExistsExit" }
+$baselineCommit = git rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($baselineCommit)) { throw 'cannot resolve baseline commit' }
+git tag -a $freezeTag $baselineCommit -m 'Freeze source for experiments clean extraction on 2026-08-27'
+if ($LASTEXITCODE -ne 0) { throw 'annotated freeze tag creation failed' }
+$freezeType = git cat-file -t $tagRef
+if ($LASTEXITCODE -ne 0 -or $freezeType -ne 'tag') { throw 'freeze ref is not an annotated tag object' }
+$tagObjectSha = git rev-parse $tagRef
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagObjectSha)) { throw 'cannot resolve tag object SHA' }
+$peeledSha = git rev-parse "$tagRef^{}"
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($peeledSha)) { throw 'cannot resolve peeled commit SHA' }
+if ($peeledSha -ne $baselineCommit) { throw "freeze tag peeled to $peeledSha, expected baseline commit $baselineCommit" }
+$frozenSha = $peeledSha
 ```
 
-预期：peeled SHA 与 frozen SHA 完全一致；对象类型为 `tag`。不得执行 `git push`。
+预期：预存 tag 检查只接受“确实不存在”；创建命令成功；`refs/tags/$freezeTag` 对象类型精确为 `tag`；记录 `$tagObjectSha`；peeled SHA 精确等于当前 baseline commit。不得执行 `git push`。
 
 - [ ] 从此刻起抽取来源只认 `$freezeTag^{}`。来源分支及顶层 `paper/**` 可以继续变化，且不得成为后续门禁；所有 writer/验证器都必须用 `git show`、`git cat-file` 或 `git restore --source=$frozenSha` 读取 peeled commit，禁止读取 live source 工作树文件。
 
@@ -366,11 +383,12 @@ git -C $targetRoot commit -m 'refactor(system): extract protocol runtime and plu
 - Move: `benchmarks/paper/lean_checker_preflight.v1.json` -> `benchmarks/experiments/lean_checker_preflight.v1.json`
 - Move: `benchmarks/paper/lean_environment_semantic_authority.v1.json` -> `benchmarks/experiments/lean_environment_semantic_authority.v1.json`
 - Move: `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` -> `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl`
-- Move exact tree: `benchmarks/paper/fixtures/lean_proof_project/**` -> `benchmarks/experiments/fixtures/lean_proof_project/**`
+- Move exact tree: `fixtures/lean_proof_project/**` -> `benchmarks/experiments/fixtures/lean_proof_project/**`
 - Move: `benchmarks/paper/exp1_baseline_provider_config.v3.json` -> `configs/experiments/exp1_baseline_provider_config.v3.json`
 - Move: `benchmarks/paper/exp5_siliconflow_provider_config.v3.json` -> `configs/experiments/exp5_siliconflow_provider_config.v3.json`
 - Create: `benchmarks/experiments/manifest.v1.json`
 - Create: `tests/experiments/test_authoritative_corpus.py`
+- Create: `verification/verify_authoritative_corpus.py`
 - Modify: retained Lean environment/semantic-authority path constants
 - Create: `Doc/Experiments/README.md`
 - Create: `Doc/Experiments/design.md`
@@ -378,13 +396,15 @@ git -C $targetRoot commit -m 'refactor(system): extract protocol runtime and plu
 - Create: `Doc/Experiments/system-integration.md`
 - Create: `Doc/Experiments/corpus-manifest.md`
 
-- [ ] 从 frozen SHA 恢复 manifest 列出的 corpus/config 原文件，再用 `git mv` 放入公开路径。除了路径字段确实需要更新的配置，不得格式化或重写 JSON/JSONL；原始内容 SHA 必须先记录再比较。
+- [ ] 从 frozen SHA 恢复 manifest 列出的 7 个正式 catalog/config/semantic-sidecar blobs 和根级 Lean fixture tree，再用 `git mv` 放入公开路径。7 个正式 JSON/JSONL 文件必须逐 bytes 等于 frozen blobs，绝不格式化、解析后重写或修改内部路径；目标物理路径适配只能发生在 consumer code 的只读 resolution 层。
 
-- [ ] 创建 corpus manifest，逐文件记录 frozen path、public path、SHA-256、记录数和职责。对发生必要路径字段变化的配置，同时记录 source SHA、target SHA 和逐字段差异；不得将这种文件声称为 byte-identical。
+- [ ] 创建 corpus manifest，逐文件记录 frozen path、public path、SHA-256、记录数和职责。7 个正式文件的 source/target SHA 必须相同；provider config 的新默认物理位置由代码选择，不允许改写 config bytes。Lean fixtures 同样按 manifest 的 13 个 exact blobs 做 byte-identical 检查。
 
 - [ ] 更新 Lean plugin 的 `environment.py`、`semantic_authority.py` 及 manifest 明确列出的 path consumers，使默认路径指向 `benchmarks/experiments`。只允许路径变化，不改变 checker 语义。
 
 - [ ] 编写 corpus 测试，比较 baseline JSON 与目标：完整 case ID 排序集、Factorization/Lean 记录数、profile 选择 ID/摘要、所有内容未变文件的 SHA-256、Lean project 相对路径与文件 SHA。正式 case 集不能用抽样检查代替。
+
+- [ ] 创建 `verification/verify_authoritative_corpus.py`：从 baseline JSON 读取完整 `full_root_identities.items` 与 `full_reference_identities.items`，从 target corpus/plan 重算同 schema arrays，按 manifest 固定 sort/canonical JSON 算法执行逐元素比较，并分别校验 count、canonical byte length 与 `items_sha256`。同时验证 7 个正式 blobs、13 个 Lean fixture blobs 和 sidecar logical→physical mapping；不得用摘要或抽样替代完整 arrays。
 
 - [ ] 从已批准的 Slim V2 权威文档综合生成 `Doc/Experiments/` 五份公开文档。去掉工程代号和过程状态，但不得改动实验条件、指标口径、provider reuse 事实或系统边界。`metrics.md` 明确 Exp2–4 复用 Exp1 普通真实回答。
 
@@ -392,18 +412,19 @@ git -C $targetRoot commit -m 'refactor(system): extract protocol runtime and plu
 
 ```powershell
 conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_corpus.py -q
+conda run -n tokenshare python verification/verify_authoritative_corpus.py
 conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_environment.py tests/plugins/lean_proof/test_lean_fixture_project_manifest.py tests/plugins/lean_proof/test_lean_preflight.py -q
 git -C $targetRoot diff --check
 ```
 
-预期：全部退出码 0；题库测试证明完整 case/selection/SHA 对等，不只是文件存在。
+预期：全部退出码 0；题库测试与独立 verifier 都证明完整 case/selection/identity arrays/count/canonical bytes/SHA 对等，不只是文件存在。
 
 - [ ] spec reviewer 逐条对照原权威文档核验科学口径；quality reviewer 检查是否把过程计划或旧 runner 说明带入公开文档。
 
 - [ ] 提交：
 
 ```powershell
-git -C $targetRoot add -- 'benchmarks/experiments' 'configs/experiments' 'src/tokenshare/plugins' 'tests/experiments/test_authoritative_corpus.py' 'tests/plugins/lean_proof' 'Doc/Experiments'
+git -C $targetRoot add -- 'benchmarks/experiments' 'configs/experiments' 'src/tokenshare/plugins' 'tests/experiments/test_authoritative_corpus.py' 'tests/plugins/lean_proof' 'verification/verify_authoritative_corpus.py' 'Doc/Experiments'
 git -C $targetRoot commit -m 'data(experiments): preserve authoritative corpora and configs'
 ```
 
@@ -473,8 +494,10 @@ git -C $targetRoot commit -m 'refactor(experiments): publish the current experim
 - Create: `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/summary.json`
 - Create exact 10 table files under: `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/`
 - Create: `results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/manifest.json`
+- Retain: `verification/verify_authoritative_corpus.py`
 - Create: `verification/verify_official_results.py`
 - Create: `verification/verify_extraction.py`
+- Create: `verification/extraction_manifest.json`
 - Create/modify: `verification/run_verification.py`
 - Create/modify: `verification/fast-tests.txt`
 - Restore/create: `verification/pytest_network_tripwire.py`, `verification/sitecustomize.py`
@@ -483,7 +506,9 @@ git -C $targetRoot commit -m 'refactor(experiments): publish the current experim
 
 - [ ] 从 ignored 正式 raw 目录只复制以下 12 个文件到 Git 结果路径：`run.json`、`metrics/summary.json`、Exp1–5 的 CSV/JSONL 共 10 个表。复制前后逐文件 SHA-256 与 baseline JSON 比较；任一不同立即删除目标副本并停止调查，不得运行 reducer 覆盖来源或目标。
 
-- [ ] `manifest.json` 记录 12 个文件的相对路径、SHA-256、字节数、表行数、frozen SHA、历史 run ID、raw archive 状态。`RESULTS.md` 解释目录名中的 `slim-v2` 是冻结运行的历史内部标识，不是公开设施名称。
+- [ ] 结果 `manifest.json` 记录 12 个文件的相对路径、SHA-256、字节数、表行数、历史 run ID 和 raw archive 状态，不复制 baseline 中不存在的 frozen identity。`RESULTS.md` 解释目录名中的 `slim-v2` 是冻结运行的历史内部标识，不是公开设施名称。
+
+- [ ] 创建 target-side `verification/extraction_manifest.json`，记录 `pre_baseline_source_sha`、`source_tag`、`tag_object_sha`、`peeled_commit_sha` 和生成时 target ancestor check。值只能在 annotated tag 创建并通过 Task B fail-closed gate 后取得；`peeled_commit_sha` 必须等于 `$frozenSha`，`tag_object_sha` 必须解析为 `tag` 对象。`verification/verify_extraction.py` 必须重新解析本地 tag 并逐字段核对该文件。
 
 - [ ] 实现 `verification/verify_official_results.py`：
 
@@ -496,18 +521,21 @@ git -C $targetRoot commit -m 'refactor(experiments): publish the current experim
 
 - [ ] 实现 `verification/verify_extraction.py`：验证冻结 tag peeled commit/目标 ancestry、题库 manifest、禁止路径、运行时 import、结果 manifest、历史字符串 allowlist 和 Git tracked 文件边界。它必须断言 `git ls-files -- 'paper/**'` 无输出，并且不能把绝对 source worktree 写入目标配置或运行时。
 
+- [ ] 保留并再次运行 Task E 创建的 `verification/verify_authoritative_corpus.py`；它必须从 baseline JSON 读取完整 identity arrays，重算 target arrays，并逐元素校验 count、canonical byte length 与 identity SHA，不得在 Task G 被其他 harness 替换或降级为抽样。
+
 - [ ] 最小 harness 只包含本计划实际需要的 focused/fast verification。不得抽取旧 Rxx、LeanAudit、paper/formal pipeline profile 作为“保险”。
 
 - [ ] 运行：
 
 ```powershell
 conda run -n tokenshare python verification/verify_official_results.py --raw-root 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline\TokenShareData\outputs\slim_v2\slim-v2-full-flash-20260823-233000-b4c8e951' --require-raw
+conda run -n tokenshare python verification/verify_authoritative_corpus.py
 conda run -n tokenshare python verification/verify_extraction.py --frozen-sha $frozenSha
 $paperTracked = @(git ls-files -- 'paper/**')
 if ($LASTEXITCODE -ne 0 -or $paperTracked.Count -ne 0) { throw 'top-level paper workspace must be absent from target' }
 ```
 
-预期：前两条退出码 0，并报告 12 个 result hashes、11 个 reducer payloads、完整 corpus 对等；最后的 exact selector 无输出，证明顶层 `paper/**` 没有任何 tracked 文件。
+预期：三个 Python gate 全部退出码 0，并报告 12 个 result hashes、11 个 reducer payloads、完整 identity arrays/count/canonical bytes/SHA 对等和 tag evidence 对等；最后的 exact selector 无输出，证明顶层 `paper/**` 没有任何 tracked 文件。
 
 - [ ] spec reviewer 核对结果/公开实验文档；quality reviewer 特别检查是否误跟踪顶层 `paper/**`、raw artifacts、secret 或 source worktree 绝对路径。两者都不得读取来源工作树的顶层 `paper/**`。
 
