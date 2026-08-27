@@ -1,5 +1,5 @@
 ---
-status: review_requested
+status: user_approved
 document: paper_branch_cleanup_design
 revision: extraction_first
 scope: 论文对应仓库分支的实验设施清洗、公开命名、正式结果保留与多智能体实施治理
