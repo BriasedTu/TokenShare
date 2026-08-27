@@ -1,2 +1,0 @@
-tests/experiments/test_paper_traceability.py::test_l4_factory_rejects_manifest_listed_derived_evidence_output
-tests/experiments/test_paper_traceability.py::test_l4_protected_replay_input_root_rejects_mutated_or_missing_closure[mutated-direct]

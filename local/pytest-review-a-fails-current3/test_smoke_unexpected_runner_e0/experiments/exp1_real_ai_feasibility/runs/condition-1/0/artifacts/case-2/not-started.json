@@ -1,1 +1,0 @@
-{"condition_id":"condition-1","evidence_integrity":"invalid","failure_kind":"RuntimeError","failure_stage":"adapter_runtime","message":"adapter failed","outcome_status":"blocked_dependency","root_status":"not_started","task_id":"case-2"}

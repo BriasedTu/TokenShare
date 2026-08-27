@@ -1,7 +1,0 @@
-{
-  "failure_count": 0,
-  "paper_eligible": false,
-  "rows": [],
-  "schema_version": "tokenshare.paper_smoke_failures.v1",
-  "suite_id": "test_smoke"
-}

@@ -1,2 +1,0 @@
-{"condition_id":"condition-1","event_id":"event-case-1","event_type":"TASK_COMPLETED","experiment_id":"exp1_real_ai_feasibility","formal":true,"paper_eligible":true,"pilot_only":false,"record_scope":"protocol","repeat_id":0,"task_id":"case-1"}
-{"condition_id":"condition-1","event_id":"merge-gate-condition-1","event_type":"MERGE_GATE_COMPLETED","experiment_id":"exp1_real_ai_feasibility","repeat_id":0,"task_id":"case-1"}

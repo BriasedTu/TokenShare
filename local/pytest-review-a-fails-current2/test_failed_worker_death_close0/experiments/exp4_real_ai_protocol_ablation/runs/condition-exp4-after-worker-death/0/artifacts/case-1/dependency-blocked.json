@@ -1,1 +1,0 @@
-{"condition_id":"condition-exp4-after-worker-death","evidence_integrity":"invalid","failure_kind":"ValueError","failure_stage":"runner_internal","message":"checkpoint fault stable identity is missing","outcome_status":"blocked_dependency","root_status":"blocked","task_id":"case-1"}

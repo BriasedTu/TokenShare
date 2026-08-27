@@ -1,7 +1,0 @@
-{"fault_injection_id": "shadow-fault-id", "record_ref": {"artifact_id": "shadow-artifact", "path": "faults/z.json", "uri": "artifact://shadow"}, "task_id": "factor_v2_easy_001"}
-{"fault_injection_id": "shadow-fault-id-a", "record_ref": {"artifact_id": "fault-artifact-a", "uri": "artifact://shadow-a"}, "task_id": "factor_v2_easy_001"}
-{"fault_injection_id": "shadow-fault-id-b", "record_ref": {"uri": "artifact://fault-b"}, "task_id": "factor_v2_easy_001"}
-{"fault_injection_id": "fault-id-c", "record_ref": {}, "task_id": "factor_v2_easy_001"}
-{"fault_injection_id": "fault-id-d", "task_id": "factor_v2_easy_001"}
-{"record_ref": {"path": "faults/z.json"}, "task_id": "factor_v2_easy_001"}
-{"fault_injection_id": "", "record_ref": {"artifact_id": "", "path": null, "uri": "   "}, "task_id": "factor_v2_easy_001"}

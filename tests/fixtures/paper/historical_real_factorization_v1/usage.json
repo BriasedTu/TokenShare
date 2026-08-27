@@ -1,7 +1,0 @@
-{
-  "completion_tokens": 164,
-  "prompt_tokens": 391,
-  "reasoning_tokens": 112,
-  "schema_version": "tokenshare.historical_provider_usage_fixture.v1",
-  "total_tokens": 555
-}

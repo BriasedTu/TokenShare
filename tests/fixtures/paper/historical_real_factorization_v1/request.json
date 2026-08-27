@@ -1,8 +1,0 @@
-{
-  "direct_output_contract_id": "factorization.direct_factorization_answer.contract.v1",
-  "parser_id": "factorization.direct_factorization_answer.parser.v1",
-  "request_id": "request_factorization_500_0",
-  "schema_version": "tokenshare.historical_direct_factorization_request_fixture.v1",
-  "source_object_digest": "sha256:ac2937a2a00d2f4e7ca32861b37e551c93ca90f0a3bbcb7ac73c71f8d35b3132",
-  "target_n": "4733749"
-}

@@ -1,1 +1,0 @@
-{"condition_id":"condition-1","evidence_integrity":"invalid","failure_kind":"ValueError","failure_stage":"runner_internal","message":"protocol checkpoint requires real attempt evidence","outcome_status":"blocked_dependency","root_status":"blocked","task_id":"case-1"}

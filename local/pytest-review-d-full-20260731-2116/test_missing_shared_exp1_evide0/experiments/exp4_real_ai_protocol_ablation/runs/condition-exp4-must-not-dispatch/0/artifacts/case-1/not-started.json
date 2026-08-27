@@ -1,1 +1,0 @@
-{"condition_id":"condition-exp4-must-not-dispatch","evidence_integrity":"missing","failure_kind":"source_evidence_unavailable","failure_stage":"shared_exp1_reference","message":"shared source evidence is missing","outcome_status":"blocked_dependency","root_status":"not_started","task_id":"case-1"}

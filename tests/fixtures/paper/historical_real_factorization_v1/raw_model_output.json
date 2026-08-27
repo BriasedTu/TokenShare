@@ -1,8 +1,0 @@
-{
-  "content_text": "{\"prime_factors\":[{\"exponent\":1,\"prime\":\"1013\"},{\"exponent\":1,\"prime\":\"4673\"}],\"schema_version\":\"factorization.direct_factorization_answer.v1\",\"target_n\":\"4733749\"}",
-  "finish_reason": "stop",
-  "model": "gpt-5.6-sol",
-  "provider_family": "siliconflow",
-  "schema_version": "tokenshare.historical_raw_model_output_fixture.v1",
-  "source_object_digest": "sha256:da5c0cff478969af32a84637593d031db3512ae65e8a7e43086155c7b4ce5b69"
-}

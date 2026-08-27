@@ -1,3 +1,0 @@
-{"content_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666", "path": "artifacts/raw.json", "task_id": "factor_v2_easy_001"}
-{"artifact_id": "model-record-attempt-1", "content_hash": "sha256:c3154e2d39f31e600581e87ae63fc2aaf8e5011072ff74d9362dd8b478fc2d56", "path": "experiments/exp1_real_ai_feasibility/runs/exp1_factor_easy/0/.generations/generation-1/artifacts/attempt-1-model-record.json", "task_id": "factor_v2_easy_001"}
-{"artifact_id": "model-record-attempt-2", "content_hash": "sha256:65f9aa7df8f12c2837a4635ca0b7c8699b69856747fee028043e6586064afed0", "path": "experiments/exp1_real_ai_feasibility/runs/exp1_factor_easy/0/.generations/generation-1/artifacts/attempt-2-model-record.json", "task_id": "factor_v2_easy_001"}
