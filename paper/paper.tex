@@ -1160,7 +1160,8 @@ rather than concurrency across unrelated root inputs.
 A verifier-accepted factor witness may satisfy the root merge condition
 before every range has been scheduled. Requests already dispatched in the
 active batch are allowed to finish, while later unscheduled ranges remain
-unexecuted. Prime controls require accepted coverage of all 20 ranges.
+unexecuted. Prime controls require accepted coverage of all inherited
+required ranges.
 The evaluation records planned, dispatched, completed, in-flight, and
 unscheduled units so that logical latency is interpreted together with
 trace-attributed token and cost consumption.
@@ -1553,8 +1554,8 @@ Lean problem sets; grouping:
 \subsection{Robust to Error Injection}
 Input
 [1254, 2563, 215654, ]
-default #time #token
-Error I  [比例 1- 100\%;  Yes or no （ratio）； #time #token;  ] [false negative vs. false positive]
+default \#time \#token
+% Error I  [比例 1- 100\%;  Yes or no （ratio）； \#time \#token;  ] [false negative vs. false positive]
 Error II
 fail if and only if both [false negative]
 
@@ -1564,7 +1565,7 @@ fail if and only if both [false negative]
 [Stronger]
 [low]
 
-think mode； model size；
+% think mode； model size；
 
 
 \subsection{ablation}
