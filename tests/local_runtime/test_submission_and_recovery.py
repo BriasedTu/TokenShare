@@ -722,16 +722,16 @@ def test_child_retry_exhaustion_fails_closed_instead_of_returning_processing(
         submitted_at=clock,
     )
 
-    with pytest.raises(RuntimeError, match="child unit failed"):
-        coordinator.run_root(
-            ProtocolRunRequest(
-                run_id="run_child_retry_limit",
-                root_input={"failure": "child_executor_error"},
-                plugin_runtime=plugin,
-                worker_backend=backend,
-            )
+    result = coordinator.run_root(
+        ProtocolRunRequest(
+            run_id="run_child_retry_limit",
+            root_input={"failure": "child_executor_error"},
+            plugin_runtime=plugin,
+            worker_backend=backend,
         )
+    )
 
+    assert result.status == "failed"
     assert any(
         event.event_type == EventType.TASK_UNIT_STATE_CHANGED
         and event.payload.get("task_unit_state_change", {}).get("new_state")
