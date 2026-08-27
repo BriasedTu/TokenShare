@@ -1,8 +1,45 @@
 # TokenShare 当前进度
 
-更新时间：2026-08-23 +08:00
+更新时间：2026-08-27 +08:00
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
+
+## Slim V2 当前 focus：论文公开分支抽取式清洗（2026-08-27，执行中）
+
+- **获批策略与清单**：用户已批准 extraction-first：先冻结来源，再新建独立工作树，按 manifest 顺序抽取系统本体、权威文档、唯一对外实验设施与正式全量结果。Task A 的抽取 manifest 已完成，spec/quality 评审均为 0 finding；当前 manifest commit 为 `3f31e73e`，包含其前序修正。
+- **来源侧已收口变更**：reducer 修复 commit 为 `c5df94f2`，定向测试 `40 passed` 且 Slim 源码/测试 `compileall` exit 0。论文工作区 commits 为 `216dc503`、`4ec6d9d7`、`89e3ed86`、`83da450c`；`pdflatex` 构建通过，最终 spec/quality 评审均为 0 finding。
+- **尚未完成的边界**：目标 worktree、source freeze/tag 与目标分支尚未创建。正式 raw 结果仍保持 ignored，规模约 `7.14 GB`；长期托管位置待导师决定，本轮不将其误纳入 Git。
+- **下一步**：完成 raw byte freeze、baseline 文档与 source tag 后，创建 `codex/experiments-clean-extraction` 工作树并严格按 manifest 顺序抽取；在整套验证和远端 tag 解析完成前，不宣称清洗完成。
+
+## Slim V2 当前 focus：Full reducer 缺失原因修复与正式 metrics 发布（2026-08-27，已完成）
+
+- **修复范围**：用户批准只修 reducer 并复用现有 Full 结果。生产改动仅在 `src/tokenshare/experiments/slim_v2/reducer.py`：Exp1 protocol usage 缺失时为 token/cost totals 写 `null + usage_missing`；Exp5 parsed-unsubmitted 与 infrastructure-invalid 同 cell 时，nonpass 保持既有 N/A，验证拒绝率与调用覆盖率写 `null + infrastructure_invalid_root_present`。没有改变指标公式、schema、provider、runner、shared code 或原始 run。
+- **TDD 与 focused 验证**：两个新增回归先精确 RED 为 `exp1:cell:actual_total_tokens` 和 `exp5:model:first_attempt_verification_rejection_rate` 缺科学原因；最小实现后同命令 `2 passed, 38 deselected`。完整 `test_reducer_golden.py -q`=`40 passed in 14.89s`，Slim 源码/测试 `compileall` exit 0。
+- **全数据 dry-run**：未修改 staging 的生产归约逻辑在内存 sink 下完成 Exp1–5、153 formal occurrences 和 summary；paper roots=`435/600/3726/2145/111`、references=`106`，五表行数=`12/88/684/648/3`，11 个 payload 均验证通过，当时 `metrics` 仍不存在。
+- **正式发布**：只对 `TokenShareData/outputs/slim_v2/slim-v2-full-flash-20260823-233000-b4c8e951` 执行一次离线 `reduce --run-dir`，exit 0；已发布 `metrics/summary.json` 和 Exp1–5 各 JSONL/CSV 共 11 文件，stage temp=`0`。summary 记录 provider calls observed=`Exp1 2124 / Exp2 0 / Exp3 0 / Exp4 0 / Exp5 808`，这些全是既有 journal 事实，本轮新增调用为0。
+- **受影响 cell**：Exp1 Factorization hard 的 provider latency 保留 `172130472 ms`，`actual_total_tokens` 与 `actual_cost_estimate_cny` 为 `null + usage_missing`；Exp5 `zai-org/GLM-5.2` cell 的 nonpass 为 `null + not_applicable_or_unavailable`，验证拒绝率与调用覆盖率为 `null + infrastructure_invalid_root_present`。
+- **输入完整性**：发布前后全部非 metrics 输入均为 `1,088,134` 文件、`7,143,234,452` bytes，metadata fingerprints `9aa66fec8352982279de3e87fc1eae81 / d59f593eeb7604374f05efecad4c142d` 完全一致；21,260 个 inventory/root/reference/call/response/trace 等关键文件内容 manifest 均为 `96dc9ea143d7532c0e54482907bb12017247df4286a6656fbdc45f84705fea47`。roots=`7017`、references=`106`、calls=`5889`、responses=`2565`、traces=`1964` 均未变化。
+- **下一步**：论文侧可从该 run 的正式 metrics 开始结果分析；不得把合法缺失的 Exp1 hard token/cost 补0或反推，不需要也不得为此重复运行 Full。
+
+## 论文术语转换层（2026-08-26）
+
+- **新增成果**：`paper/PAPER_TERMINOLOGY_MAPPING.md` 作为内部项目语言到论文语言的薄翻译层，保留 `task graph/DAG`、`worker`、`executor`、`attempt`、`lease`、`parser`、`verifier` 和 `retry` 等必要通用术语，并统一转换 canonical、authority、composition、evidence、root check 等内部表达。
+- **使用边界**：该表只影响论文措辞，不改变 `PAPER_WRITING_BRIEF.md`、`IMPLEMENTATION_DETAILS.md` 和 `DETAIL_REQUESTS.md` 中与代码、实验及项目文档对应的事实。三份事实交接文档和 `paper.tex` 本轮均未修改。
+- **启动接入**：`paper/AGENTS.md` 已把术语表加入论文写作必读项，并明确其不能覆盖事实基线或改变事实含义。
+
+## 教授论文修改意见强化稿（2026-08-26）
+
+- **新增成果**：在 `paper/PROFESSOR_REVISION_GUIDANCE.md` 汇总两次教授讨论中的关键意见，并统一改写为正式导师修改意见。文档围绕研究问题、贡献层级、论证链、结构与标题、协议／系统／应用／实验边界、容错定位、应用的抽象证明作用、实验—主张对应、可复核性、事实一致性和作者学术责任展开。
+- **视角边界**：该文档只规定论文应达到的学术状态，不安排改写顺序、任务步骤或工程交接，不预设具体章数和小标题；系统与实验实现事实仍由 `paper/PAPER_WRITING_BRIEF.md` 及按需细节文档承担。
+- **修改范围**：本轮没有修改 `paper/paper.tex`、论文引用、源码、配置或实验数据，也没有运行 provider 或任何实验。
+
+## 论文工作区统一交接（2026-08-25，已收口为两级体系）
+
+- **统一默认入口**：根目录与 `paper/` 的 Agent 均以 `paper/PAPER_WRITING_BRIEF.md` 作为论文交接的唯一默认共同基线。简报保存系统与实验主线、未实现边界、教授准则和当前完成状态；普通 Slim V2 开发不强制读取论文正文或简报。
+- **按需细节**：原编号式实现证据已去掉 `REQ/EVID` 名称并迁移为 `paper/IMPLEMENTATION_DETAILS.md`，保留 root 生命周期、双领域 plugin、在线/fixed-trace、恢复/故障和 projector/reducer 的代码位置、focused verification 与限制。论文具体段落需要更细颗粒度时才定点读取，不作为启动必读。
+- **单一提问通道**：`paper/DETAIL_REQUESTS.md` 使用描述性标题，问题与实现侧回答写在同一条目中；原开放的最终 Slim V2 run／表格需求已迁移。局部答案若改变总体理解则同步更新简报，否则不扩写简报。细节请求只授权只读取证，不授权代码修改、真实 API 或实验运行。
+- **旧框架清理**：已删除 `paper/bridge/STATUS.md`、`REQUESTS.md`、`IMPLEMENTATION_EVIDENCE.md`、`EXPERIMENT_EVIDENCE.md` 和依赖旧 bridge 的 `paper/PAPER_GUIDE.md`。两份 `AGENTS.md` 已统一启动顺序、写权限、事实优先级和 stale 规则，不再维护编号式证据数据库。
+- **事实与验证边界**：实际实验输出/reducer 高于设计预期，当前实现/focused verification 决定系统行为，Slim V2 权威文档定义指标和设计范围，正文不是事实 authority。本次只重组论文协作文档并保留既有核验结果，没有修改 `paper.tex`、源码、实验设施、配置或运行数据，没有调用 provider 或启动实验。
 
 ## Slim V2 当前 focus：选择性 Exp1 coverage tail（2026-08-23，已实施待提交）
 
