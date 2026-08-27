@@ -1,0 +1,2 @@
+# Runtime dependencies are currently Python standard library only.
+pytest==9.0.3
