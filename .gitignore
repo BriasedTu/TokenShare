@@ -9,6 +9,7 @@ local/cache/
 local/_*_diagnostic.py
 local/supervision/
 outputs/
+/TokenShareData/
 out/
 
 *.aux
