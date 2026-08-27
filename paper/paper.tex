@@ -9,7 +9,7 @@
 }{%
   \usepackage[margin=1in]{geometry}
   \usepackage[numbers,sort&compress]{natbib}
-
+  
 }
 \usepackage{needspace}
 \usepackage{caption}
@@ -19,6 +19,7 @@
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{booktabs}
+\usepackage{nonfloat}
 \usepackage{amsfonts}
 \usepackage{amsmath}
 \usepackage{nicefrac}
@@ -59,12 +60,13 @@
 \title{\textit{Share Your Tokens!}  A  Community Protocol for Composing Distributed Tokens  for   ``Intelligent'' Tasks}
 % \title{Shared Token Economics:  A Protocol for Leveraging Local Tokens  for  Distributed ``Intelligent'' Tasks}
  % Verifiable and Scalable
+% \author{Anonymous Author(s)}
 
 \usepackage{authblk}
 \author[1$\dagger$]{\textbf{Hongzhan Tu}}
 \author[1$\dagger$]{\textbf{Zhizhou  Wang}}
 \author[1,2*]{\textbf{Yan Hu}}
-\author[1,2,3,4*]{\textbf{Benyou Wang}}
+\author[1,2,3,4*]{\textbf{Benyou Wang}} 
 \affil[1]{The Chinese University of Hong Kong, Shenzhen, China}
 \affil[2]{National Health Data Institute (Shenzhen),}
 \affil[3]{Shenzhen Loop Area Institute}
@@ -84,16 +86,7 @@
 \begin{abstract}
 Large-scale public-good tasks, such as scientific computation, low-resource language documentation, and multi-source data annotation, increasingly require not only generation but also decomposition, verification, revision, and accountable integration. Modern AI systems suggest that useful outputs can often be obtained by spending sufficient tokens; however, the required token, compute, and human-execution resources may exceed the capacity of any single user or organization. Meanwhile, many personal devices, local GPUs, cloud credits, tool-execution environments, and human annotators remain under-utilized.
 
-This paper studies that long-term vision through a trusted local research
-prototype. Task-specific plugins deterministically construct a task DAG;
-the local runtime coordinates workers through attempts and leases, checks
-Factorization candidates or Lean proofs, merges accepted results, and records
-events and experimental contribution facts in local storage. A controlled AI
-executor supplies real model outputs for the designated online experiments,
-while the remaining experiments replay frozen traces. The prototype does not
-implement an open distributed network, capability-driven decomposition from
-online clients, real payments, or protection against malicious participants.
-Those capabilities remain future directions rather than claims evaluated here.
+This paper proposes TokenMosaic, a protocol for aggregating idle tokens and heterogeneous execution capacity into useful, verifiable work. TokenMosaic represents a large task as a recursively decomposable task tree or DAG, assigns atomic units to distributed clients, supports local and server-side verification, reassigns failed tasks, recursively merges accepted outputs, and records contributions through a ledger. Unlike proof-of-work systems that coordinate untrusted participants around artificial computation, TokenMosaic focuses on useful computation with real public-good value. We outline the protocol design, fault-tolerance mechanisms, incentive settlement, and evaluation plan, aiming to measure not only final output quality but also reliability, provenance, recoverability, cost, and verifiability.
 \end{abstract}
 
 \section{Introduction}
@@ -105,41 +98,20 @@ However, meaningful tasks often require far more than a single prompt-response i
 
 At the same time, a large amount of useful capacity remains idle. Personal devices, local GPUs, laboratory servers, browser-based tool environments, cloud credits, human annotators, and user-owned AI agents are often under-utilized. Although each contributor may only provide a small amount of tokens, computation, or time, their aggregated capacity can be substantial.
 
-This motivates the long-term question of this paper: can a community
-collectively complete useful computational tasks by sharing tokenized
-resources while preserving correctness, accountability, and fault tolerance?
+This motivates the central question of this paper: Can we design a protocol that enables a community to collectively complete useful computational tasks by sharing tokenized resources, while preserving correctness, accountability, and fault tolerance?
 
-We examine a narrower, executable precursor to that vision. TokenMosaic is
-implemented as a trusted local research prototype in which Factorization and
-Lean plugins deterministically construct range plans or preregistered lemma
-DAGs. A local coordinator assigns their task units to registered workers,
-tracks attempts and leases, applies the plugin parser and verifier or checker,
-requeues eligible failures, merges accepted results, and persists an event
-ledger. The task split is not adapted to online client capabilities, and the
-current system does not provide a public worker network or real economic
-settlement.
+We propose TokenMosaic, a scalable, verifiable, fault-tolerant, and automated protocol for shared token economics. TokenMosaic represents a large task as a hierarchical task tree or task DAG. A root task is recursively decomposed into subtasks according to the number of available clients, their capability profiles, estimated task complexity, and verification cost. Each atomic task unit is assigned to one or more clients, locally validated before submission, verified again by master or verifier nodes, and recursively merged into higher-level outputs. Through this process, idle tokens and execution capacity are converted into auditable, mergeable, and useful work.
 
-TokenMosaic is inspired by decentralized systems such as Bitcoin and smart contracts. These systems show that mutually untrusted participants can be coordinated through shared ledgers, commitments, and incentive-compatible rules. Yet Bitcoin’s proof-of-work computation is intentionally artificial: it secures the network but does not directly produce scientific, educational, or public-interest outputs. The long-term research vision behind TokenMosaic instead asks how distributed tokens, computation, and human/program execution capacity could be organized to complete useful and socially meaningful tasks.
+TokenMosaic is inspired by decentralized systems such as Bitcoin and smart contracts. These systems show that mutually untrusted participants can be coordinated through shared ledgers, commitments, and incentive-compatible rules. Yet Bitcoin’s proof-of-work computation is intentionally artificial: it secures the network but does not directly produce scientific, educational, or public-interest outputs. TokenMosaic instead asks how distributed tokens, computation, and human/program execution capacity can be organized to complete useful and socially meaningful tasks.
 
-An eventual community deployment would introduce additional questions about
-capability-aware routing, heterogeneous remote execution, malicious or offline
-participants, identity, and payment. These are not implemented or evaluated in
-the current prototype. The present study instead asks whether deterministic
-task graphs, plugin-owned verification, bounded recovery, and local replay can
-produce auditable experimental outcomes in a trusted environment.
+This shift from meaningless computation to useful computation introduces new challenges. Useful tasks require decomposition, capability-aware routing, heterogeneous execution, local and global verification, fault recovery, provenance tracking, and incentive settlement. Contributors may be slow, unreliable, malicious, offline, or equipped with different models and tools. Therefore, the protocol must not only pool resources, but also preserve correctness, recover from failure, and make the final output auditable.
 
 This paper makes three main \textbf{contributions}:
 
 \begin{itemize}
-\item We formulate shared token economics as a research direction for useful
-distributed intelligent tasks and state which parts remain outside the current
-prototype.
-\item We implement a trusted local protocol prototype with deterministic or
-preregistered task DAGs, attempts and leases, bounded recovery, plugin-owned
-Factorization and Lean verification, result merging, an AI executor, and local
-event and contribution records.
-\item We evaluate the prototype with five frozen experiments that distinguish
-actual provider observations from logical, simulated, and trace-backed results.
+\item We formulate shared token economics as a protocol problem for useful distributed intelligent tasks.
+ \item We design TokenMosaic, a recursive protocol that supports task decomposition, client-side validation, server-side verification, fault recovery, result merging, and token settlement.
+\item  We propose an evaluation framework that measures output quality, reliability, verification cost, provenance, recovery, and efficiency rather than only final-answer correctness.
 \end{itemize}
 
 
@@ -163,35 +135,16 @@ However, this token-based view also exposes a scaling bottleneck. As tasks becom
 
 At the same time, a large amount of useful capacity remains idle. Personal devices, local GPUs, laboratory servers, cloud credits, browser-based tool environments, human annotators, and user-owned AI agents are often under-utilized. Individually, each contributor may only provide a small amount of tokens, computation, or execution time. Collectively, however, these idle resources may form a substantial pool of distributed capacity.
 
-A natural long-term question is therefore: \emph{Can a community collectively
-complete useful computational tasks by sharing tokenized resources while
-ensuring correctness, accountability, and fault tolerance?}
+A natural question is therefore: \emph{Can we design a protocol that allows a community to collectively complete useful computational tasks by sharing tokenized incentives, while ensuring correctness, accountability, and fault tolerance?}
 
 
-The current work tests only the protocol mechanisms that can be studied in a
-trusted local environment. Factorization ranges and Lean lemma DAGs are
-deterministic or preregistered before execution; they are not generated from
-the number or capability profiles of online clients. A local runtime assigns
-these task units to registered workers, verifies outputs through the
-task-specific plugin and checker, retries eligible failures, merges accepted
-results, and records the run in local artifacts, SQLite state, and an event
-ledger.
+TokenMosaic addresses this question by proposing a scalable, verifiable, fault-tolerant, and automated protocol for distributed token sharing. The key idea is to represent a large task as a recursively decomposable task tree or task graph. A root task is divided into subtasks; each subtask can be further decomposed according to the number of available clients, their capability profiles, the estimated task complexity, and the cost of verification. Each atomic task unit is assigned to one or more clients, locally validated before submission, verified again by the master or verifier nodes, and recursively merged into higher-level outputs. Through this process, idle tokens are not merely donated or consumed; they are converted into auditable, mergeable, and useful work.
 
-Existing decentralized systems provide motivation for a possible future
-community deployment. Bitcoin and smart contracts illustrate how public
-networks can coordinate commitments and incentives, while also showing that
-proof-of-work computation need not produce a useful application result. The
-prototype evaluated here does not reproduce those trust or economic
-mechanisms: it has no blockchain, wallet, smart contract, open membership, or
-real payment path.
+Existing decentralized systems provide an important precedent. Bitcoin demonstrates that a large number of mutually untrusted participants can be coordinated through shared ledgers, cryptographic commitments, and incentive-compatible rules. Smart contracts further show that task states, deposits, rewards, and disputes can be managed by transparent and programmable mechanisms. Yet Bitcoin's proof-of-work computation is intentionally artificial: its computational puzzle secures the network but does not directly produce scientific, educational, or public-interest outputs. TokenMosaic focuses on a different and more practical problem: how to organize distributed tokens, computational capacity, and human or program execution capacity to complete useful, verifiable, and socially meaningful tasks.
 
-The present experiments therefore make a narrower claim. They test local
-task-DAG execution, parser and verifier boundaries, bounded reassignment,
-merge readiness, replay, and resource accounting under preregistered faults.
-The experimental contribution and sandbox-settlement objects are local ledger
-records only; they do not transfer value. Capability-aware remote routing,
-malicious participants, production security, and incentive settlement remain
-future work.
+This shift from meaningless computation to useful computation introduces new challenges. Useful tasks are rarely solved by repeated hashing alone. They require task decomposition, capability-aware routing, heterogeneous execution, local and global verification, fault recovery, provenance tracking, and incentive settlement. Contributors may be slow, unreliable, malicious, offline, or equipped with different models and tools. Therefore, the protocol must not only pool resources, but also preserve correctness, recover from failure, and make the final output auditable. TokenMosaic is designed as a protocol layer for this setting: it recursively decomposes large tasks, allocates atomic work units, verifies submissions, reassigns failed tasks, merges accepted results, and records contributions through a ledger.
+
+
 
 
 
@@ -236,10 +189,7 @@ where $\mathcal{E}$ is the frozen executor registry, $s$ is the root-task status
     \qquad
     \widehat{Y} = \operatorname{Canonical}(G, \Pi).
 \end{equation}
-Thus, a generated answer is not yet an outcome: it becomes one only after typed parsing, verification, canonical binding, and completion of every required merge dependency. Section~\ref{sec:tokenmosaic-protocol} defines the protocol records that give each term above an implementation-level counterpart.
-The set $C$ is local experimental accounting: it records accepted protocol
-facts and sandbox settlement entries but does not represent a payment,
-wallet balance, or transferable token.
+Thus, a generated answer is not yet an outcome: it becomes one only after typed parsing, verification, canonical binding, and completion of every required merge dependency. Section~\ref{sec:protocol} defines the protocol records that give each term above an implementation-level counterpart.
 
 \subsection{Desiderata of the TokenMosaic Protocol}
 \label{sec:desiderata}
@@ -309,8 +259,8 @@ evidence mandatory parts of the extension boundary.
 
 \begin{desideratum}[Scalability]
 When additional workers or execution resources become available, the protocol
-should be able to convert at least part of that capacity into shorter completion
-time, broader search coverage, or additional recovery
+should be able to convert at least part of that capacity into useful throughput,
+shorter completion time, broader search coverage, or additional recovery
 opportunities. This property is empirical rather than automatic: coordination
 overhead, duplicated work, verifier bottlenecks, merge costs, and serial
 dependencies can limit or even reverse the benefit of adding workers.
@@ -320,8 +270,7 @@ The desideratum follows the scaling objective studied in cluster computing,
 dynamic task runtimes, distributed scheduling, and volunteer computing
 \citep{dean2004mapreduce,moritz2018ray,ousterhout2013sparrow,anderson2020boinc}.
 Accordingly, TokenMosaic evaluates scalability through worker count, completion
-time, paired speedup, parallel efficiency, worker utilization, token or cost
-consumption, and the observed saturation point,
+time, throughput, token or cost consumption, and the observed saturation point,
 rather than presuming monotonic speedup.
 
 
@@ -352,17 +301,16 @@ recovery transitions. Their empirical status is therefore determined by
 controlled task constructions and recorded execution evidence.
 
 
+% Final balanced revision of Sections 4 and 5.
+% The prose follows a conventional ICLR-style method section. A limited number
+% of figures, tables, and two abstract Python-like code blocks expose the
+% protocol logic, task differences, and recovery semantics. The code blocks
+% use the standard verbatim environment and require no additional package.
+
 \section{The TokenMosaic Protocol}
 \label{sec:tokenmosaic-protocol}
 
 This section describes the protocol itself: how a structured task is divided into executable units, how those units are assigned and checked, how verified results are combined, and how failed work is retried without discarding completed progress. The goal is to make the rules of coordination explicit while leaving task-specific reasoning to the corresponding task plugin.
-
-The executable system described here is a trusted local prototype, not a
-network protocol deployment. Plugins construct deterministic Factorization
-range plans or preregistered Lean lemma DAGs before scheduling; registered
-local executors then run the planned units. Attempts and leases coordinate the
-local runtime, and the event ledger is a local persistence mechanism rather
-than a blockchain or payment ledger.
 
 \subsection{Protocol Overview}
 \label{subsec:protocol-and-recovery-overview}
@@ -396,6 +344,14 @@ Figure~\ref{fig:protocol-and-recovery-overview} summarizes the overall execution
     font=\scriptsize,
     inner sep=3pt
   },
+  stagegroup/.style={
+    font=\bfseries\scriptsize,
+    align=center
+  },
+  groupline/.style={
+    line width=0.60pt,
+    draw=black!35
+  },
   arrow/.style={
     -{Latex[length=2mm,width=1.45mm]},
     line width=0.82pt,
@@ -409,37 +365,77 @@ Figure~\ref{fig:protocol-and-recovery-overview} summarizes the overall execution
   }
 ]
 
-% ------------------------------------------------
-% Normal execution
-% ------------------------------------------------
-\node[font=\bfseries\small, anchor=west] at (-0.15,1.58)
+% ========================================================
+% Normal execution: first-level heading
+% ========================================================
+
+\node[font=\bfseries\small, anchor=west]
+at (-0.15,2.65)
 {Normal execution};
 
-\node[stage] (graph) at (0.85,0.65)
-{Structure\\task tree or DAG};
 
-\node[stage] (run) at (3.55,0.65)
-{Execute\\attempt + lease};
+% ========================================================
+% Second-level grouping inside Normal execution
+% ========================================================
 
-\node[stage] (check) at (6.25,0.65)
-{Check\\parse + verify};
+\node[stagegroup] at (0.85,1.88)
+{Task structure};
 
-\node[stage] (accept) at (8.95,0.65)
-{Accept\\task result};
+\draw[groupline]
+  (-0.30,1.55) -- (2.00,1.55);
 
-\node[stage] (merge) at (11.65,0.65)
-{Merge\\final verification};
+
+\node[stagegroup] at (6.25,1.88)
+{Task execution and result acceptance};
+
+\draw[groupline]
+  (2.36,1.55) -- (10.14,1.55);
+
+
+\node[stagegroup] at (11.65,1.88)
+{Final result};
+
+\draw[groupline]
+  (10.50,1.55) -- (12.80,1.55);
+
+
+% ========================================================
+% Main execution flow
+% ========================================================
+
+\node[stage] (graph) at (0.85,0.55)
+{\textbf{Structure}\\task graph};
+
+\node[stage] (run) at (3.55,0.55)
+{\textbf{Execute}\\attempt + lease};
+
+\node[stage] (check) at (6.25,0.55)
+{\textbf{Check}\\parse + verify};
+
+\node[stage] (accept) at (8.95,0.55)
+{\textbf{Accept}\\task result};
+
+\node[stage] (merge) at (11.65,0.55)
+{\textbf{Merge}\\final verification};
 
 \draw[arrow] (graph) -- (run);
 \draw[arrow] (run) -- (check);
 \draw[arrow] (check) -- (accept);
 \draw[arrow] (accept) -- (merge);
 
-% ------------------------------------------------
-% Failure recovery
-% ------------------------------------------------
-\node[font=\bfseries\small, anchor=west] at (-0.15,-1.08)
+
+% ========================================================
+% Failure recovery: first-level heading
+% ========================================================
+
+\node[font=\bfseries\small, anchor=west]
+at (-0.15,-1.02)
 {Failure recovery};
+
+
+% ========================================================
+% Failure recovery flow
+% ========================================================
 
 \node[recovery] (observe) at (4.85,-2.00)
 {Observe failure\\at protocol boundary};
@@ -450,18 +446,20 @@ Figure~\ref{fig:protocol-and-recovery-overview} summarizes the overall execution
 \node[recovery] (retry) at (10.75,-2.00)
 {Retry missing task\\new attempt + lease};
 
-% Only one failure branch enters the recovery path.
+
+% Failure enters recovery from the checking stage.
 \draw[return,rounded corners=2pt]
   (check.south)
   -- ++(0,-0.34)
   -| (observe.north);
 
+
 % Recovery sequence.
 \draw[return] (observe) -- (invalidate);
 \draw[return] (invalidate) -- (retry);
 
-% Return above the recovery boxes and enter the bottom of Execute.
-% The crossing with the failure line is intentional and has no junction.
+
+% Retry returns to the same execution path.
 \draw[return,rounded corners=2pt]
   (retry.north)
   -- ++(0,0.78)
@@ -469,12 +467,9 @@ Figure~\ref{fig:protocol-and-recovery-overview} summarizes the overall execution
 
 \end{tikzpicture}%
 }
+
 \caption{
-Normal execution structures a task, executes and checks its subtasks,
-accepts verified task results, and performs the final merge and
-verification. When a failure is observed, the protocol invalidates the
-old attempt and lease, retries only the missing task with a new attempt
-and lease, and returns it to the same execution path.
+Overview of TokenMosaic execution and recovery. Normal execution proceeds from task structuring to verified task execution and final result construction, while failed tasks are retried through the same execution path.
 }
 \label{fig:protocol-and-recovery-overview}
 \end{figure}
@@ -485,176 +480,245 @@ Only accepted results can be used by dependent task units or included in a merge
 
 Failure recovery follows the same execution flow. If an attempt fails, its lease expires, or its output does not pass the required checks, that attempt cannot provide an accepted result. When retry is allowed, the protocol creates a new attempt with a new lease for the same missing task unit. The replacement execution must pass the same parsing, verification, and result-acceptance steps as the original one. Results that were already accepted from other task units are preserved, so the protocol retries only the work that is still missing.
 
-TokenMosaic separates domain-independent coordination from task-specific logic. The protocol coordinator manages task assignment, execution attempts, leases, retries, and the use of accepted results, while a task-specific module defines how the task is decomposed, how outputs are verified, and how accepted results are combined. Executors only perform assigned work and return outputs. This separation allows the same protocol flow to support different task domains without embedding domain-specific reasoning in the coordinator.
+TokenMosaic separates domain-independent coordination from task-specific logic. The protocol coordinator manages task assignment, execution attempts, leases, retries, and the use of accepted results, while a task-specific module defines how the task is decomposed, how outputs are verified, and how accepted results are merged. Executors only perform assigned work and return candidate outputs. The task graph provides the common representation through which the task-specific module exposes subtasks and their dependencies to the protocol coordinator. The coordinator can then apply the same protocol flow to different task structures without encoding the domain-specific logic used to construct them.
+
+
+
+
 
 \subsection{Coordinating through Task Graphs}
 \label{subsec:task-graph-coordination}
 
-TokenMosaic coordinates complex tasks through explicit task graphs. Rather than prescribing a universal method for decomposing a task, it separates task-specific decomposition from protocol execution. A task-specific module provides the task graph, while the protocol coordinator manages how the tasks in that graph are scheduled and advanced. In this sense, the task graph connects task-specific problem solving to a common protocol flow: once the required task structure is provided, the coordinator does not need to encode the domain-specific reasoning that produced it.
+TokenMosaic coordinates complex tasks through explicit task graphs. Rather than prescribing a universal method for task decomposition, it separates task-specific graph construction from protocol coordination. A task-specific module exposes the subtasks and their dependencies in a task graph, and the protocol coordinator uses this structure to determine which tasks can run and how their states advance. Different task domains may therefore expose different graph structures while entering the same protocol flow, without requiring the coordinator to encode the domain-specific logic used to construct them.
 
-For a task graph to enter this flow, it must specify the subtasks to be executed, their inputs and expected outputs, the dependencies among them, and the rules for verifying and merging their results. These dependencies determine which subtasks can currently run. A subtask whose required inputs are available is marked \textsc{Ready}, whereas a subtask that still depends on unresolved predecessors remains \textsc{Blocked}. During execution, only verified and accepted predecessor results can satisfy these dependencies. Once all required predecessor results have been accepted, the dependent subtask becomes ready for scheduling.
+For TokenMosaic to coordinate a task, the task-specific module must provide an explicit task graph in which each subtask has defined inputs and expected outputs and the dependencies among subtasks are identified. The module also provides the task-specific verification and merge rules. A subtask whose required inputs are available is marked \textsc{Ready}, whereas one that depends on unresolved predecessors remains \textsc{Blocked}. During execution, only accepted predecessor results satisfy these dependencies. Once all required predecessor results have been accepted, the dependent subtask becomes ready for scheduling.
 
-Figure~\ref{fig:task-graph-examples-balanced} shows how two different task structures are handled by the same protocol flow. In Factorization, the task-specific module divides the candidate divisor space into independent ranges. For example, factoring $221$ requires searching only
-\[
-[2,\lfloor\sqrt{221}\rfloor]=[2,14],
-\]
-which can be divided into $[2,5]$, $[6,9]$, and $[10,14]$. These range tasks have no dependencies on one another and can therefore be scheduled in parallel. Lean theorem proving uses a different structure. If lemma $L_3$ depends on $L_1$ and $L_2$, then $L_1$, $L_2$, and an independent lemma $L_4$ may be scheduled concurrently, while $L_3$ remains blocked until the results of both predecessors have been checked and accepted. The graph structure is task specific, but the same readiness and scheduling rules apply to both.
-
-The current implementation uses deterministic task graphs supplied by the task-specific modules: Factorization uses predefined range partitions, while Lean uses preregistered proof plans or lemma DAGs. Executors generate candidate outputs for assigned subtasks but do not discover or modify the task graph. More generally, the protocol does not require every task family to use the same decomposition procedure; what it requires is an explicit task graph together with task-specific verification and merge rules. Once such a graph has been instantiated, TokenMosaic can apply the same execution flow to its ready subtasks. We next describe how these subtasks are assigned, executed, verified, and accepted.
+To make this protocol concrete, we use two task families as running examples throughout the paper: Integer Factorization and Lean theorem proving. They expose complementary task structures---independent parallel search and dependency-constrained proof construction---while allowing task results to be checked deterministically. Their full benchmark construction is described in Section~\ref{sec:experimental-design}.
 
 \begin{figure}[!h]
 \centering
-\resizebox{0.97\linewidth}{!}{%
-\begin{tikzpicture}[
-  line cap=round,
-  line join=round,
-  task/.style={
-    draw=black!62,
-    rounded corners=2.5pt,
-    fill=black!2,
-    minimum width=1.55cm,
-    minimum height=0.72cm,
-    align=center,
-    font=\scriptsize,
-    inner sep=3pt
-  },
-  blocked/.style={
-    draw=black!48,
-    rounded corners=2.5pt,
-    dashed,
-    fill=black!1,
-    minimum width=1.55cm,
-    minimum height=0.72cm,
-    align=center,
-    font=\scriptsize,
-    inner sep=3pt
-  },
-  spec/.style={
-    draw=black!68,
+
+\tikzset{
+  tmroot/.style={
+    draw=black!55,
     rounded corners=3pt,
     fill=black!2,
-    minimum width=10.8cm,
-    minimum height=1.05cm,
-    align=center,
-    font=\scriptsize,
-    inner sep=5pt
-  },
-  protocol/.style={
-    draw=black!62,
-    rounded corners=3pt,
-    fill=black!2,
-    minimum width=2.45cm,
+    minimum width=3.10cm,
     minimum height=0.78cm,
     align=center,
     font=\scriptsize,
+    inner sep=4pt
+  },
+  tmrange/.style={
+    draw=black!55,
+    rounded corners=3pt,
+    fill=white,
+    minimum width=1.35cm,
+    minimum height=0.74cm,
+    align=center,
+    font=\scriptsize,
     inner sep=3pt
   },
-  arrow/.style={
+  tmlean/.style={
+    draw=black!55,
+    rounded corners=3pt,
+    fill=white,
+    minimum height=0.84cm,
+    align=center,
+    font=\scriptsize,
+    inner sep=4pt
+  },
+  tmblocked/.style={
+    draw=black!42,
+    rounded corners=3pt,
+    dashed,
+    fill=black!1,
+    minimum width=4.45cm,
+    minimum height=0.84cm,
+    align=center,
+    font=\scriptsize,
+    inner sep=4pt
+  },
+  tmsharedbox/.style={
+    draw=black!60,
+    rounded corners=4pt,
+    fill=black!3
+  },
+  tmarrow/.style={
     -{Latex[length=1.8mm,width=1.3mm]},
     line width=0.78pt,
-    draw=black!68
+    draw=black!65
   },
-  softarrow/.style={
-    -{Latex[length=1.8mm,width=1.3mm]},
+  tmsoft/.style={
+    -{Latex[length=1.7mm,width=1.2mm]},
     line width=0.72pt,
-    draw=black!48
+    draw=black!44
   }
-]
+}
+
+\resizebox{0.98\linewidth}{!}{%
+\begin{tikzpicture}[line cap=round,line join=round]
 
 % =========================================================
-% Upper level: task-specific structures
+% Headers
 % =========================================================
 
-\node[font=\bfseries\small] at (0,3.35)
-{Task-specific decomposition};
-
-% ---------------- Factorization ----------------
-
-\node[font=\bfseries\scriptsize] at (-4.0,2.72)
+\node[font=\bfseries\small] at (-3.70,3.50)
 {Factorization};
 
-\node[task] (froot) at (-4.0,2.05)
-{factor $221$};
+\node[font=\scriptsize,text=black!58] at (-3.70,3.14)
+{independent range subtasks};
 
-\node[task] (fr1) at (-5.75,0.85)
-{$[2,5]$\\[-1pt]\textsc{Ready}};
-
-\node[task] (fr2) at (-4.0,0.85)
-{$[6,9]$\\[-1pt]\textsc{Ready}};
-
-\node[task] (fr3) at (-2.25,0.85)
-{$[10,14]$\\[-1pt]\textsc{Ready}};
-
-\draw[arrow] (froot) -- (fr1);
-\draw[arrow] (froot) -- (fr2);
-\draw[arrow] (froot) -- (fr3);
-
-
-% ---------------- Lean ----------------
-
-\node[font=\bfseries\scriptsize] at (4.0,2.72)
+\node[font=\bfseries\small] at (3.85,3.50)
 {Lean theorem proving};
 
-\node[task] (l1) at (2.25,1.80)
-{$L_1$\\[-1pt]\textsc{Ready}};
+\node[font=\scriptsize,text=black!58] at (3.85,3.14)
+{dependency-constrained lemma DAG};
 
-\node[task] (l2) at (4.0,1.80)
-{$L_2$\\[-1pt]\textsc{Ready}};
+\draw[black!18,line width=0.55pt]
+(-6.15,2.84) -- (-0.82,2.84);
 
-\node[task] (l4) at (5.75,1.80)
-{$L_4$\\[-1pt]\textsc{Ready}};
+\draw[black!18,line width=0.55pt]
+(0.20,2.84) -- (6.75,2.84);
 
-\node[blocked] (l3) at (3.12,0.55)
-{$L_3$\\[-1pt]\textsc{Blocked}};
-
-\draw[arrow] (l1) -- (l3);
-\draw[arrow] (l2) -- (l3);
-
+% Move divider slightly left to give Lean more width
+\draw[dashed,black!20,line width=0.55pt]
+(-0.18,2.70) -- (-0.18,-0.75);
 
 % =========================================================
-% Shared representation
+% (a) Factorization
 % =========================================================
 
-\node[spec] (spec) at (0,-1.15) {
-\textbf{Task graph supplied to TokenMosaic}\\[2pt]
-subtasks \quad $\cdot$ \quad inputs and expected outputs
-\quad $\cdot$ \quad dependencies\\[1pt]
-task-specific verification and merge rules
-};
+\node[tmroot] (froot) at (-3.70,1.95)
+{\textbf{factor $221$}\\[-1pt]
+candidate divisors $[2,14]$};
 
-% From the two task structures to the common representation
-\draw[softarrow] (fr2.south) -- ++(0,-0.35) -| (spec.north west);
-\draw[softarrow] (l3.south) -- ++(0,-0.35) -| (spec.north east);
+\node[tmrange] (fr1) at (-5.05,0.55)
+{$[2,5]$\\[-1pt]
+\textsc{Ready}};
 
+\node[tmrange] (fr2) at (-3.70,0.55)
+{$[6,9]$\\[-1pt]
+\textsc{Ready}};
+
+\node[tmrange] (fr3) at (-2.35,0.55)
+{$[10,14]$\\[-1pt]
+\textsc{Ready}};
+
+\draw[tmarrow]
+(froot.south) -- ++(0,-0.32) -| (fr1.north);
+
+\draw[tmarrow]
+(froot.south) -- ++(0,-0.32) -- (fr2.north);
+
+\draw[tmarrow]
+(froot.south) -- ++(0,-0.32) -| (fr3.north);
+
+\node[font=\scriptsize,text=black!54] at (-3.70,-0.10)
+{independent dependencies $\Rightarrow$ all ranges are ready};
 
 % =========================================================
-% Lower level: common protocol coordination
+% (b) Lean theorem proving
 % =========================================================
 
-\node[font=\bfseries\small] at (0,-2.35)
-{Common protocol coordination};
+% Wider horizontal separation between the two leaf boxes
+\node[
+  tmlean,
+  minimum width=2.55cm
+] (l1) at (2.20,2.08)
+{\textbf{Leaf 1}\\[-1pt]
+$B(x,y)\rightarrow E(x,y)$\\[-1pt]
+\textsc{Ready}};
 
-\node[protocol] (ready) at (-3.5,-3.25)
-{Determine readiness\\\textsc{Ready} / \textsc{Blocked}};
+\node[
+  tmlean,
+  minimum width=3.15cm
+] (l2) at (5.25,2.08)
+{\textbf{Leaf 2}\\[-1pt]
+$E(x,y)\rightarrow$\\[-1pt]
+$B(x,y)\land C(x,y)$\\[-1pt]
+\textsc{Ready}};
 
-\node[protocol] (schedule) at (0,-3.25)
-{Schedule\\ready subtasks};
+% Lower intermediate node to create visible arrow space
+\node[tmblocked] (lint) at (3.725,0.69)
+{\textbf{Intermediate proof}\\[-1pt]
+$B(x,y)\rightarrow B(x,y)\land C(x,y)$\\[-1pt]
+\textsc{Blocked}};
 
-\node[protocol] (advance) at (3.5,-3.25)
-{Advance dependencies\\on accepted results};
+\node[tmblocked] (lroot) at (3.725,-0.58)
+{\textbf{Root proof unit}\\[-1pt]
+$B(x,y)\rightarrow B(x,y)\land C(x,y)$\\[-1pt]
+\textsc{Blocked}};
 
-\draw[arrow] (spec.south) -- ++(0,-0.35) -| (ready.north);
-\draw[arrow] (ready) -- (schedule);
-\draw[arrow] (schedule) -- (advance);
+% ---------------------------------------------------------
+% IMPORTANT:
+% Straight vertical arrows from the leaf centers.
+% Their x coordinates exactly match the entry points
+% on the top edge of the intermediate box.
+% ---------------------------------------------------------
+
+\draw[tmarrow]
+(l1.south) --
+([xshift=-1.525cm]lint.north);
+
+\draw[tmarrow]
+(l2.south) --
+([xshift=1.525cm]lint.north);
+
+% Intermediate -> root remains vertical
+\draw[tmarrow]
+(lint.south) -- (lroot.north);
+
+% =========================================================
+% Shared interface
+% =========================================================
+
+\draw[tmsharedbox]
+(-6.05,-2.48) rectangle (6.35,-1.38);
+
+\node[font=\bfseries\small] at (0.15,-1.92)
+{Task graph provided to TokenMosaic};
+
+
+
+% Vertical arrows to shared interface
+\draw[tmsoft]
+(-3.70,-0.40) -- (-3.70,-1.38);
+
+\draw[tmsoft]
+(3.725,-1.02) -- (3.725,-1.38);
 
 \end{tikzpicture}%
 }
 
+
+
 \caption{
-Different task-specific modules expose different task-graph structures to the same TokenMosaic protocol. Factorization produces independent range tasks that can be scheduled in parallel, whereas Lean may contain dependency-constrained tasks that remain blocked until their predecessors are accepted. Once the task graph and its task-specific verification and merge rules are provided, the protocol coordinator applies the same readiness and scheduling process without encoding the domain-specific decomposition logic.
+Two task-graph structures under the same TokenMosaic protocol: independent Factorization ranges and a dependency-constrained Lean lemma DAG.
 }
 \label{fig:task-graph-examples-balanced}
 \end{figure}
+
+Consider first the factorization of $221$. Any non-trivial factor must lie in
+\[
+[2,\lfloor\sqrt{221}\rfloor]=[2,14].
+\]
+A task-specific module can partition this search space into independent subtasks such as $[2,5]$, $[6,9]$, and $[10,14]$. Since none of these range tasks depends on another, all three can be ready at the same time and scheduled in parallel. A representative medium-difficulty Lean task has a different structure. Given
+\[
+h_{AB}:\forall x\,y,\;B(x,y)\rightarrow E(x,y)
+\]
+and
+\[
+h_{BC}:\forall x\,y,\;E(x,y)\rightarrow B(x,y)\land C(x,y),
+\]
+the task is to prove
+\[
+\forall x\,y,\;B(x,y)\rightarrow B(x,y)\land C(x,y).
+\]
+In the Lean example, the two assumptions define independent leaf proof tasks. Once both leaf proofs have been accepted, the intermediate proof becomes ready, followed by the root proof. Together with the independent Factorization ranges, this example shows how the same coordinator can handle both parallel and dependency-constrained task graphs.
+
+The current implementation evaluates this abstraction using deterministic task graphs supplied by task-specific modules. Factorization uses deterministically generated range partitions, while Lean uses preregistered proof plans or lemma DAGs. Executors generate candidate outputs for assigned subtasks but do not discover or modify the task graph. TokenMosaic therefore does not assume a universal decomposition algorithm; instead, it provides a common coordination flow once a task-specific module supplies an explicit task graph together with its verification and merge rules. Once a ready subtask is assigned for execution, the remaining question is how the worker's output becomes an accepted result that can advance the task graph.
+
 
 \subsection{Executing and Verifying Task Units}
 \label{subsec:verified-execution}
@@ -795,8 +859,6 @@ TokenMosaic stores two complementary kinds of history. Artifacts answer \emph{wh
 The event ledger is append-only and hash-linked, while the SQLite index is a rebuildable query view rather than a second source of truth. Replay reconstructs task state from the persisted events and artifacts instead of invoking the executor again. A root result can therefore be traced backward through its merge record, selected child outputs, verification reports, submissions, attempts, leases, execution requests, and original inputs.
 
 This distinction also clarifies the meaning of contribution in TokenMosaic. Spending model tokens, compute, checker time, or human effort creates an execution artifact. It becomes accepted contribution evidence only after it passes the declared parser and verifier, becomes canonical, and supports a completed dependency or merge. The protocol therefore accounts for useful accepted work rather than raw expenditure alone.
-This accounting is confined to local experimental records and does not issue
-rewards or settle real payments.
 
 
 \section{Fault Tolerance and Recovery}
@@ -808,12 +870,6 @@ Section~\ref{sec:tokenmosaic-protocol} describes the normal path. In practice, a
 \label{subsec:failure-model}
 
 A runtime anomaly becomes a protocol failure when it reaches a boundary at which normal progress can no longer continue. Table~\ref{tab:failure-boundaries-balanced} maps each boundary to the fact observed by the protocol and the resulting interpretation. The common retry rule operates over these typed observations, while the parent merge policy separately decides whether the missing unit is still necessary.
-
-The failure model is non-adversarial and preregistered. It covers ordinary
-provider or executor errors, parser and checker rejection, no-return and late
-submission behavior, bounded retry, and controlled worker-process death in a
-trusted local environment. It does not claim Byzantine fault tolerance,
-malicious-participant isolation, authentication, or production security.
 
 \begin{table}[!h]
 \centering
@@ -1031,8 +1087,8 @@ operate across different domain-specific plugin contracts.
 
 \subsubsection{Integer Factorization Tasks}
 
-The Factorization corpus used by Experiment~1 contains 300 root tasks,
-with 100 easy, 100 medium, and 100 hard cases. Each task supplies an integer \(n\) and
+The Factorization catalog contains 500 root tasks divided into 167 easy,
+167 medium, and 166 hard cases. Each task supplies an integer \(n\) and
 requires either a non-trivial factor or a verified no-factor conclusion
 over the complete candidate domain
 \[
@@ -1060,11 +1116,10 @@ only their assigned ranges. Their outputs pass through the task parser
 and deterministic verifier before they can contribute to the canonical
 root result.
 
-The deterministic plan for each selected case is frozen before execution.
-In particular, the worker-scaling experiment reuses the complete plan of
-the corresponding Experiment~1 case---including its ranges, identifiers,
-prompts, and dependencies---rather than substituting an experiment-specific
-split profile.
+A separate 20-way profile partitions each hard root into 20 contiguous
+range units. This profile exposes a fixed amount of parallel work for
+comparing different worker capacities without changing the root input,
+candidate domain, or validity rule.
 
 The Factorization suite makes three forms of evidence directly observable.
 Its certified range partitions expose whether a plugin plan is converted
@@ -1118,22 +1173,17 @@ locally valid proof artifacts from a valid assembled theorem.
 
 \subsection{Controlled Execution Conditions}
 
-Experiment~1 and Experiment~5 use real AI API execution. Every real AI
-attempt records the request fact, raw model output, parsed candidate or
-parse failure, provider and model identity, latency, token usage, cost
-estimate, and the references connecting these records to the corresponding
-protocol attempt. Experiment~1 uses the official DeepSeek
-\texttt{deepseek-v4-flash} baseline with thinking enabled. Experiment~5
-uses the three preregistered SiliconFlow endpoints described below.
+All formal conditions use real AI API execution. Every AI attempt records
+the provider request, raw model output, parsed candidate or parse failure,
+provider and model identity, latency, token usage, cost estimate, and the
+references that connect these records to the corresponding protocol
+attempt.
 
-Experiments~2--4 make no new provider calls. They replay the persisted
-Experiment~1 per-unit traces after matching the case, source repeat, planned
-unit, and ordinary domain semantics. Source usage and latency remain
-trace-attributed facts; logical scheduling or deterministic perturbation is
-identified explicitly as simulated. Catalog versions, task order, prompts,
-parser and plugin versions, request limits, and execution policies remain
-fixed within each comparison group except for the preregistered independent
-variable.
+Except when the model--provider endpoint is the experimental variable,
+formal conditions use SiliconFlow \texttt{zai-org/GLM-5.2}, with
+temperature set to zero and thinking mode disabled. Catalog versions,
+task order, prompts, parser and plugin versions, request limits, and
+execution policies remain fixed within each comparison group.
 
 The task graph remains part of the versioned task specification.
 Factorization ranges are generated by deterministic plugin rules, while
@@ -1151,9 +1201,8 @@ merge evidence are persisted as parts of the same run record.
 Experiment 1 executes the two task suites under a shared protocol
 configuration in order to compare their task-graph construction,
 domain-specific validation, and end-to-end completion behavior. It uses
-300 Factorization roots and all 135 Lean roots. Each root is executed
-once with 10 workers using the official DeepSeek
-\texttt{deepseek-v4-flash} baseline. This gives 435 preregistered roots.
+all 500 Factorization roots and all 135 Lean roots. Each root is executed
+once with 10 workers under the fixed SiliconFlow GLM-5.2 condition.
 
 Factorization tasks are grouped by easy, medium, and hard difficulty.
 Lean tasks are grouped by the complete difficulty--topic matrix. For each
@@ -1176,17 +1225,14 @@ verifier or checker, and merge procedure.
 
 \paragraph{Experiment 2: Worker Scaling.}
 
-Experiment 2 uses 50 hard Factorization cases. Every case inherits its
-complete Experiment~1 plan, unit semantics, prompts, dependencies, and
-persisted per-unit traces. The worker count is
+Experiment 2 uses all 166 hard Factorization roots and the fixed 20-way
+contiguous decomposition profile. The worker count is
 \[
 w\in\{1,3,7,10,30,50\}.
 \]
-Each worker level executes the same ordered task set twice, giving
-\(50\times6\times2=600\) preregistered roots. The source repeat is fixed at
-zero while the two Experiment~2 repeats are scheduling repeats. No condition
-makes a new provider call: the logical scheduler uses the matched source
-attempts and source latency while preserving dependencies and early stop.
+Each worker level executes the same ordered task set twice. The model,
+prompt, task order, decomposition profile, request policy, and verification
+rules remain fixed.
 
 Worker count controls concurrent execution within one root task. The
 experiment therefore measures the parallelism exposed by the task graph
@@ -1195,14 +1241,13 @@ rather than concurrency across unrelated root inputs.
 A verifier-accepted factor witness may satisfy the root merge condition
 before every range has been scheduled. Requests already dispatched in the
 active batch are allowed to finish, while later unscheduled ranges remain
-unexecuted. Prime controls require accepted coverage of all inherited
-required ranges.
+unexecuted. Prime controls require accepted coverage of all 20 ranges.
 The evaluation records planned, dispatched, completed, in-flight, and
-unscheduled units so that logical latency is interpreted together with
-trace-attributed token and cost consumption.
+unscheduled units so that latency is interpreted together with speculative
+provider calls and token consumption.
 
-The 30-worker and 50-worker conditions exceed the maximum width of the
-inherited hard-case range plans. They expose the saturation region in which additional
+The 30-worker and 50-worker conditions exceed the maximum width of
+20 range units. They expose the saturation region in which additional
 configured capacity cannot increase the parallelism supplied by the task
 graph. Configured worker count is therefore reported together with
 observed peak concurrency and worker utilization.
@@ -1210,45 +1255,37 @@ observed peak concurrency and worker utilization.
 
 \paragraph{Experiment 3: Controlled Faults and Worker Loss.}
 
-Experiment 3 replays persisted Experiment~1 traces and injects a controlled
-fault into the targeted unit's first attempt. Each transformation links the
-source answer, transformed submission, injection point, and affected
-protocol attempt. Replacement attempts read the matching natural source
-attempt (or the deterministic last-attempt fallback); neither the fault run
-nor its replacement makes a new provider call.
+Experiment 3 introduces controlled faults after a real provider output has
+been produced and persisted. Each injected transformation is associated
+with a versioned fault-injection record that links the original output,
+the transformed submission, the injection point, and the affected
+protocol attempt. A recovery attempt that requires a new candidate performs
+another real API call and produces a separate evidence chain.
 
 The five rate-based fault types are
 \texttt{false\_positive}, \texttt{false\_negative},
 \texttt{no\_return}, \texttt{late\_submission}, and
 \texttt{executor\_error}.
 
-Factorization uses a 50-root source slice with easy, medium, and hard counts
-of 17, 17, and 16, respectively, at fault rates
+Factorization uses the complete 500-root catalog at fault rates
 \[
-1\%,5\%,10\%,25\%,50\%,100\%.
+0\%,1\%,5\%,10\%,25\%,50\%,100\%.
 \]
 Lean uses a fixed three-task slice containing one task from each topic
 family at rates
 \[
-10\%,50\%,100\%.
+0\%,10\%,50\%,100\%.
 \]
-Each condition is repeated twice. Zero percent is not a standalone
-condition or experimental root; overhead is computed against the paired
-no-fault reference for the same case and repeat.
+Each condition is repeated twice and paired with a no-fault baseline using
+the same task identities, model, prompt, worker count, request limits,
+repeat identifier, and seed.
 
 Worker loss is evaluated separately with 10 workers. One or three executor
 processes are terminated at target progress levels of 25\%, 50\%, and
 75\%. The coordinator remains active while the protocol records process
 termination, lease expiry, reassignment, replacement attempts, recovered
 slots, and final root validity. Each worker-loss condition is repeated
-twice and compared with its paired no-fault reference. Process termination
-is real, while the model answers remain trace-backed.
-
-For both fault and reference executions, token usage and latency are
-deterministically perturbed from the source trace under the frozen seed.
-Time, token, and cost overheads are therefore reported as simulated,
-trace-attributed quantities rather than as new API consumption or observed
-provider wall-clock.
+twice and compared with a dedicated no-kill baseline.
 
 These conditions distinguish three outcomes: detection and isolation of an
 invalid or stale output, successful recovery through a replacement attempt,
@@ -1260,27 +1297,16 @@ attempt, and root-completion evidence.
 \paragraph{Experiment 4: Protocol Ablation.}
 
 Experiment 4 compares the complete \texttt{FULL} condition with four
-single-mechanism removals:
+controlled mechanism removals:
 \texttt{NO\_VERIFICATION}, \texttt{NO\_PARSER\_POLICY},
 \texttt{NO\_REQUEUE}, and \texttt{NO\_MERGE\_GATE}.
-It also executes all six pairwise removals, giving 11 modes in total. Each
-mode changes only the specified lifecycle decisions while preserving the
-task, source trace, prompt, retry limit, and remaining execution policy.
+Each ablation changes one lifecycle decision while preserving the task,
+model, prompt, retry limit, and remaining execution policy.
 
-The Factorization portion uses 50 fixed roots and the Lean portion uses
+The Factorization portion uses all 500 roots. The Lean portion uses
 15 fixed roots: five from each difficulty level, with a fixed
 \(2/2/1\) allocation across the three topic families. Each mode is
-repeated three times, giving \(11\times3\times65=2{,}145\) preregistered
-roots. All modes consume the same matched Experiment~1 traces and make zero
-provider calls.
-
-Before mode expansion, each case--repeat pair receives one deterministic,
-mode-blind challenge: an invalid parsed candidate, parser-required canonical
-JSON, a recoverable no-return, or a required-child delay. The same challenge
-plan is replayed across all 11 modes, and the injector cannot observe which
-mechanisms are disabled. Mechanism removal occurs before the corresponding
-parser, verifier or checker, replacement, or merge-gate decision; it is not
-implemented by running the mechanism and overwriting its outcome afterward.
+repeated three times.
 
 The two acceptance-related ablations isolate the effects of typed parsing
 and task-specific verification. The requeue ablation isolates the effect
@@ -1300,16 +1326,14 @@ evidence rather than from the name of the ablation condition.
 
 Experiment 5 compares three preregistered model--provider endpoints:
 SiliconFlow \texttt{zai-org/GLM-5.2}, SiliconFlow
-\texttt{Qwen/Qwen3-14B}, and SiliconFlow
-\texttt{MiniMaxAI/MiniMax-M2.5}. All three use their frozen thinking
-configuration.
+\texttt{Qwen/Qwen3.6-27B}, and OpenAI \texttt{gpt-5.6-sol} with
+\texttt{reasoning\_effort=high}.
 
-The comparison uses 28 hard Factorization roots and nine hard Lean roots,
-with three Lean roots from each topic family. Every endpoint executes the
-same 37 roots only at \texttt{repeat\_id=0}, giving 111 preregistered roots.
-Replacement is disabled and each AI unit permits at most one provider
-attempt. Task order, prompts, plugin and parser versions, request limits,
-and endpoint-specific thinking profiles are frozen before execution.
+The comparison uses all 166 hard Factorization roots and all
+45 hard-frontier Lean roots, with 15 Lean roots from each topic family.
+Every endpoint executes the same 211 roots three times. Task order,
+prompts, plugin and parser versions, request limits, and endpoint-specific
+reasoning profiles are frozen before execution.
 
 Completion and accepted validity are the primary cross-endpoint measures.
 Latency, cost, provider errors, and rate limiting are reported together
@@ -1317,11 +1341,6 @@ with provider identity because these quantities reflect both model
 behavior and endpoint infrastructure. The unit of comparison is therefore
 the registered model--provider endpoint rather than model architecture
 alone.
-
-DeepSeek \texttt{deepseek-v4-flash} is not a fourth Experiment~5 endpoint.
-It may appear only as a supplemental reference that reuses committed
-Experiment~1 facts; that reference is excluded from the formal endpoint
-comparison and from latency comparison.
 
 
 \subsection{Relationship Between the Experiments and the Design Desiderata}
@@ -1369,14 +1388,12 @@ validity.
 &
 Experiment 4
 &
-The complete protocol is compared with all single and pairwise removals of
-typed parsing, task-specific verification, requeue, and the merge gate.
-Mode-blind challenges exercise the corresponding structural boundary under
-matched cases and source traces.
+The complete protocol is compared with conditions in which typed parsing
+or task-specific verification is removed, isolating the contribution of
+the acceptance boundary.
 &
-Challenge injection and route evidence; accepted-validity rate; raw-only or
-invalid acceptance; missing replacement; premature merge; required-slot
-completeness; matched FULL deltas and pairwise interaction.
+Accepted-validity rate; rejected-candidate evidence; raw-only acceptance;
+incorrect canonical acceptance; final deterministic audit.
 \\
 
 \textbf{Extensibility}
@@ -1396,13 +1413,12 @@ stage in each domain.
 &
 Experiment 2
 &
-The 50 hard Factorization roots inherit their complete Experiment~1 plans,
-answers, source latency, prompts, and verification rules while only the
-logical worker capacity changes.
+The hard Factorization roots, 20-way decomposition, model, prompt, and
+verification rules remain fixed while available worker capacity changes.
 &
-Logical makespan; paired speedup; parallel efficiency; observed peak
-concurrency; worker utilization; planned, executed, and unscheduled units;
-trace-attributed token and cost multipliers; saturation.
+Wall-clock time; critical-path time; throughput; paired speedup; parallel
+efficiency; observed peak concurrency; worker utilization; provider
+attempts; tokens; saturation.
 \\
 
 \textbf{Protocol autonomy and recoverability}
@@ -1411,13 +1427,11 @@ Experiment 3
 &
 Controlled faults and process-level worker loss require the coordinator
 to advance detection, lease expiry, reassignment, and replacement through
-recorded protocol transitions. Model answers are replayed from matched
-Experiment~1 traces, while worker termination itself uses real processes.
+recorded protocol transitions.
 &
-Wrong-candidate interception and escape; reassignment and replacement
-attempts; replacement success; recovered-slot completeness; simulated
-trace-attributed time, token, and cost overhead; kill-progress error; final
-accepted validity.
+Detection rate; false-accept rate; lease-expiry evidence; reassignment and
+replacement attempts; recovery latency; recovered-slot completeness;
+coordinator continuation; final accepted validity.
 \\
 
 \bottomrule
@@ -1445,108 +1459,94 @@ status, and final root validation. These records determine whether the
 task graph executed by the protocol agrees with the graph declared by the
 plugin.
 
-Let \(N\) be the preregistered number of root tasks,
-\(N_{\mathrm{final}}\) the number producing a final root result, and
-\(N_{\mathrm{valid}}\) the number whose final result passes the independent
-task-specific verifier or checker. The two primary rates are
+Let \(N\) be the number of attempted root tasks,
+\(N_{\mathrm{comp}}\) the number reaching the completed root state, and
+\(N_{\mathrm{valid}}\) the number producing an accepted output that passes
+the authoritative verifier or checker. The two primary rates are
 \[
 R_{\mathrm{comp}}
 =
-\frac{N_{\mathrm{final}}}{N},
+\frac{N_{\mathrm{comp}}}{N},
 \qquad
 R_{\mathrm{valid}}
 =
 \frac{N_{\mathrm{valid}}}{N}.
 \]
 Reporting both rates separates lifecycle completion from end-to-end valid
-completion. Every cell also reports preregistered, scientifically valid,
-and infrastructure-invalid root counts. If a cell contains an
-infrastructure-invalid root, its scientific rates and dependent effects are
-reported as unavailable rather than recomputed on a smaller denominator.
+completion.
 
-For Experiment~1 and Experiment~5, resource measurements include actual
-end-to-end wall-clock time, provider latency, provider-attempt count, prompt
-tokens, completion tokens, total tokens, and estimated API cost. For
-Experiments~2--4, the corresponding quantities are explicitly labeled
-logical, simulated, or trace-attributed. Continuous root- or pair-level
-summaries report medians, quartiles, interquartile range, sample variance,
-and sample standard deviation. Eligible scientific estimates use 95\%
-stratified case-cluster percentile bootstrap intervals. Failure reports
-retain the terminal category and the stage and origin at which execution
-stopped.
+Resource measurements include end-to-end wall-clock time, provider
+latency, provider-attempt count, prompt tokens, completion tokens, total
+tokens, and estimated API cost. Measurements are retained per task and
+summarized by condition using medians and 90th percentiles. Failure reports
+retain the stage at which execution stopped, including provider, parser,
+verifier or checker, canonicalization, merge, and recovery stages.
 
-For worker count \(w\), speedup and parallel efficiency are defined as
+For worker count \(w\), speedup, parallel efficiency, and throughput are
+defined as
 \[
-S(w)=\frac{T_{\mathrm{logical}}(1)}{T_{\mathrm{logical}}(w)},
+S(w)=\frac{T(1)}{T(w)},
 \qquad
 E(w)=\frac{S(w)}{w},
+\qquad
+Q(w)=\frac{N_{\mathrm{comp}}}{T(w)},
 \]
-where \(T_{\mathrm{logical}}(w)\) is the trace-replay logical makespan under
-worker count \(w\). Speedup is paired by task identity and repeat identifier
-before aggregation and is eligible only when both endpoints are correct and
-have complete positive timing. Observed peak concurrency and worker
-utilization are reported together with configured worker count; matched
-trace-token and trace-cost multipliers show whether early stop changes the
-amount of replayed work.
+where \(T(w)\) is the measured wall-clock time under worker count \(w\).
+Speedup is paired by task identity and repeat identifier before
+aggregation. Critical-path time is reconstructed from task-attempt timing
+and merge dependencies. Observed peak concurrency and worker utilization
+are reported together with configured worker count.
 
 The two raw repeat values, their minimum and maximum, and their relative
-difference are retained for each worker condition, with relative difference
-defined as \((\max-\min)/\operatorname{mean}\). Because Experiment~2 makes
-zero provider calls, it has no online rate-limiting condition.
+difference are retained for each worker condition. Provider rate limiting
+is reported explicitly, allowing the end-to-end curve and the
+rate-limit-sensitive subset to be distinguished.
 
-For a controlled false-positive condition, the principal correctness-boundary
-measures are
+For a fault condition, the principal robustness measures are
 \[
-R_{\mathrm{intercept}}
+R_{\mathrm{detect}}
 =
-\frac{N_{\mathrm{verifier\ rejected}}}
-     {N_{\mathrm{controlled\ wrong\ candidates\ reaching\ verification}}},
+\frac{N_{\mathrm{detected}}}{N_{\mathrm{injected}}},
 \qquad
-R_{\mathrm{escape}}
+R_{\mathrm{false\mbox{-}accept}}
 =
-\frac{N_{\mathrm{wrong\ candidates\ reaching\ accepted\ or\ final\ state}}}
-     {N_{\mathrm{controlled\ wrong\ candidates\ reaching\ verification}}}.
+\frac{N_{\mathrm{wrongly\ canonicalized}}}
+     {N_{\mathrm{injected}}},
 \]
-Replacement and result-completeness measures are
+and
 \[
-R_{\mathrm{replacement}}
+R_{\mathrm{recover}}
 =
-\frac{N_{\mathrm{successful\ replacement\ attempts}}}
-     {N_{\mathrm{started\ replacement\ attempts}}},
-\qquad
-R_{\mathrm{slot}}
-=
-\frac{N_{\mathrm{recovered\ valid\ required\ slots}}}
-     {N_{\mathrm{preregistered\ required\ slots}}}.
+\frac{N_{\mathrm{recovered}}}{N_{\mathrm{recoverable}}}.
 \]
 
-Time and token overhead are differences against the matched no-fault
-reference:
+Recovery latency is measured from fault detection or lease expiry to the
+acceptance of a replacement attempt. Time and token overhead are computed
+against the matched no-fault baseline:
 \[
 O_T
 =
-T_{\mathrm{fault}}^{\mathrm{logical}}-T_{\mathrm{reference}}^{\mathrm{logical}},
+\frac{T_{\mathrm{fault}}-T_{\mathrm{base}}}{T_{\mathrm{base}}},
 \qquad
 O_{\mathrm{token}}
 =
-K_{\mathrm{fault}}^{\mathrm{simulated}}-K_{\mathrm{reference}}^{\mathrm{simulated}},
+\frac{K_{\mathrm{fault}}-K_{\mathrm{base}}}{K_{\mathrm{base}}},
 \]
-where \(K\) is deterministically perturbed from source usage. Simulated
-trace-attributed cost overhead and tokens discarded by attempts that do not
-contribute to the accepted root result are reported separately.
+where \(K\) denotes provider-reported token consumption. Cost overhead and
+tokens consumed by attempts that do not contribute to the accepted root
+result are reported separately.
 
-Worker-loss conditions additionally report requested and observed kill
-progress, reassignment, replacement, root-output completeness, and accepted
-validity. Completeness and validity are reported separately because recovery
-of all required slots does not by itself establish that the assembled root
-output is correct.
-
-Experiment~4 first verifies that each mode enters the protocol and receives
-the same mode-blind challenge opportunity. Matched FULL--ablation pairs then
-report completion and verified-success loss, required-slot loss, logical
-time, trace-token, trace-cost, and execution-attempt deltas. Matched
-four-arm comparisons measure whether disabling a pair of mechanisms produces
-an interaction beyond the two corresponding single removals.
+Worker-loss conditions additionally report
+\[
+R_{\mathrm{slot}}
+=
+\frac{N_{\mathrm{recovered\ slots}}}
+     {N_{\mathrm{required\ slots}}},
+\]
+together with coordinator continuation, root-output completeness, and
+accepted validity. Completeness and validity are reported separately
+because recovery of all required slots does not by itself establish that
+the assembled root output is correct.
 
 
 \subsection{Evidence and Reproducibility}
@@ -1558,151 +1558,112 @@ traceable to per-task and per-attempt records, event-ledger entries, raw
 and parsed artifacts, verification or checker evidence, canonical
 bindings, token usage, latency, and cost records.
 
-A real-call root uses the registered transport in Experiment~1 or
-Experiment~5; a replay root in Experiments~2--4 instead names and checks its
-matched Experiment~1 source record and makes no provider call. Configuration,
-catalog, environment, or endpoint preflight failures remain in the frozen
-inventory as infrastructure-invalid observations. This preserves the
-distinction between environmental unavailability, task failure, and
-protocol failure without silently shrinking the denominator.
+A run enters the paper analysis only when it uses the registered real
+transport and contains the evidence chain required by its task and
+experimental condition. Configuration, catalog, or endpoint preflight
+failures are recorded as structured blocked conditions. This preserves
+the distinction between environmental unavailability, task failure, and
+protocol failure.
 
 All tables and figures are derived from persisted task- and attempt-level
-records and ordinary JSONL/CSV metric outputs. Recomputing the analysis
-reads those records without invoking the model again, so replay conditions
-continue to use the original model outputs and recorded execution facts.
+records. Replay reconstructs reports from these records and their
+versioned references, ensuring that repeated analysis uses the original
+model outputs and execution evidence.
+
+\section{Sclaing Law of TokenMosaic}
+
+\subsection{Scaling Law of working nodes}
+% 越多的worker，时间花地越少
+
+
+\subsection{Scaling Law to Challenging problems}
+
+Lean problem sets; grouping:
+
+\section{Robust Testing of TokenMosaic}
+
+
+
+\subsection{Robust to Error Injection}
+Input
+[1254, 2563, 215654, ]
+default #time #token
+Error I  [比例 1- 100\%;  Yes or no （ratio）； #time #token;  ] [false negative vs. false positive]
+Error II  
+fail if and only if both [false negative]
+
+
+\subsection{Robust to heterogeneous  models}
+[Stronger + low models]
+[Stronger]
+[low]
+
+think mode； model size；
+
+
+\subsection{ablation}
+
+
+\subsection{Robust to dead nodes}
+
+
+
+
 
 \section{Experimental Analysis}
 
-The five experiments organize the protocol-level evaluation around five
-linked questions. They ask whether distributed execution can be converted
-into accountable work through explicit records of assignment, submission,
-parsing, verification, result acceptance, merge, and recovery. Accordingly,
-the formal results should be interpreted as evidence about protocol behavior,
-not as standalone factorization or theorem-proving benchmark scores.
+The experiments support the protocol-level claim through four linked observations.The
+experiments ask whether distributed execution can be converted into accountable
+work through explicit records of assignment, submission, parsing, verification,
+canonical binding, merge, recovery, and settlement. Accordingly, the reported
+results should be read as evidence about protocol behavior, not as benchmark
+results for factorization or theorem proving.
 
-\paragraph{Cross-domain execution.} Experiment~1 measures end-to-end
-feasibility under real DeepSeek V4 Flash calls for 300 Factorization and 135
-Lean roots. Its cross-domain comparison tests whether different plugin-owned
-plans, parsers, verifiers or checkers, and merge rules can use the same
-protocol lifecycle. Actual wall-clock, usage, and cost belong to the normal
-protocol phase; the additional source-trace acquisition needed by later
-experiments is reported separately and does not revise the root outcome.
+\paragraph{End-to-end contribution chain.} Experiment 1 shows that a passing run requires more than obtaining a correct final answer. The root unit must be assigned, executor output must be submitted as an artifact, the artifact must pass parsing and verification, accepted evidence must be bound to canonical state, decomposed child outputs must be merged when required, and the accepted contribution must be recorded for settlement. The factorization, Lean serial, and Lean hybrid cases therefore show that TokenMosaic can represent useful work as accountable intermediate contributions rather than as a single opaque response.
 
-\paragraph{Worker scaling under fixed answers.} Experiment~2 changes only
-the logical worker capacity over 50 inherited hard Factorization plans. All
-six worker levels and both repeats consume the same Experiment~1 traces and
-make zero provider calls. Its paired speedup, efficiency, utilization, and
-trace-resource metrics therefore test scheduler scaling under controlled
-answer and latency inputs rather than online endpoint concurrency.
+\paragraph{Fault tolerance and auditability.} Experiment 2 targets five protocol boundaries: semantic validity, terminal-certificate validity, parser robustness, worker availability, and verification-budget enforcement. The observed recovery with zero canonical pollution supports the claim that invalid, malformed, unavailable, or over-budget contributions are rejected, isolated, or requeued as replayable evidence without contaminating accepted state.
 
-\paragraph{Fault recovery.} Experiment~3 applies the five preregistered
-faults to first attempts and separately terminates worker processes. It uses
-matched Experiment~1 traces for answers and makes zero provider calls; only
-the process termination in worker-death conditions is a real runtime fault.
-Interception, replacement, slot completeness, and final validity measure the
-recovery path, while time, token, and cost overhead remain simulated and
-trace-attributed relative to paired no-fault references.
+\paragraph{Mechanism necessity.} Experiment 3 disables the parser policy, verifier, requeue rule, merge gate, or slot-integrity check. Each removed mechanism protects a distinct boundary of shared contribution: structured output, semantic acceptance, expired leases, premature aggregation, and child-slot substitution. The observed degradation in all ablation runs indicates that these mechanisms are structural requirements for safe shared work, not merely implementation conveniences.
 
-\paragraph{Mechanism necessity.} Experiment~4 evaluates FULL, four single
-removals, and all six pairwise removals under the same mode-blind challenge
-plan. The four challenged boundaries are parser policy, task-specific
-verification, requeue, and the merge gate; slot integrity remains enabled.
-Matched FULL deltas and pair interactions attribute degradation to structural
-mechanism removal without introducing new provider calls.
+\paragraph{Cross-domain generality.} Experiment 4 shows that the same protocol core can coordinate different plugin-owned semantics. Factorization and Lean proof production differ in task objects, output formats, and verifiers, yet both are mediated through the same records of artifacts, checks, merge evidence, canonical state, and settlement. The Lean cases are especially important because acceptance depends on real external checker evidence rather than a protocol-internal heuristic.
 
-\paragraph{Endpoint sensitivity.} Experiment~5 compares GLM-5.2,
-Qwen3-14B, and MiniMax-M2.5 on the same 37 hard roots at repeat zero with no
-replacement. These 111 roots provide the formal three-endpoint comparison
-for first-attempt quality, final validity, actual token and cost, and complete
-root wall-clock. DeepSeek V4 Flash remains a supplemental Experiment~1
-reference rather than a fourth endpoint or latency comparator.
+\paragraph{Shared-token accounting boundary.} The real-transport batches connect TokenMosaic to tokenized resource use at the execution and accounting boundaries. Model-backed execution consumes real tokens, latency, and cost, but the protocol records useful contribution only after the resulting artifact crosses the same parser, verifier or checker, canonical-binding, and settlement boundaries used for deterministic or tool-backed execution.
 
-Together, these roles keep the evidential chain auditable: Experiment~1 and
-Experiment~5 contain actual provider observations, whereas
-Experiments~2--4 isolate scheduler, recovery, and mechanism effects through
-matched trace-backed execution. Any numerical claim in the final analysis
-must come from the corresponding frozen metric table and retain its missing,
-validity, and actual-versus-simulated qualification.
+The experiments provide bounded evidence that TokenMosaic can complete end-to-end execution, recover from invalid or failed contributions, and preserve auditability across heterogeneous task structures. More broadly, TokenMosaic shows how fragmented tokenized execution capacity can be coordinated through explicit parser, verifier, merge, recovery, and settlement records, so that resource use is linked to accountable accepted work rather than to raw token spending alone.
 \normalcolor
+
+
+
+\section{How to Join TokenMosaic}
+
+skill and how to use!
+% decompose + merge
+% regester 
 
 
 
 \section{Related Work}
 
 \paragraph{Distributed task allocation and market coordination.}
-The Contract Net Protocol introduced a negotiation pattern in which tasks are
-announced, potential contractors bid, and managers award work to selected
-agents \citep{smith1980contract}. Multi-robot task allocation later formalized
-the relation among agents, tasks, utilities, costs, and assignment structure
-\citep{gerkey2004formal}, while market-based coordination studied decentralized
-bidding \citep{dias2006market}. These works motivate a future contributor
-selection layer. The current TokenMosaic prototype instead schedules a frozen,
-plugin-defined task DAG over registered local workers; it implements neither
-online bidding nor reward transfer.
+TokenMosaic builds on a long line of work on allocating work among distributed agents. The Contract Net Protocol introduced a negotiation pattern in which tasks are announced, potential contractors bid, and managers award work to selected agents \citep{smith1980contract}. Multi-robot task allocation later formalized the relation among agents, tasks, utilities, costs, and assignment structure \citep{gerkey2004formal}, while market-based coordination studied how decentralized bidding mechanisms can trade off communication cost, robustness, and solution quality \citep{dias2006market}. These works justify treating contributor selection as a protocol-level allocation problem. TokenMosaic differs in that the allocated object is not a single atomic job: it is a recursively expandable task tree or DAG whose leaves may require model tokens, tools, local computation, or human judgment, and whose rewards are delayed until verification and merge succeed.
 
 \paragraph{Complex crowdsourcing and decentralized crowdsourcing.}
-Human-computation systems show that complex work can be decomposed, distributed,
-reviewed, and recomposed. CrowdForge proposes partition, map, and reduce
-primitives \citep{kittur2011crowdforge}, and Turkomatic explores recursive
-workflow design \citep{kulkarni2011turkomatic}. Blockchain-based crowdsourcing
-systems add payments and dispute handling
-\citep{li2018crowdbc,liang2022decentralizedhit}. TokenMosaic currently reuses
-only the decomposition-and-verification idea in a trusted local prototype with
-LLM endpoints, local tools, and typed task-specific verifiers. Human task
-publication, disputes, and payments are possible future extensions, not
-implemented layers.
+Human-computation systems show that complex work can be decomposed, distributed, reviewed, and recomposed. CrowdForge proposes partition, map, and reduce primitives for crowdsourcing complex work \citep{kittur2011crowdforge}, and Turkomatic explores recursive task and workflow design for Mechanical Turk-style settings \citep{kulkarni2011turkomatic}. Blockchain-based crowdsourcing systems such as CrowdBC and decentralized HIT protocols add payments, dispute handling, and reduced reliance on centralized platforms \citep{li2018crowdbc,liang2022decentralizedhit}. These systems are important precedents for TokenMosaic's task publication, contribution accounting, and settlement layer. Their main limitation for our setting is that they are usually designed around human microtasks or fixed crowdsourcing workflows, whereas TokenMosaic targets heterogeneous intelligent work involving LLM agents, local tools, verifiers, recursive decomposition, and task-specific acceptance functions.
 
 \paragraph{Volunteer and distributed execution systems.}
-Volunteer and cluster-computing systems provide practical lessons for
-unreliable and heterogeneous execution. BOINC supports volunteer scientific
-computation \citep{anderson2020boinc}; MapReduce provides automatic scheduling
-and re-execution \citep{dean2004mapreduce}; Ray supports dynamic task graphs
-\citep{moritz2018ray}; and Sparrow studies decentralized low-latency scheduling
-\citep{ousterhout2013sparrow}. The TokenMosaic prototype adopts attempts,
-leases, and bounded reassignment inside one local runtime. It does not implement
-a volunteer network or cross-machine scheduler, and its task graphs are
-deterministic or preregistered rather than adapted to online machines.
+Volunteer and cluster-computing systems provide practical lessons for unreliable and heterogeneous execution. BOINC supports volunteer scientific computation over devices that differ in capability, availability, and reliability \citep{anderson2020boinc}. MapReduce popularized partitioned data processing with automatic scheduling, failure handling, and re-execution on commodity clusters \citep{dean2004mapreduce}. Ray supports dynamic task graphs for AI applications \citep{moritz2018ray}, while Sparrow studies decentralized low-latency scheduling for short parallel tasks \citep{ousterhout2013sparrow}. TokenMosaic borrows the engineering vocabulary of leases, checkpoints, heartbeats, redundant execution, and reassignment. Its focus, however, is semantic and verifiable intelligent production rather than only data-parallel computation: a work unit must include an input schema, output schema, verifier, provenance record, and merge rule.
 
 \paragraph{Blockchains, verifiable computation, and useful work.}
-Bitcoin demonstrates coordination through a public ledger and proof-of-work
-incentives \citep{nakamoto2008bitcoin}; Ethereum provides programmable smart
-contracts \citep{buterin2014ethereum}; TrueBit studies interactive verification
-for off-chain computation \citep{teutsch2019truebit}; and Ofelimos studies
-proof of useful work \citep{fitzi2022ofelimos}. TokenMosaic is not a consensus
-protocol and does not use useful work to secure a blockchain. Its present
-ledger, contribution, and sandbox-settlement objects are local experiment
-records only. Blockchain commitments and real settlement are outside the
-prototype.
+Bitcoin demonstrates that mutually untrusted participants can be coordinated through a public ledger and proof-of-work incentives \citep{nakamoto2008bitcoin}. Ethereum generalizes the ledger into programmable smart contracts for decentralized applications \citep{buterin2014ethereum}. TrueBit studies interactive verification for off-chain computation, allowing expensive computations to be checked by blockchain-linked protocols \citep{teutsch2019truebit}. Proof-of-useful-work systems such as Ofelimos attempt to replace artificial hash puzzles with useful optimization work \citep{fitzi2022ofelimos}. TokenMosaic is adjacent to these systems but has a different objective: it is not a consensus protocol and does not require useful work to secure a blockchain. Instead, it uses ledgered commitments, verification records, and settlement rules to coordinate useful AI- and human-assisted production.
 
 \paragraph{LLM decomposition, tool use, and multi-agent workflows.}
-Recent LLM research externalizes decomposition, search, tool use, or intermediate
-reasoning \citep{khot2023decomposed,zhou2023least,yao2023tree,yao2023react}.
-HuggingGPT routes planned subtasks to models or tools
-\citep{shen2023hugginggpt}, while CAMEL, AutoGen, MetaGPT, and ChatDev add roles
-and agent communication
-\citep{li2023camel,wu2023autogen,hong2024metagpt,qian2023chatdev}. TokenMosaic's
-current AI executor generates candidates only within plugin-defined,
-deterministic or preregistered task plans. It does not ask an LLM to discover
-the protocol decomposition, select remote contributors, or negotiate rewards.
+Recent LLM research shows that complex reasoning benefits from explicit intermediate structure. Decomposed Prompting, Least-to-Most Prompting, Tree of Thoughts, and ReAct all externalize decomposition, search, tool use, or intermediate reasoning states \citep{khot2023decomposed,zhou2023least,yao2023tree,yao2023react}. HuggingGPT and related tool-use systems use an LLM to plan subtasks and route them to external models or tools \citep{shen2023hugginggpt}. Multi-agent frameworks such as CAMEL, AutoGen, MetaGPT, and ChatDev further introduce role specialization, agent communication, and structured software-production workflows \citep{li2023camel,wu2023autogen,hong2024metagpt,qian2023chatdev}. These works motivate TokenMosaic's use of decomposition, roles, and tool-facing agents. The gap is that most LLM-agent systems assume a trusted orchestrator and evaluate final task success, while TokenMosaic treats resource allocation, failure recovery, verifier selection, contribution provenance, and reward settlement as first-class protocol objects.
 
 \paragraph{Verification-heavy intelligent tasks.}
-Formal proof assistants provide a useful testbed because accepted outputs can
-be checked deterministically. The Lean mathematical library supports
-formalized mathematics \citep{mathlib2020}; miniF2F provides a formal benchmark
-\citep{zheng2021minif2f}; and LeanDojo exposes proof states and premises
-\citep{yang2023leandojo}. In the current application, TokenMosaic executes only
-the theorem and lemma units in a fixed preregistered plan, while a pinned local
-Lean environment checks candidate and root proofs. Arbitrary online subgoal or
-tactic-plan discovery is not implemented.
+Formal proof assistants provide a useful testbed because accepted outputs can be checked deterministically. The Lean mathematical library shows how a large community can maintain formalized mathematics in Lean \citep{mathlib2020}. miniF2F provides a cross-system benchmark for formal olympiad-level mathematics \citep{zheng2021minif2f}, and LeanDojo exposes Lean proof states, premises, interaction data, and benchmarks for retrieval-augmented theorem proving \citep{yang2023leandojo}. These works support our Lean proof-production application: TokenMosaic can treat a theorem, subgoal, tactic patch, error log, or auxiliary lemma as a task unit, while Lean supplies a replayable verifier.
 
 \paragraph{Annotation quality and low-resource public-good NLP.}
-Crowdsourced annotation research models noisy contributors and uncertain labels
-\citep{dawid1979maximum,whitehill2009glad,hovy2013mace,ratner2017snorkel}, while
-low-resource NLP emphasizes unequal language coverage and community involvement
-\citep{joshi2020state,nekoto2020participatory,nllb2022}. These works motivate a
-future public-good application, but annotation aggregation, expert escalation,
-community governance, and adversarial contributor handling are not part of the
-current Factorization/Lean prototype or its evidence.
+Crowdsourced annotation research provides mature models for noisy contributors and uncertain labels. Dawid--Skene style aggregation estimates latent labels and worker error rates \citep{dawid1979maximum}; GLAD models both annotator ability and item difficulty \citep{whitehill2009glad}; MACE estimates annotator competence under noisy or adversarial conditions \citep{hovy2013mace}; and Snorkel shows how weak supervision sources can be combined into probabilistic labels \citep{ratner2017snorkel}. Low-resource language work also warns that public-good NLP is not merely a data-scarcity problem: language technologies are unevenly distributed across the world's languages \citep{joshi2020state}, participatory projects such as Masakhane emphasize community involvement \citep{nekoto2020participatory}, and NLLB combines large-scale data construction with human-centered evaluation for many languages \citep{nllb2022}. These lines motivate TokenMosaic's emphasis on provenance, uncertainty, expert escalation, and community review rather than treating generated artifacts as automatically authoritative.
 
 
 
@@ -1717,11 +1678,11 @@ current Factorization/Lean prototype or its evidence.
 \toprule
 Line of work & Main contribution & Gap addressed by TokenMosaic \\
 \midrule
-Task allocation & Negotiated or market-based assignment among agents & Frozen task DAGs with lease-based local scheduling and verification \\
-Complex crowdsourcing & Human workflow decomposition and recomposition & Local LLM/tool execution with typed Factorization and Lean verifiers \\
-Distributed execution & Scheduling and recovery for unreliable machines & Trusted local runtime with accepted-result and merge records \\
-Blockchain and smart contracts & Trustless ledgers, programmable settlement, verifiable off-chain computation & Local accounting records without consensus, blockchain, or payment \\
-LLM-agent systems & Planning, tool use, role specialization, and agent communication & Plugin-defined decomposition, checked candidates, and bounded recovery \\
+Task allocation & Negotiated or market-based assignment among agents & Recursive task DAGs with verification-aware routing and delayed settlement \\
+Complex crowdsourcing & Human workflow decomposition and recomposition & Heterogeneous LLM, tool, compute, and human contributors with typed verifiers \\
+Distributed execution & Scheduling and recovery for unreliable machines & Semantic intelligent work units with provenance, audit, and merge rules \\
+Blockchain and smart contracts & Trustless ledgers, programmable settlement, verifiable off-chain computation & Useful contribution accounting rather than artificial proof-of-work or consensus mining \\
+LLM-agent systems & Planning, tool use, role specialization, and agent communication & Fault tolerance, resource sharing, contribution attribution, and protocol-level incentives \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1729,52 +1690,102 @@ LLM-agent systems & Planning, tool use, role specialization, and agent communica
 
 \section{Conclusion}
 
-This paper presents TokenMosaic as a trusted local research prototype for
-coordinating verifiable task-DAG execution. The implemented system combines a
-local attempt-and-lease runtime, deterministic Factorization plans,
-preregistered Lean lemma DAGs and a real Lean checker, controlled AI API
-execution, bounded recovery, merge rules, and replayable local records. The
-five experiments evaluate those mechanisms and explicitly distinguish actual
-provider observations from trace-backed and simulated quantities.
+This paper proposes TokenMosaic, a protocol for turning idle tokens, local computation, tool-execution capacity, and human effort into useful distributed intelligent work. Instead of treating AI tasks as isolated prompt-response interactions, TokenMosaic frames large public-good tasks as recursively decomposable, verifiable, fault-tolerant, and ledger-recorded production processes.
 
-The broader idea of pooling community-owned tokens, tools, computation, and
-human effort remains a research vision. The present prototype does not provide
-an open distributed worker network, dynamic decomposition from online client
-capabilities, blockchain consensus, wallets, real token payment, or protection
-against malicious participants. Its contribution and sandbox-settlement
-objects record local experimental facts only.
+The key idea is simple: large tasks can be divided into smaller units, assigned to heterogeneous contributors, locally and globally verified, recursively merged, and rewarded according to transparent protocol rules. By combining ideas from decentralized ledgers, smart contracts, crowdsourcing, distributed systems, and multi-agent AI, TokenMosaic aims to move from artificial proof-of-work toward useful proof-of-contribution.
 
-Future work may study cross-machine participation, economic incentives,
-identity and adversarial security, and public-good applications such as
-low-resource language knowledge organization or multi-source annotation. Such
-extensions require separate implementations and evidence; they are not
-conclusions of the current Factorization and Lean experiments.
+The protocol is not intended to make all tasks distributed or decentralized. For small or weakly decomposable tasks, coordination overhead may outweigh the benefits. Its value is expected to appear in tasks that are large, modular, verification-heavy, and socially meaningful. Future work will implement TokenMosaic on concrete benchmarks such as low-resource language knowledge organization and multi-source annotation, and evaluate whether shared token economics can provide a reliable foundation for scalable public-good AI collaboration.
 
 
 \section*{Ethical considerations}
 
-The current experiments use Factorization and Lean benchmark tasks in a
-trusted local environment; they do not recruit community workers, process
-community language data, or distribute payments. A future public-good or
-cross-machine deployment would require separate review of licensing, consent,
-privacy, identity, access control, labor and payment practices, and adversarial
-security. Local event and contribution records should not be misread as a
-deployed reputation or surveillance system, and model-generated content should
-not be presented as community-authoritative without appropriate review.
+The protocol is intended for public-good production, but public-good framing does not remove risk. Low-resource language work can expose community knowledge, cultural context, and identity. Early experiments will therefore use synthetic languages. Real-language studies require licensing review, community consent, careful data governance, and expert validation. Annotation tasks may include sensitive data; the protocol must support privacy constraints, minimal disclosure, and source-specific access control. The ledger should support accountability and reward attribution, but it must not become a coercive surveillance mechanism. Finally, model-generated content must preserve uncertainty flags and should never be presented as community-authoritative without appropriate human or community review.
 
 
 
 \bibliographystyle{plainnat}
-\bibliography{reference}
+\bibliography{wine2026/reference}
+
+\section{Implementation Todo List}
+
+\subsection{Phase 1: Shared TokenMosaic Harness}
+
+\begin{itemize}[leftmargin=*]
+  \item Implement task registry with root task creation, task ids, and task states.
+  \item Implement task graph with parent-child dependencies and checkpoint status.
+  \item Implement lease state transitions: \texttt{Pending}, \texttt{Leased}, \texttt{Submitted}, \texttt{Verified}, \texttt{Rejected}, \texttt{Expired}, \texttt{Merged}.
+  \item Implement timeout detection and re-queue.
+  \item Implement the common verifier interface.
+  \item Implement ledger logging with structured JSON or CSV output.
+  \item Implement synthetic client profiles: fast, slow, unreliable, invalid, offline, and high-reputation.
+  \item Implement experiment configuration files for seeds, client count, failure rate, timeout, redundancy, and budget.
+\end{itemize}
+
+\subsection{Phase 2: Factorization Experiments}
+
+\begin{itemize}[leftmargin=*]
+  \item Generate factorization benchmark instances with hidden factors.
+  \item Implement search-range decomposition.
+  \item Implement factorization clients.
+  \item Implement modular verification for factor candidates.
+  \item Implement negative range certificates.
+  \item Implement factorization baselines.
+  \item Run pilot experiments on small integers.
+  \item Run full experiments over bit length, client count, failure rate, lease duration, and checkpoint policy.
+  \item Export aggregate metrics and raw logs.
+\end{itemize}
+
+\subsection{Phase 3: Lean Experiments}
+
+\begin{itemize}[leftmargin=*]
+  \item Freeze Lean, Mathlib, Lake, and environment hash.
+  \item Select theorem benchmark sets.
+  \item Build theorem-to-root-task conversion.
+  \item Implement Lean verifier with canonical replay.
+  \item Implement direct proof submissions.
+  \item Implement decomposition submissions with subgoals and merge rules.
+  \item Implement error-log repair tasks.
+  \item Implement checkpoint reuse for verified subproofs.
+  \item Implement Lean baselines.
+  \item Run pilot experiments on small theorem sets.
+  \item Run full experiments over theorem difficulty, token budget, client count, failure rate, and decomposition depth.
+  \item Export aggregate metrics and raw logs.
+\end{itemize}
+
+\subsection{Phase 4: Analysis and Reporting}
+
+\begin{itemize}[leftmargin=*]
+  \item Plot client count versus completion time.
+  \item Plot failure rate versus recovery time.
+  \item Compare checkpoint and no-checkpoint conditions.
+  \item Compare TokenMosaic against all baselines.
+  \item Run audit replay from ledger logs.
+  \item Identify negative cases where coordination overhead dominates.
+  \item Prepare tables for success rate, cost, recovery, and auditability.
+  \item Write the experimental results section using both aggregate metrics and failure analysis.
+\end{itemize}
+
+\section{Minimum Success Criteria}
+
+The experimental phase is ready for paper reporting when:
+\begin{itemize}[leftmargin=*]
+  \item Each application has at least one successful end-to-end TokenMosaic run.
+  \item Each baseline can be executed under the same benchmark configuration.
+  \item Raw logs can reproduce aggregate metrics.
+  \item Audit replay can reconstruct at least one successful final output from ledger records.
+  \item Failure cases are preserved rather than discarded.
+  \item The experiment scripts can be rerun from fixed configuration files and random seeds.
+\end{itemize}
 
 \section{Artifact Availability}
 \label{app:artifact}
 
-The source code, Slim V2 experimental facilities, frozen configurations, and
-frozen metric outputs used by this manuscript are provided with the
-accompanying repository branch. The approximately 7.14\,GB raw experiment
-archive is retained separately; its long-term hosting location remains to be
-decided with the supervising authors. No permanent archive URL is claimed
-here.
+The source code, experimental scripts, and supplementary materials for this work are available at:
+
+\begin{center}
+\url{https://anonymous.4open.science/r/TokenMosaic-0D4E/}
+\end{center}
+
+This repository is anonymized for double-blind review. The permanent public repository will be released upon acceptance.
 
 \end{document}
