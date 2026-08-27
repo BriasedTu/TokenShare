@@ -17,9 +17,17 @@ date: 2026-08-27
 ```powershell
 $freezeTag = 'experiments-pre-cleanup-20260827'
 $frozenSha = git rev-parse "$freezeTag^{}"
-if ((git cat-file -t $freezeTag) -ne 'tag') { throw 'freeze source must be an annotated tag' }
+if ($LASTEXITCODE -ne 0) { throw 'cannot resolve freeze tag' }
+$freezeType = git cat-file -t $freezeTag
+if ($LASTEXITCODE -ne 0 -or $freezeType -ne 'tag') { throw 'freeze source must be an annotated tag' }
+$targetStatus = @(git status --porcelain=v1)
+if ($LASTEXITCODE -ne 0 -or $targetStatus.Count -ne 0) { throw 'target worktree must be clean before restore' }
+$targetCached = @(git diff --cached --name-only)
+if ($LASTEXITCODE -ne 0 -or $targetCached.Count -ne 0) { throw 'target index must be empty before restore' }
 git show "$frozenSha`:src/tokenshare/protocol_engine.py"
+if ($LASTEXITCODE -ne 0) { throw 'frozen source path is unavailable' }
 git restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_engine.py'
+if ($LASTEXITCODE -ne 0) { throw 'target restore failed' }
 ```
 
 禁止从 live HEAD、其他 branch、其他 worktree 的工作区内容、未跟踪文件或绝对路径复制实现。目标固定为 branch `codex/experiments-clean-extraction`、worktree `E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction`。本阶段不创建该 branch/worktree/tag，也不运行 provider、实验或测试。
@@ -29,8 +37,9 @@ git restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_
 - `keep_exact`：source 与 target 路径相同；除表中写明 `keep_then_synthesize` 的文件外，目标 bytes 必须等于 `frozen_sha` blob。
 - `move_exact`：每行是唯一 source→target 映射。`byte_identical` 表示 bytes 不变；`move_then_synthesize` 表示先取得唯一 source blob，再只执行同一行或 `synthesize` 中列出的变换。
 - `synthesize`：新建或重写文件，必须只使用本清单列出的输入事实。
-- `exclude_exact`：目标树不得含该路径或 selector 的任何命中。
-- 默认规则是 deny：`frozen_sha` 中不属于 `keep_exact ∪ move_exact` source 集，且不属于 `synthesize` target 集的 tracked path，一律不进入目标树。
+- `exclude_source_exact`：该 frozen source path/selector 不得原样复制；只有同时在第 5 节点名的 target 才可由清单输入综合生成。它不表示同名 target 禁止存在。
+- `forbid_target_exact`：该 path/selector 的任何命中不得存在于 final target；它只能包含确实应消失的旧路径或功能。
+- 默认规则是双向 deny：frozen tracked source 只有属于 `keep_exact`、`move_exact` 或点名 synthesis input 才能读取；final tracked target 只有属于 `keep_exact` target、`move_exact` target 或 `synthesize` target 才能存在。所有 `forbid_target_exact` 命中必须为零，且 `synthesize` target 与 `forbid_target_exact` 集必须不相交。
 
 目录 selector 以 `git ls-tree -r --name-only $frozenSha -- 'src/tokenshare'` 这类带本清单已枚举 exact path 的命令取得 tracked 全集；本文对每个 selector 给出完整保留或完整排除集合，不读取 ignored/untracked 内容。唯一例外是第 8 节点名的正式 raw 目录 12 个只读发布文件。
 
@@ -124,7 +133,7 @@ git restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_
 | `src/tokenshare/plugins/lean_proof/fixtures.py` | fixture project 定位；`keep_then_synthesize`，只改 physical path |
 | `src/tokenshare/plugins/lean_proof/merge_policy.py` | lemma/root merge；byte-identical |
 | `src/tokenshare/plugins/lean_proof/models.py` | Lean domain models；byte-identical |
-| `src/tokenshare/plugins/lean_proof/preflight.py` | catalog/checker preflight；`keep_then_synthesize`，保留旧 logical identity 后映射新 bytes |
+| `src/tokenshare/plugins/lean_proof/preflight.py` | catalog/checker preflight；byte-identical，physical project root 由 caller 注入 |
 | `src/tokenshare/plugins/lean_proof/prompt_builder.py` | proof prompt；byte-identical |
 | `src/tokenshare/plugins/lean_proof/runtime_adapter.py` | runtime adapter；`keep_then_synthesize`，仅 descriptor import 改到 `tokenshare.executors.descriptors` |
 | `src/tokenshare/plugins/lean_proof/schemas.py` | Lean schema；byte-identical |
@@ -132,7 +141,7 @@ git restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_
 | `src/tokenshare/plugins/lean_proof/split_strategy.py` | fixed/lemma graph split；byte-identical |
 | `src/tokenshare/plugins/lean_proof/validator.py` | parser/checker/root validator；byte-identical |
 
-`src/tokenshare/plugins/lean_proof/replay_evidence.py` 不在运行闭包，见 `exclude_exact`。
+`src/tokenshare/plugins/lean_proof/replay_evidence.py` 不在运行闭包，见 `forbid_target_exact`。
 
 ### 2.7 Executor 最小闭包
 
@@ -244,8 +253,8 @@ conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_lemm
 | `tests/executors/test_deterministic_executor.py` | keep exact；通用 deterministic executor |
 | `tests/executors/test_executor_registry.py` | keep exact；registry |
 | `tests/executors/test_mock_ai_executor.py` | keep exact；通用 mock executor |
-| `tests/executors/test_ai_api_deepseek_transport.py` | `keep_then_synthesize`；只保留下列六个纯 transport test functions |
-| `tests/executors/test_ai_api_descriptor.py` | `keep_then_synthesize`；改为新 `descriptors.py` 合同与旧 executor absence 合同 |
+| `tests/executors/test_ai_api_deepseek_transport.py` | `extract_then_synthesize`；只保留下列六个纯 transport test functions |
+| `tests/executors/test_ai_api_descriptor.py` | `synthesize`；改为新 `descriptors.py` 合同与旧 executor absence 合同 |
 
 DeepSeek 文件只保留这些 exact functions：
 
@@ -297,7 +306,7 @@ test_deepseek_executor_timeout_marks_usage_missing
 
 ### 3.2 当前实验 tests：12 个测试与 2 个 fixture
 
-每行 content rule 为 `move_then_synthesize`，仅改 imports、公开符号名和公开路径 fixture；测试行为与 golden facts 不变。
+12 个 Python test 的 content rule 为 `move_then_synthesize`，仅改 imports、公开符号名和公开路径；两个 JSON fixture 为 `byte_identical move_exact`。测试行为与 golden facts 不变。
 
 | Source | Target | 职责 |
 |---|---|---|
@@ -313,8 +322,8 @@ test_deepseek_executor_timeout_marks_usage_missing
 | `tests/experiments/slim_v2/test_scenarios.py` | `tests/experiments/test_scenarios.py` | Exp2–4 rules |
 | `tests/experiments/slim_v2/test_schema.py` | `tests/experiments/test_schema.py` | schema validation |
 | `tests/experiments/slim_v2/test_system_vertical.py` | `tests/experiments/test_system_vertical.py` | system/plugin fake vertical |
-| `tests/experiments/slim_v2/fixtures/authority_contract.v1.json` | `tests/experiments/fixtures/authority_contract.v1.json` | metric/schema authority fixture |
-| `tests/experiments/slim_v2/fixtures/reducer_golden_run.v1.json` | `tests/experiments/fixtures/reducer_golden_run.v1.json` | reducer golden fixture |
+| `tests/experiments/slim_v2/fixtures/authority_contract.v1.json` | `tests/experiments/fixtures/authority_contract.v1.json` | byte-identical metric/schema authority fixture |
+| `tests/experiments/slim_v2/fixtures/reducer_golden_run.v1.json` | `tests/experiments/fixtures/reducer_golden_run.v1.json` | byte-identical reducer golden fixture |
 
 ### 3.3 Launcher
 
@@ -326,7 +335,18 @@ test_deepseek_executor_timeout_marks_usage_missing
 
 第 3.4 节所有 SHA-256 都是审计时 working-file raw bytes 的内容哈希，不是 Git object ID。Task B 必须在创建 freeze commit 与 annotated tag 之前完成以下 raw-byte 前置条件，否则抽取不得开始：
 
-1. 用 `apply_patch` 在 source `.gitattributes` 中逐行加入以下 20 个 exact source path 的 `-text`；不得使用目录规则或 glob：
+Task B writer 第一次触碰 `.gitattributes` 前必须执行以下 source guard。所有已有 source working-tree changes 必须先以各自 thematic commit 提交；不得把它们混入 raw freeze commit：
+
+```powershell
+$sourceCached = @(git diff --cached --name-only)
+if ($LASTEXITCODE -ne 0 -or $sourceCached.Count -ne 0) { throw 'source index must be empty before raw freeze work' }
+$attributeDrift = @(git diff --name-only -- '.gitattributes')
+if ($LASTEXITCODE -ne 0 -or $attributeDrift.Count -ne 0) { throw '.gitattributes already has an unstaged change' }
+$sourceStatus = @(git status --porcelain=v1)
+if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0) { throw 'all existing source changes require prior thematic commits' }
+```
+
+1. 用 `apply_patch` 在 source `.gitattributes` EOF 逐行加入以下 20 个 final exact source path 的 `-text`；不得使用目录规则或 glob。任何对同一路径生效的旧 exact `text` 或 `eol=` rule 必须删除/替换，或者由这组位于 EOF 的 final rules 覆盖：
 
 ```gitattributes
 benchmarks/paper/factorization_catalog.v2.jsonl -text
@@ -351,8 +371,43 @@ fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean -text
 fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean -text
 ```
 
-2. 在 stage 前对这 20 个 working files 逐个执行 `Get-FileHash -Algorithm SHA256`，结果必须等于下表对应 SHA-256；保存这份 pre-stage map。然后只执行 `git add -- .gitattributes` 以及对上述 20 个 exact path 的逐文件 `git add --`。不得运行 formatter、checkout、`git add --renormalize` 或任何会改 working-file bytes 的命令。
-3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，以不经过 checkout 和 text conversion 的 `git cat-file blob` 读取每个 `$frozenSha:path` 的 stdout raw bytes，计算 SHA-256，并逐值等于下表。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
+2. 在 stage 前对这 20 个 working files 逐个执行 `Get-FileHash -Algorithm SHA256`，结果必须等于下表对应 SHA-256；保存这份 pre-stage map。然后只对 `.gitattributes` 与下面 `$rawPaths` 中每个 exact path 分别执行 `git add -- $path`；禁止 broad selector、formatter、checkout、`git add --renormalize` 或任何会改 working-file bytes 的命令。Stage 后必须执行此 exact-set 与 attribute gate：
+
+```powershell
+$rawPaths = @(
+    'benchmarks/paper/factorization_catalog.v2.jsonl',
+    'benchmarks/paper/lean_catalog.v1.jsonl',
+    'benchmarks/paper/lean_checker_preflight.v1.json',
+    'benchmarks/paper/lean_environment_semantic_authority.v1.json',
+    'benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl',
+    'benchmarks/paper/exp1_baseline_provider_config.v3.json',
+    'benchmarks/paper/exp5_siliconflow_provider_config.v3.json',
+    'fixtures/lean_proof_project/lake-manifest.json',
+    'fixtures/lean_proof_project/lakefile.lean',
+    'fixtures/lean_proof_project/lean-toolchain',
+    'fixtures/lean_proof_project/TokenShare.lean',
+    'fixtures/lean_proof_project/TokenShare/Helper.lean',
+    'fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean',
+    'fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean',
+    'fixtures/lean_proof_project/TokenShare/Merge.lean',
+    'fixtures/lean_proof_project/TokenShare/SplitRules.lean',
+    'fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean',
+    'fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean',
+    'fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean',
+    'fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean'
+)
+$expectedStaged = @('.gitattributes') + $rawPaths | Sort-Object
+$actualStaged = @(git diff --cached --name-only | Sort-Object)
+if ($LASTEXITCODE -ne 0 -or (Compare-Object $expectedStaged $actualStaged)) { throw 'raw freeze staged set mismatch' }
+foreach ($path in $rawPaths) {
+    $attributes = @(git check-attr text eol -- $path)
+    if ($LASTEXITCODE -ne 0) { throw "git check-attr failed: $path" }
+    $expectedAttributes = @("$path`: text: unset", "$path`: eol: unspecified")
+    if (Compare-Object $expectedAttributes $attributes) { throw "raw attributes are not final: $path" }
+}
+```
+
+3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
 4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
 
 Target synthesized `.gitattributes` 必须逐行包含以下 20 个 exact public path 的 `-text`，保证启用 `core.autocrlf` 的 fresh checkout 仍保持 frozen raw bytes；不得以旧 source EOL 推断或转换：
@@ -407,6 +462,43 @@ benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Unsupport
 | `fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean` | `benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean` | `06378524b81f22aa3ec652e96cc970be076aa390ab2ed6ada7f66f91013d8653` |
 | `fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean` | `benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean` | `45393c97a1a61a4dd5607da8bbfb73690657b9f1ba61e07d39180a581cfcde85` |
 | `fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean` | `benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean` | `a6e79e5563ef4dccf0d7985e941c247d70e6e418ba0ba0bbc65785b33ac0619b` |
+
+Freeze tag 创建后运行以下固定 Python body；`sha` 必须是 annotated tag 的 peeled commit SHA：
+
+```python
+import hashlib
+import subprocess
+import sys
+
+sha = sys.argv[1]
+expected = {
+    "benchmarks/paper/factorization_catalog.v2.jsonl": "9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774",
+    "benchmarks/paper/lean_catalog.v1.jsonl": "1b2b709ce459d1c72966c708bf6fabfd6a747842fdbd853f2b0d42b74a3052c3",
+    "benchmarks/paper/lean_checker_preflight.v1.json": "3b8f0597466e4ed1836719f133a1698c75c9b063c6f60658720d9e6358c323c7",
+    "benchmarks/paper/lean_environment_semantic_authority.v1.json": "b5bfb38160086bbbd3266da7f82a9c1f7dea51f4ae34ab4cbc91b32c74b29f13",
+    "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl": "5a134f246d45ad302ead57ef6eb9559b0b040ed85fac50dc6af49974756f2cdc",
+    "benchmarks/paper/exp1_baseline_provider_config.v3.json": "12a958510d1204738c162ad0e6754e550e41dce507dc796977c86da351bab30c",
+    "benchmarks/paper/exp5_siliconflow_provider_config.v3.json": "4760850bc7929dd97d8c1fe6d811359aee4c6f3e663f49faf532b0e6a0481af3",
+    "fixtures/lean_proof_project/lake-manifest.json": "1b07ce0a9898b379578390d24abf183a3c319bdb4b076c18ea31edf1daf2e869",
+    "fixtures/lean_proof_project/lakefile.lean": "288f5b67bd53c82742d276e5ed67714279bdce920c54a6986c1b4a7ef5032d39",
+    "fixtures/lean_proof_project/lean-toolchain": "61561b06f5587e027815fac8f59bf6ca160dfbf3f7372fc6297664acfd85b8c0",
+    "fixtures/lean_proof_project/TokenShare.lean": "86a6496322cc4049f9f443b19399766e2dd450e0f0f3d9b21858487b4e40786d",
+    "fixtures/lean_proof_project/TokenShare/Helper.lean": "9e98398cb779e5fc5b55cd0a8e521a56f58475285ef6fcd977d73fc62238b02c",
+    "fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean": "f015a29cd0eb90854a5b247a52c420a4885287c20c397f11f2490f1a5c857784",
+    "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean": "4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+    "fixtures/lean_proof_project/TokenShare/Merge.lean": "f149dc0171a55156891ecd415fc3889e9030e2b81ce53697b1e1c54a51252fc7",
+    "fixtures/lean_proof_project/TokenShare/SplitRules.lean": "6716f703905abe0b230215ac20886eb96b8e929aec27fb9c78265a7450aee5c1",
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean": "c974b8649b3eadf4738d39e3d852e8a958a5e75e2d751da01759e82cb2f919e0",
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean": "06378524b81f22aa3ec652e96cc970be076aa390ab2ed6ada7f66f91013d8653",
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean": "45393c97a1a61a4dd5607da8bbfb73690657b9f1ba61e07d39180a581cfcde85",
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean": "a6e79e5563ef4dccf0d7985e941c247d70e6e418ba0ba0bbc65785b33ac0619b",
+}
+for path, wanted in expected.items():
+    raw = subprocess.check_output(["git", "cat-file", "blob", f"{sha}:{path}"])
+    actual = hashlib.sha256(raw).hexdigest()
+    if actual != wanted:
+        raise SystemExit(f"raw blob SHA-256 mismatch: {path}: {actual}")
+```
 
 Sidecar 中的旧路径是冻结 logical identity，不能重写 sidecar。实现必须先以旧 key 校验记录的 digest，再把 key 映射到上表 public physical path 读取 bytes。严格旧 key allowlist 见第 10 节。Sidecar exact structure counts 是：top-level fields=`4`，字段名为 `schema_version`、`authority`、`semantic_projection`、`sidecar_digest`；`authority.raw_files=3`；`semantic_projection.environment.files=12`；`semantic_projection.checker.files=1`。验证器必须同时比较这些计数、键名、raw SHA-256 与逐项 mapping。
 
@@ -497,7 +589,6 @@ Raw 不变量：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，metadat
 | `src/tokenshare/plugins/lean_proof/runtime_adapter.py` | frozen blob + descriptor import 变更 | 不 import `executors.ai_api`；其余 diff 为空 |
 | `src/tokenshare/plugins/lean_proof/environment.py` | frozen blob + logical→physical mapping | 旧 key 验 digest，新路径读 bytes；checker 语义不变 |
 | `src/tokenshare/plugins/lean_proof/fixtures.py` | frozen blob + fixture physical root | 只解析 `benchmarks/experiments/fixtures/lean_proof_project` |
-| `src/tokenshare/plugins/lean_proof/preflight.py` | frozen blob + logical→physical mapping | sidecar bytes 不改，600 entries 对等 |
 | `src/tokenshare/plugins/lean_proof/semantic_authority.py` | frozen blob + logical→physical mapping | semantic-authority SHA 仍为第 3.4 节值 |
 | `tests/plugins/lean_proof/test_lean_runtime_adapter.py` | frozen blob + 第 2.9 节两个 exact catalog path substitutions | 除两个 path literals 外 diff 为空；records 与 assertions 等价 |
 | `tests/plugins/lean_proof/test_lean_fixed_plan.py` | frozen blob + 第 2.9 节一个 exact lemma-graph path substitution | 除该 path literal 外 diff 为空；plan assertions 等价 |
@@ -525,6 +616,63 @@ Raw 不变量：非 metrics 文件=`1,088,134`，bytes=`7,143,234,452`，metadat
 | `verification/verify_authoritative_corpus.py` | 第 3.4、4 节 corpus/完整 arrays | 完整数组与 identity 逐元素对等，非抽样 |
 | `verification/verify_official_results.py` | 第 3.6 节 result/reducer 只读验证 | 第 8 节 tripwire 合同 |
 | `verification/verify_extraction.py` | ancestry、tracked boundary、absence、allowlist | default-deny 与第 9、10 节全量扫描 |
+
+### 5.1 Byte-level closed-transform gate
+
+`verification/verify_extraction.py` 必须用 `subprocess.check_output(["git", "cat-file", "blob", f"{frozen_sha}:{source_path}"])` 取得 frozen bytes。所有 `byte_identical keep/move` 逐 bytes 等于 target `read_bytes()`。所有 path-only `keep_then_synthesize` 与第 3.1–3.3 节 moved Python/CMD files 必须按下表顺序对 frozen bytes 执行 `bytes.count(old)`、断言 exact count、再执行 `bytes.replace(old, new)`；最终 bytes 必须等于 target bytes。禁止 decode/encode、EOL normalization、formatter 或表外代码差异。
+
+`EXP_SCOPE` 是第 3.1 节 14 个 exact sources、第 3.2 节 12 个 Python test exact sources与 `run_slim_v2.cmd` 的并集；source→target 由各节逐行决定。下表 count 是整个 exact scope 的总 occurrence count，验证器还必须按每个 source→target 独立生成 expected bytes：
+
+| Scope | Old ASCII bytes | New ASCII bytes | Exact count |
+|---|---|---|---:|
+| `EXP_SCOPE` | `tokenshare.experiments.slim_v2` | `tokenshare.experiments` | 212 |
+| `EXP_SCOPE` | `SlimRunConfigV1` | `ExperimentRunConfigV1` | 22 |
+| `EXP_SCOPE` | `SlimLeanExecutionBridge` | `ExperimentLeanExecutionBridge` | 3 |
+| `EXP_SCOPE` | `SLIM_V2_SCHEMA_VERSION` | `EXPERIMENT_SCHEMA_VERSION` | 4 |
+| `EXP_SCOPE` | `_DEFAULT_OUTPUT_ROOT = _REPO_ROOT / "TokenShareData" / "outputs" / "slim_v2"` | `_DEFAULT_OUTPUT_ROOT = _REPO_ROOT / "TokenShareData" / "outputs" / "experiments"` | 1 |
+| `EXP_SCOPE` | `local/cache/slim_v2/lean_environment_pass.v1.json` | `local/cache/experiments/lean_environment_pass.v1.json` | 1 |
+| `EXP_SCOPE` | `tokenshare-slim-v2` | `tokenshare-experiments` | 1 |
+| `EXP_SCOPE` | `.slim-v2.lock` | `.experiments.lock` | 4 |
+| `EXP_SCOPE` | `slim-v2-%Y%m%d-%H%M%S` | `experiments-%Y%m%d-%H%M%S` | 1 |
+| `EXP_SCOPE` | `TokenShare Slim V2` | `TokenShare Experiments` | 4 |
+| `EXP_SCOPE` | `TOKENSHARE_SLIM_V2_REPO` | `TOKENSHARE_EXPERIMENTS_REPO` | 1 |
+| `EXP_SCOPE` | `TOKENSHARE_SLIM_V2_EXIT` | `TOKENSHARE_EXPERIMENTS_EXIT` | 4 |
+| `EXP_SCOPE` | `SLIM_V2_JOURNAL_RESUME_NOT_USED` | `TOKENSHARE_EXPERIMENTS_JOURNAL_RESUME_NOT_USED` | 1 |
+| `EXP_SCOPE` | `SLIM_V2_RESUME_NOT_USED` | `TOKENSHARE_EXPERIMENTS_RESUME_NOT_USED` | 1 |
+| `EXP_SCOPE` | `tokenshare_slim_v2_lean_environment_` | `tokenshare_experiments_lean_environment_` | 1 |
+| `EXP_SCOPE` | `slim_v2_lean_environment_test` | `experiments_lean_environment_test` | 3 |
+| `EXP_SCOPE` | `slim_v2_profile_id` | `experiments_profile_id` | 1 |
+| `EXP_SCOPE` | `slim_v2_provider` | `experiments_provider` | 1 |
+| `EXP_SCOPE` | `slim_v2_domain_parser` | `experiments_domain_parser` | 2 |
+| `EXP_SCOPE` | `slim_v2_structural_verification_bypass` | `experiments_structural_verification_bypass` | 1 |
+| `EXP_SCOPE` | `slim_v2_scenario_candidate` | `experiments_scenario_candidate` | 1 |
+| `EXP_SCOPE` | `slim_v2_mode_blind_challenge` | `experiments_mode_blind_challenge` | 1 |
+| `EXP_SCOPE` | `Path(__file__).parents[4]` | `Path(__file__).parents[3]` | 3 |
+| `EXP_SCOPE` | `benchmarks/paper/factorization_catalog.v2.jsonl` | `benchmarks/experiments/factorization_catalog.v2.jsonl` | 2 |
+| `EXP_SCOPE` | `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` | `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl` | 4 |
+| `EXP_SCOPE` | `benchmarks/paper/exp1_baseline_provider_config.v3.json` | `configs/experiments/exp1_baseline_provider_config.v3.json` | 3 |
+| `EXP_SCOPE` | `benchmarks/paper/exp5_siliconflow_provider_config.v3.json` | `configs/experiments/exp5_siliconflow_provider_config.v3.json` | 3 |
+| `src/tokenshare/plugins/factorization/runtime_adapter.py` | `from tokenshare.executors.ai_api import build_ai_api_executor_descriptor` | `from tokenshare.executors.descriptors import build_ai_api_executor_descriptor` | 1 |
+| `src/tokenshare/plugins/lean_proof/runtime_adapter.py` | `from tokenshare.executors.ai_api import build_ai_api_executor_descriptor` | `from tokenshare.executors.descriptors import build_ai_api_executor_descriptor` | 1 |
+| `src/tokenshare/plugins/lean_proof/environment.py` | `repository_root / "benchmarks/paper" / sidecar_path.name` | `repository_root / "benchmarks/experiments" / sidecar_path.name` | 1 |
+| `src/tokenshare/plugins/lean_proof/fixtures.py` | `Path(__file__).resolve().parents[4] / "fixtures" / "lean_proof_project"` | `Path(__file__).resolve().parents[4] / "benchmarks" / "experiments" / "fixtures" / "lean_proof_project"` | 1 |
+| `tests/plugins/lean_proof/test_lean_runtime_adapter.py` | `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` | `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl` | 1 |
+| `tests/plugins/lean_proof/test_lean_runtime_adapter.py` | `benchmarks/paper/lean_catalog.v1.jsonl` | `benchmarks/experiments/lean_catalog.v1.jsonl` | 1 |
+| `tests/plugins/lean_proof/test_lean_fixed_plan.py` | `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` | `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl` | 1 |
+| `tests/plugins/lean_proof/test_lean_lemma_graph_merge_policy.py` | `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` | `benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl` | 1 |
+
+`src/tokenshare/plugins/lean_proof/semantic_authority.py` 的 old logical strings 不能替换，因此它使用一个额外 closed transform：把 frozen `_CHECKER_SOURCE_PATHS` 三行 block 替换为同一 block 加上下列 exact ASCII helper，occurrence count=`1`；再把两个 sidecar physical string occurrences、一个 raw read expression、两个 catalog read expressions、一个 preflight read expression和两个 projection read expressions逐项改为调用该 helper。每项 old fragment occurrence 必须为 `1`，只有 sidecar string 和 `normalized_text_digest(root / relative)` 分别为 `2`：
+
+```python
+def _physical_path_for(logical: str) -> str:
+    if logical.startswith("benchmarks/paper/"):
+        return f"benchmarks/experiments/{Path(logical).name}"
+    if logical.startswith("fixtures/lean_proof_project/"):
+        return f"benchmarks/experiments/{logical}"
+    return logical
+```
+
+Exact fragments 是：`benchmarks/paper/lean_environment_semantic_authority.v1.json`→`benchmarks/experiments/lean_environment_semantic_authority.v1.json`；`repository_root / relative`→`repository_root / _physical_path_for(relative)`；`repository_root / _RAW_AUTHORITY_PATHS["direct_catalog"]`、`repository_root / _RAW_AUTHORITY_PATHS["graph_catalog"]`、`repository_root / _RAW_AUTHORITY_PATHS["preflight_manifest"]` 分别在右括号内包入 `_physical_path_for(...)`；`normalized_text_digest(root / relative)`→`normalized_text_digest(root / _physical_path_for(relative))`。Helper insertion 加这些 replacements 后的 bytes 必须精确等于 target；sidecar logical constants block bytes 不变。
 
 公开 Python symbol 必须作以下 exact 映射；持久化 string values 不随 Python symbol 改写：
 
@@ -560,9 +708,26 @@ SLIM_V2_SCHEMA_VERSION -> EXPERIMENT_SCHEMA_VERSION
 
 动态 request/artifact IDs 中的 `slim_` / `slim_v2_` 前缀也改为 `experiments_`；formal raw ignored 目录不重写。只有第 10 节逐值列出的冻结 schema/pricing/protocol 与发布事实可以继续含历史代号。
 
-## 6. `exclude_exact`
+## 6. `exclude_source_exact` 与 `forbid_target_exact`
 
-### 6.1 Source/runtime/tests
+### 6.1 `exclude_source_exact`
+
+下列 frozen source paths 不得原样复制，但同名或新名 target 可严格按第 5 节综合生成：
+
+| Frozen source path / selector | 唯一允许结果 |
+|---|---|
+| `.gitattributes` | 第 3.4、5 节的 public raw-byte rules |
+| `README.md` | 第 5 节公开入口 |
+| `AGENTS.md` | 第 5 节 clean-repository 规则 |
+| `Doc/**` | 只生成第 5 节六个 exact `Doc/Experiments/` targets |
+| `src/tokenshare/experiments/__init__.py` | 不复制 legacy initializer；只从第 3.1 节嵌套 initializer 生成轻量 target |
+| audit/freeze `src/tokenshare/experiments/**` minus 第 3.1 节 14 个 exact move sources | 不复制 legacy paper/formal/gate/budget/evidence files；final target 仅由 allow set 决定 |
+| audit/freeze `tests/experiments/**` minus 第 3.2 节 14 个 exact move sources | 不复制 legacy tests/helper；final target 仅由 allow set 决定 |
+| audit/freeze `verification/**` minus `verification/pytest_network_tripwire.py` 与 `verification/sitecustomize.py` | 只生成第 5 节五个 exact verification targets |
+
+`.gitattributes`、`README.md`、`AGENTS.md`、六个 `Doc/Experiments/` targets 与五个 synthesized verification targets 明确不属于 `forbid_target_exact`。`verification/verify_extraction.py` 必须先断言 `synthesize target ∩ forbid_target_exact = ∅`，再分别执行 source-not-copied 与 final-target-absent 两类检查。
+
+### 6.2 `forbid_target_exact`: runtime/tests
 
 | Exact path / selector | 原因 |
 |---|---|
@@ -577,8 +742,8 @@ SLIM_V2_SCHEMA_VERSION -> EXPERIMENT_SCHEMA_VERSION
 | `src/tokenshare/executors/ai_api_selector.py` | 旧 selector/failover executor 层 |
 | `src/tokenshare/executors/response_bank.py` | 已排除 response-bank authority |
 | `src/tokenshare/executors/trace_backed.py` | 旧 trace-backed executor；当前 fixed response 在 experiments 内 |
-| audit/freeze `src/tokenshare/experiments/**` minus 第 3.1 节 14 个 exact source paths | 旧实验约 77 文件；包括 legacy initializer、paper/formal runner、gate、budget、evidence、checkpoint、report，不进入目标 |
-| audit/freeze `tests/experiments/**` minus 第 3.2 节 14 个 exact source paths | 旧实验 tests；不得为 retained test 引入 paper helper |
+| `src/tokenshare/experiments/slim_v2/**` | 旧嵌套 package 名不得进入 final target |
+| `tests/experiments/slim_v2/**` | 旧嵌套 tests/fixtures 路径不得进入 final target |
 | `tests/integration/test_paper_protocol_runtime_integration.py` | 旧 paper runtime integration helper |
 | `tests/plugins/lean_proof/test_lean_replay_evidence.py` | 对应被删 replay evidence |
 | `tests/plugins/lean_proof/test_lean_checker_injection.py` | 安全/攻击型 checker injection；`out_of_scope_by_user` |
@@ -596,7 +761,7 @@ SLIM_V2_SCHEMA_VERSION -> EXPERIMENT_SCHEMA_VERSION
 
 DeepSeek 混合文件的五个 exact function 排除项已在第 2.10 节列全，不用整文件 selector 替代。
 
-### 6.2 其余 25 个旧 benchmark 文件
+### 6.3 其余 25 个旧 benchmark 文件
 
 以下 25 个 tracked paths 全部排除；它们是旧 profile/cohort/smoke/metric contract，不是正式 corpus/config：
 
@@ -630,30 +795,26 @@ benchmarks/paper/paper_suite_scale_profile.v1.json
 
 另排除 `fixtures/lean_proof_project/.lake/**`；只允许第 3.4 节 13 个 tracked fixture files。
 
-### 6.3 Paper/docs/root/harness/process artifacts
+### 6.4 Paper/docs/root/harness/process artifacts
 
 | Exact path / selector | 原因 |
 |---|---|
 | `paper/out/**` | LaTeX build cache |
 | `paper/**/*.synctex.gz`, `paper/**/*.aux`, `paper/**/*.log`, `paper/**/*.fls`, `paper/**/*.fdb_latexmk`, `paper/**/*.toc`, `paper/**/*.blg` | 生成缓存；selector 对 `paper/` tracked tree 全量匹配 |
 | audit/freeze `paper/**` minus 第 3.5 节 10 个 exact target paths | 论文 workspace 只保留获批 10 文件 |
-| `Doc/**` | 不原样抽取任何旧 Doc；目标只由第 5 节六个 `Doc/Experiments/` 文件综合生成 |
 | `Doc/SlimV2/**` | 工程代号、阶段/修复/relay 过程文档；不原样进入公开分支 |
-| `README.md`、`AGENTS.md` | 旧入口/主线路由；目标同名文件综合生成 |
 | `progress.md`、`feature_list.json`、`session-handoff.md` | 开发过程状态，不是公开事实 |
 | `init.ps1`、`init.sh` | 旧全局/Full/LeanAudit launcher |
-| `run_slim_v2.cmd` | 由 `run_experiments.cmd` 替代，目标不保留旧名 |
-| audit/freeze 根目录其他 `run_*.cmd`, `run_*.ps1`, `run_*.sh`（明确排除第 3.3 节唯一 source） | 旧 launcher；目标唯一 launcher 是 `run_experiments.cmd` |
+| `run_slim_v2.cmd` | 由第 3.3 节 public launcher 替代，final target 不保留旧名 |
+| audit/freeze 根目录其他 `run_*.cmd`, `run_*.ps1`, `run_*.sh`（明确排除第 3.3 节唯一 source） | 旧 launcher；final target launcher 只取第 3.3 节 target |
 | `verification/lean-canary-tests.txt` | 旧 Lean canary profile |
 | `verification/profiles/paper-l1-components.txt` | legacy paper profile |
 | `verification/profiles/paper-l2-historical-real.txt` | legacy paper profile |
 | `verification/profiles/paper-l3-new-real-smoke-audit.txt` | legacy network/paper profile |
 | `verification/profiles/paper-l4-cell-lineage.txt` | legacy lineage profile |
-| audit/freeze `verification/**` minus `verification/pytest_network_tripwire.py` 与 `verification/sitecustomize.py` | 旧 harness；目标脚本由第 5 节综合生成 |
 | `local/**` | tracked pytest/Rxx/历史过程产物；不得进入目标 |
 | `outputs/**` | tracked 历史输出；正式发布只取第 3.6 节 12 文件 |
 | `TokenShareData/**` | ignored raw；不得跟踪或复制，12 个发布文件写入独立 target root |
-| `.gitattributes` | 旧 paper/archive EOL 规则；目标重新综合 |
 
 ## 7. Authoritative corpus 映射合同
 
@@ -832,7 +993,9 @@ conda run -n tokenshare python -m tokenshare.experiments.cli plan --profile full
 $leanNode = 'tests/plugins/lean_proof/test_lean_checker_direct.py::test_lean_checker_accepts_valid_direct_proof_with_real_environment'
 $proc = Start-Process -FilePath 'conda' -ArgumentList @('run', '-n', 'tokenshare', 'python', '-m', 'pytest', $leanNode, '-q') -WindowStyle Hidden -PassThru
 if (-not $proc.WaitForExit(60000)) {
-    Stop-Process -Id $proc.Id -Force
+    $proc.Kill($true)
+    $proc.WaitForExit()
+    if (-not $proc.HasExited) { throw 'Lean checker process tree did not exit after kill' }
     throw 'Lean checker smoke exceeded 60000 ms'
 }
 if ($proc.ExitCode -ne 0) { throw "Lean checker smoke failed with exit code $($proc.ExitCode)" }
@@ -845,15 +1008,17 @@ if ($proc.ExitCode -ne 0) { throw "Lean checker smoke failed with exit code $($p
 ```powershell
 conda run -n tokenshare python verification/verify_official_results.py --raw-root 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline\TokenShareData\outputs\slim_v2\slim-v2-full-flash-20260823-233000-b4c8e951' --require-raw
 conda run -n tokenshare python verification/verify_extraction.py --frozen-sha $frozenSha
-git ls-files -- 'paper/out/**' '*.synctex.gz' '*.aux' '*.log' '*.fls' '*.fdb_latexmk' '*.toc' '*.blg'
+$cacheHits = @(git ls-files -- 'paper/out/**' '*.synctex.gz' '*.aux' '*.log' '*.fls' '*.fdb_latexmk' '*.toc' '*.blg')
+if ($LASTEXITCODE -ne 0 -or $cacheHits.Count -ne 0) { throw 'tracked paper cache is present' }
 ```
 
-期望：12 result hashes、11 in-memory reducer payloads、raw invariants、ancestry、default-deny、旧设施 absence 与历史 allowlist 通过；最后命令无输出。`verify_official_results.py` 不调用 `reduce_run()` 且 `_commit_staged_metrics` tripwire 未触发。
+期望：12 result hashes、11 in-memory reducer payloads、raw invariants、ancestry、双向 default-deny、`exclude_source_exact` 未原样复制、`forbid_target_exact` absence、synthesized-target disjointness、第 5.1 节逐 bytes closed transforms 与历史 allowlist 全部通过；最后命令无输出。`verify_official_results.py` 不调用 `reduce_run()` 且 `_commit_staged_metrics` tripwire 未触发。
 
 ### 11.6 Manifest 本身自检
 
 ```powershell
-git diff --check -- 'Doc/SlimV2/2026-08-27-paper-branch-extraction-manifest.md'
+git show --check --oneline HEAD
+if ($LASTEXITCODE -ne 0) { throw 'committed manifest patch has whitespace errors' }
 $manifestPath = 'Doc/SlimV2/2026-08-27-paper-branch-extraction-manifest.md'
 $anglePattern = ([char]60) + '[^' + ([char]62) + ']+' + ([char]62)
 $wordPattern = @(('TO' + 'DO'), ('T' + 'BD'), ('FIX' + 'ME'), (([char]31867) + ([char]20284) + ([char]25991) + ([char]20214)), (([char]30456) + ([char]20851) + ([char]27979) + ([char]35797))) -join '|'
@@ -863,11 +1028,20 @@ if ($hits) { $hits; throw 'manifest contains a forbidden placeholder or abbrevia
 $manifestLines = Get-Content -LiteralPath $manifestPath -Encoding UTF8
 $allowStart = ($manifestLines | Select-String '^## 10\. ').LineNumber
 $allowEnd = ($manifestLines | Select-String '^## 11\. ').LineNumber
+if (@($allowStart).Count -ne 1 -or @($allowEnd).Count -ne 1) { throw 'allowlist section bounds are ambiguous' }
 $allowlist = $manifestLines[($allowStart - 1)..($allowEnd - 2)] -join "`n"
 if ($allowlist -match '`[^`]*[?*][^`]*`') { throw 'historical allowlist contains a wildcard path/value' }
+$forbidStart = ($manifestLines | Select-String '^### 6\.2 ').LineNumber
+$forbidEnd = ($manifestLines | Select-String '^## 7\. ').LineNumber
+if (@($forbidStart).Count -ne 1 -or @($forbidEnd).Count -ne 1) { throw 'forbid-target section bounds are ambiguous' }
+$forbiddenTargets = $manifestLines[($forbidStart - 1)..($forbidEnd - 2)] -join "`n"
+$mustSynthesize = @('.gitattributes', 'README.md', 'AGENTS.md', 'Doc/Experiments/README.md', 'Doc/Experiments/design.md', 'Doc/Experiments/metrics.md', 'Doc/Experiments/system-integration.md', 'Doc/Experiments/corpus-manifest.md', 'Doc/Experiments/code-map.md', 'verification/run_verification.py', 'verification/fast-tests.txt', 'verification/verify_authoritative_corpus.py', 'verification/verify_official_results.py', 'verification/verify_extraction.py')
+foreach ($target in $mustSynthesize) {
+    if ($forbiddenTargets.Contains("``$target``")) { throw "synthesized target is forbidden: $target" }
+}
 ```
 
-期望：`git diff --check` 退出码 0；角括号占位、禁用词、allowlist wildcard 与 abbreviated SHA 扫描均无输出。
+期望：`git show --check --oneline HEAD` 退出码 0；它检查 committed patch。角括号占位、禁用词、allowlist wildcard、abbreviated SHA 与 synthesized-target contradiction 扫描均无输出。不得以 clean working tree 的 `git diff --check` 代替 committed-content 检查。
 
 ## 12. `minimum_dependency_request`
 
@@ -879,7 +1053,8 @@ if ($allowlist -match '`[^`]*[?*][^`]*`') { throw 'historical allowlist contains
 | `failure_exit_code` | integer；实际退出码 |
 | `failure_error` | nonempty string；完整错误摘要与首个责任 stack frame |
 | `responsibility` | nonempty string；缺失行为服务的唯一系统或实验职责 |
-| `minimum_symbol_or_path` | nonempty array of strings；每项是一个 exact symbol 或 repository-relative tracked path |
+| `path` | required nonempty string；一个 exact repository-relative tracked path |
+| `symbol` | optional nonempty string；仅用于检查 `path` 指向 frozen text blob 内的 exact symbol，不得作为 Git path |
 | `current_interface_insufficient_because` | nonempty string；现有 retained public interface 不能完成职责的具体原因 |
 | `forbidden_burden_check` | object；`old_runner`、`receipt`、`budget_authority`、`response_bank`、`publication_gate_or_eligibility`、`lineage_or_evidence_closure`、`replay_or_request_identity` 七个 exact keys 的值都必须是 string `absent` |
 | `proposed_extraction` | nonempty string；仅描述从 freeze tag peeled SHA 定点抽取或重写的最小行为 |
@@ -889,11 +1064,21 @@ if ($allowlist -match '`[^`]*[?*][^`]*`') { throw 'historical allowlist contains
 
 ```powershell
 $frozenSha = git rev-parse 'experiments-pre-cleanup-20260827^{}'
-if ((git cat-file -t 'experiments-pre-cleanup-20260827') -ne 'tag') { throw 'not annotated' }
+if ($LASTEXITCODE -ne 0) { throw 'cannot resolve peeled freeze SHA' }
+$freezeType = git cat-file -t 'experiments-pre-cleanup-20260827'
+if ($LASTEXITCODE -ne 0 -or $freezeType -ne 'tag') { throw 'not annotated' }
 $request = Get-Content -LiteralPath 'Doc/Experiments/dependency-requests/current.json' -Encoding UTF8 | ConvertFrom-Json
-foreach ($approvedExactPath in @($request.minimum_symbol_or_path)) {
-    git show "$frozenSha`:$approvedExactPath"
-    if ($LASTEXITCODE -ne 0) { throw "approved dependency path is absent from peeled SHA: $approvedExactPath" }
+$path = [string]$request.path
+if ([string]::IsNullOrWhiteSpace($path)) { throw 'dependency path is required' }
+git cat-file -e "$frozenSha`:$path"
+if ($LASTEXITCODE -ne 0) { throw "dependency path is absent from peeled SHA: $path" }
+if ($null -ne $request.symbol) {
+    $symbol = [string]$request.symbol
+    if ([string]::IsNullOrWhiteSpace($symbol)) { throw 'dependency symbol must be nonempty when present' }
+    $blobLines = @(git cat-file blob "$frozenSha`:$path")
+    if ($LASTEXITCODE -ne 0) { throw "cannot inspect dependency blob: $path" }
+    $symbolHit = @($blobLines | Select-String -SimpleMatch -Pattern $symbol)
+    if ($symbolHit.Count -eq 0) { throw "exact dependency symbol is absent from frozen blob: $symbol" }
 }
 ```
 
@@ -901,4 +1086,4 @@ foreach ($approvedExactPath in @($request.minimum_symbol_or_path)) {
 
 ## 13. 冻结结论
 
-本 manifest 的分类是关闭集合：目标 writer 按 `keep_exact`、`move_exact`、`synthesize` 构造；其余由 default-deny 和 `exclude_exact` 排除。任何扩展只能走第 12 节，且不能改变正式 corpus、selection、实验参数、12 个结果文件、历史字符串 allowlist 或 raw `pending_advisor_archive_decision` 状态。
+本 manifest 的分类是关闭集合：目标 writer 按 `keep_exact`、`move_exact`、`synthesize` 构造；其余由双向 default-deny、`exclude_source_exact` 和 `forbid_target_exact` 排除。任何扩展只能走第 12 节，且不能改变正式 corpus、selection、实验参数、12 个结果文件、历史字符串 allowlist 或 raw `pending_advisor_archive_decision` 状态。
