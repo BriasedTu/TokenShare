@@ -1,24 +1,29 @@
 outputs/** -text -diff
 benchmarks/paper/exp5_parent_quarter_selection.v4.json text eol=lf
 benchmarks/paper/paper_smoke_exp5_profile.v4.json text eol=lf
-benchmarks/paper/factorization_catalog.v2.jsonl text eol=lf
-benchmarks/paper/lean_catalog.v1.jsonl text eol=lf
 Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md text eol=crlf
 benchmarks/paper/paper_suite_scale_profile.v1.json text eol=crlf
-benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl text eol=crlf
 benchmarks/paper/lean_task14_3x3_readiness.v1.json text eol=crlf
-benchmarks/paper/exp1_baseline_provider_config.v3.json text eol=crlf
 benchmarks/paper/epd027_pipeline_profile.v1.json text eol=lf
 benchmarks/paper/paper_factorization_sampling_profile.v1.json text eol=lf
 benchmarks/paper/exp5_hard_half_selection.v3.json text eol=lf
-fixtures/lean_proof_project/lean-toolchain text eol=lf
-fixtures/lean_proof_project/lakefile.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/Helper.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/Merge.lean text eol=lf
-fixtures/lean_proof_project/TokenShare/SplitRules.lean text eol=lf
+benchmarks/paper/factorization_catalog.v2.jsonl -text
+benchmarks/paper/lean_catalog.v1.jsonl -text
+benchmarks/paper/lean_checker_preflight.v1.json -text
+benchmarks/paper/lean_environment_semantic_authority.v1.json -text
+benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl -text
+benchmarks/paper/exp1_baseline_provider_config.v3.json -text
+benchmarks/paper/exp5_siliconflow_provider_config.v3.json -text
+fixtures/lean_proof_project/lake-manifest.json -text
+fixtures/lean_proof_project/lakefile.lean -text
+fixtures/lean_proof_project/lean-toolchain -text
+fixtures/lean_proof_project/TokenShare.lean -text
+fixtures/lean_proof_project/TokenShare/Helper.lean -text
+fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean -text
+fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean -text
+fixtures/lean_proof_project/TokenShare/Merge.lean -text
+fixtures/lean_proof_project/TokenShare/SplitRules.lean -text
+fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean -text
+fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean -text
+fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean -text
+fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean -text
