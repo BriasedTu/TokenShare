@@ -49,6 +49,10 @@ Freeze evidence 分两阶段，禁止 baseline 自引用：
 2. Baseline 文档提交后，当前 commit 才是候选 frozen commit。创建 tag 前必须证明 `refs/tags/experiments-pre-cleanup-20260827` 不存在；检查命令只接受 exit `1`，exit `0` 或其他错误都停止。`git tag -a` 必须退出 0；随后 `git cat-file -t refs/tags/experiments-pre-cleanup-20260827` 必须精确为 `tag`，记录 tag object SHA，并断言 peeled SHA 等于当前 baseline commit。
 3. 真正的 freeze identity 只在 tag 创建后写入 target-side `verification/extraction_manifest.json` 与验收证据。该文件固定记录 `pre_baseline_source_sha`、`source_tag`、`tag_object_sha`、`peeled_commit_sha` 和 target ancestry check；验证器必须重新解析 tag object/type/peeled commit，不能信任文件自报值。
 
+Task C 原生 Git 创建合同同样 fail-closed：`show-ref` 只接受 exit `1` 表示目标 branch 不存在；`rev-parse`/`mktree`/`commit-tree` 输出必须是与 `--show-object-format` 一致的单个 40/64 hex OID；`cat-file -t` 必须分别证明 tag/tree/commit 类型；empty tree 必须零 paths；empty commit 必须只有 peeled freeze commit 一个 parent；worktree 先 detached 创建并验证，再创建 branch。任何命令非零、输出为空/多行、类型/parent/ancestry/status 不符都立即停止；branch switch 失败时只按 exact path + clean status + CAS ref 条件回滚，不留下半创建 branch/worktree。
+
+远端发布合同是一次双 ref CAS transaction：preflight 对 `refs/heads/codex/experiments-clean-extraction` 与 `refs/tags/experiments-pre-cleanup-20260827` 分别判定 absent 或 exact expected object；absent 使用 expected-empty lease，已存在且精确相等使用 exact-OID lease，其他情况拒绝。随后只允许一次带两个 leases 的 `git push --atomic` 同时推 branch 与 annotated tag；远端不支持 atomic 或任一 lease 失败时整体停止，不得拆分/降级。Post-check 必须分别比较 branch commit SHA、tag object SHA 和 peeled commit SHA。
+
 ## 2. `keep_exact`
 
 ### 2.1 根与 package 入口
@@ -478,7 +482,7 @@ normal `git add` 可省略其认为与当前 index 相同的 raw path；但已�
 3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
 4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout，也不得要求 live source HEAD 或 status 保持不变。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
 
-Target synthesized `.gitattributes` 必须逐行包含以下 20 个 exact public path 的 `-text`，保证启用 `core.autocrlf` 的 fresh checkout 仍保持 frozen raw bytes；不得以旧 source EOL 推断或转换：
+Target synthesized `.gitattributes` 必须逐行包含以下 32 个 exact public path 的 `-text`，保证启用 `core.autocrlf` 的 fresh checkout 仍保持 frozen/baseline raw bytes；不得以旧 source EOL 推断或转换：
 
 ```gitattributes
 benchmarks/experiments/factorization_catalog.v2.jsonl -text
@@ -501,7 +505,21 @@ benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Decomposi
 benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean -text
 benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean -text
 benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/run.json -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/summary.json -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp1.csv -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp1.jsonl -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp2.csv -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp2.jsonl -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp3.csv -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp3.jsonl -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp4.csv -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp4.jsonl -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp5.csv -text
+results/experiments/slim-v2-full-flash-20260823-233000-b4c8e951/metrics/tables/exp5.jsonl -text
 ```
+
+Target `.gitattributes` 在 Task C 首次提交前即包含以上 32 条 exact `-text` rules；12 个 result paths 当时可以尚不存在，但规则必须先于 Task G copy/stage 生效。不得等结果复制后再补规则。
 
 | Source | Target | SHA-256 | 记录数 / 内容规则 |
 |---|---|---|---|
@@ -648,7 +666,7 @@ Baseline JSON 中 `full_root_identities` 与 `full_reference_identities` 必须�
 
 | Target | 唯一输入 / 职责 | 必须验证 |
 |---|---|---|
-| `.gitattributes` | 逐行写入第 3.4 节列出的 20 个 exact public path `-text`；不保留旧 archive/output 规则 | fresh checkout raw bytes 的 SHA-256 与第 3.4 节一致；无 glob、无 EOL 转换、无旧路径规则 |
+| `.gitattributes` | Task C 逐行写入第 3.4 节 20 个 authoritative target paths 与第 3.5 节 12 个 official result target paths，共 32 条 exact `-text`；不保留旧 archive/output 规则 | 规则先于任何 Task G result staging 生效；fresh checkout raw bytes 的 SHA-256/size 与 baseline 一致；无 glob、无 EOL 转换、无旧路径规则 |
 | `.gitignore` | 综合 `/TokenShareData/`、`local/*.local.json`、`local/cache/`、Python bytecode、pytest/coverage cache、常见虚拟环境与编辑器临时文件规则 | 不复制来源文件；不含只服务 LaTeX 或顶层 `paper/**` 的规则；secret/raw/cache 保持 ignored |
 | `src/tokenshare/executors/descriptors.py` | 只从 frozen `src/tokenshare/executors/ai_api.py:251-284` 拆出 `build_ai_api_executor_descriptor` | siliconflow/openai/deepseek 逐字段等价；非法 family `ValueError`；文件名不得为 `ai_api_descriptor.py` |
 | `src/tokenshare/executors/__init__.py` | 重写为 contracts/registry/deterministic/mock/config/transport/artifacts/descriptors 的轻量导出 | 不导出/导入 `AIAPIExecutor`、local config、selector、replay、response bank 或 trace-backed |
@@ -666,6 +684,8 @@ Baseline JSON 中 `full_root_identities` 与 `full_reference_identities` 必须�
 | `tests/executors/test_ai_api_deepseek_transport.py` | 第 2.10 节六个 exact functions | 不 import `_usage_summary`/`AIAPIExecutor` |
 | `benchmarks/experiments/manifest.v1.json` | 第 3.4、4 节完整 arrays/hashes/mappings | 完整 identity 对等，不抽样 |
 | `tests/experiments/test_authoritative_corpus.py` | manifest 与 public corpus | 完整 arrays、SHA、13 fixture 与 sidecar mapping |
+| `tests/__init__.py` | Task C 创建的 exact empty package marker | tracked file 必须存在且 bytes 为空；阻止外部 `tests` namespace 抢占 |
+| `tests/experiments/__init__.py` | Task C 创建的 exact empty package marker | tracked file 必须存在且 bytes 为空；固定 experiments test package |
 | `README.md` | 系统、唯一 experiments 入口、正式 corpus/results 路由 | 不把工程代号当产品名，不链接旧主线，不介绍顶层 `paper/**` |
 | `AGENTS.md` | clean repository 工作/范围/验证规则 | 只描述当前系统与 experiments；不带 Rxx/relay |
 | `REPRODUCIBILITY.md` | install、plan、fake smoke、official reducer 只读复核 | 无本机绝对 source dependency；raw pending 状态真实 |
@@ -683,7 +703,7 @@ Baseline JSON 中 `full_root_identities` 与 `full_reference_identities` 必须�
 | `verification/verify_authoritative_corpus.py` | 第 3.4、4 节 corpus/完整 arrays | 完整数组与 identity 逐元素对等，非抽样 |
 | `verification/verify_official_results.py` | 第 3.5 节 result/reducer 只读验证 | 第 8 节 tripwire 合同 |
 | `verification/extraction_manifest.json` | annotated tag 创建后的 target-side freeze evidence | exact fields=`pre_baseline_source_sha/source_tag/tag_object_sha/peeled_commit_sha/target_ancestry_check`；不得由 baseline 预填 |
-| `verification/verify_extraction.py` | freeze-tag ancestry、extraction manifest、tracked boundary、absence、allowlist | 重解析 tag object/type/peeled commit；default-deny 与第 9、10 节全量扫描；`git ls-files -- 'paper/**'` 必须为空 |
+| `verification/verify_extraction.py` | freeze-tag ancestry、extraction manifest、tracked boundary、absence、allowlist | 重解析 tag object/type/peeled commit；要求两个 tests package markers tracked 且 empty；default-deny 与第 9、10 节全量扫描；`git ls-files -- 'paper/**'` 必须为空 |
 
 ### 5.1 Byte-level closed-transform gate
 
@@ -897,13 +917,14 @@ benchmarks/paper/paper_suite_scale_profile.v1.json
 
 `verification/verify_official_results.py` 必须在 raw root 上只读执行，且满足：
 
-1. 先比较第 3.5 节 12 个发布文件的 SHA/bytes/rows；
+1. Task C committed `.gitattributes` 必须先于 Task G result copy/stage 包含第 3.5 节 12 个 target paths 的 exact `-text`；先比较第 3.5 节 12 个发布文件的 SHA-256/byte size/rows；
 2. monkeypatch `tokenshare.experiments.reducer._stage_payloads`，把 target path→serialized bytes 捕获到内存字典，不创建 stage/temp/metrics 文件；
 3. monkeypatch `tokenshare.experiments.reducer._commit_staged_metrics` 为立即抛错 tripwire；任何调用都使验证失败；
 4. 仅调用 `_reduce_run_staged(raw_root, {})`，捕获 5 CSV + 5 JSONL + `summary.json` 共 11 payload；逐 target relative path、逐 bytes 与 Git 发布 metrics 比较；
 5. 禁止调用 `reduce_run()`；静态检查脚本 AST/源码也必须证明不存在该 call；
-6. 运行前后复核 raw 非 metrics file count/bytes 与 critical-file count/manifest SHA-256；任一变化即失败。两个 opaque metadata fingerprints 只作 historical evidence，不重算、不作 gate；
-7. raw 缺失时默认只检查 Git result manifest；显式 `--require-raw` 才要求 raw 存在。
+6. `--verify-worktree-index` 对 12 个 target paths 读取 working bytes 与 binary `git cat-file blob` index bytes，逐项比较 baseline SHA-256/size；working/cached `git check-attr text eol` 都必须为 `text: unset`、`eol: unspecified`；禁止 PowerShell text pipeline 承接 blob；
+7. 运行前后复核 raw 非 metrics file count/bytes 与 critical-file count/manifest SHA-256；任一变化即失败。两个 opaque metadata fingerprints 只作 historical evidence，不重算、不作 gate；
+8. raw 缺失时默认仍检查 Git result manifest、working/index bytes 和 attributes；显式 `--require-raw` 才要求 raw 存在。Task H fresh checkout 必须运行 `--verify-worktree-index`，证明 checkout bytes/index blobs 仍与 baseline 相同。
 
 ## 9. Verification harness 保留与门
 
@@ -1024,11 +1045,23 @@ Doc/Experiments/corpus-manifest.md
 
 ## 11. `verification_commands`
 
-以下命令在 target/review worktree 执行；Task A 只冻结命令，不运行它们。
+以下命令在 target/review worktree 执行。Task D–G 每个 writer 和每组 Python/pytest gate 都必须先把 `PYTHONPATH` 固定到被验证 repo 的 `src`，并运行 import-origin assertion；不能继承 source editable install。固定 helper 如下，每个 subsection 的命令块都先调用一次：
+
+```powershell
+function Assert-RepoPythonImport {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $resolvedRepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $expectedPackageRoot = (Resolve-Path -LiteralPath (Join-Path $resolvedRepoRoot 'src\tokenshare')).Path
+    $env:PYTHONPATH = (Join-Path $resolvedRepoRoot 'src')
+    conda run -n tokenshare python -c "from pathlib import Path; import tokenshare; actual=Path(tokenshare.__file__).resolve(); expected=Path(r'$expectedPackageRoot').resolve(); assert actual.parent == expected, f'wrong tokenshare import: {actual} != {expected}'"
+    if ($LASTEXITCODE -ne 0) { throw "tokenshare import escaped repository root: $resolvedRepoRoot" }
+}
+```
 
 ### 11.1 Corpus gate
 
 ```powershell
+Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/verify_authoritative_corpus.py
 conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_corpus.py -q
 ```
@@ -1038,6 +1071,7 @@ conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_co
 ### 11.2 System gate
 
 ```powershell
+Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/run_verification.py --focused system
 conda run -n tokenshare python -m compileall -q src/tokenshare tests/core tests/storage tests/local_runtime tests/plugins tests/executors
 ```
@@ -1047,6 +1081,7 @@ conda run -n tokenshare python -m compileall -q src/tokenshare tests/core tests/
 ### 11.3 Experiments gate
 
 ```powershell
+Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/run_verification.py --focused experiments
 conda run -n tokenshare python -m compileall -q src/tokenshare/experiments tests/experiments verification
 conda run -n tokenshare python -m tokenshare.experiments.cli plan --profile full --run-id extraction-target-plan
@@ -1057,6 +1092,7 @@ conda run -n tokenshare python -m tokenshare.experiments.cli plan --profile full
 ### 11.4 单个有界 Lean checker smoke
 
 ```powershell
+Assert-RepoPythonImport -RepoRoot $targetRoot
 $leanNode = 'tests/plugins/lean_proof/test_lean_checker_direct.py::test_lean_checker_accepts_valid_direct_proof_with_real_environment'
 $proc = Start-Process -FilePath 'conda' -ArgumentList @('run', '-n', 'tokenshare', 'python', '-m', 'pytest', $leanNode, '-q') -WindowStyle Hidden -PassThru
 if (-not $proc.WaitForExit(60000)) {
@@ -1073,13 +1109,14 @@ if ($proc.ExitCode -ne 0) { throw "Lean checker smoke failed with exit code $($p
 ### 11.5 Official results 与 extraction gate
 
 ```powershell
-conda run -n tokenshare python verification/verify_official_results.py --raw-root 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline\TokenShareData\outputs\slim_v2\slim-v2-full-flash-20260823-233000-b4c8e951' --require-raw
+Assert-RepoPythonImport -RepoRoot $targetRoot
+conda run -n tokenshare python verification/verify_official_results.py --raw-root 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline\TokenShareData\outputs\slim_v2\slim-v2-full-flash-20260823-233000-b4c8e951' --require-raw --verify-worktree-index
 conda run -n tokenshare python verification/verify_extraction.py --frozen-sha $frozenSha
 $paperTracked = @(git ls-files -- 'paper/**')
 if ($LASTEXITCODE -ne 0 -or $paperTracked.Count -ne 0) { throw 'top-level paper workspace is tracked in target' }
 ```
 
-期望：12 result hashes、11 in-memory reducer payloads、raw invariants、ancestry、双向 default-deny、`exclude_source_exact` 未原样复制、`forbid_target_exact` absence、synthesized-target disjointness、第 5.1 节逐 bytes closed transforms 与历史 allowlist 全部通过；最后命令无输出。`verify_official_results.py` 不调用 `reduce_run()` 且 `_commit_staged_metrics` tripwire 未触发。
+期望：12 个 working/index result hashes+sizes、11 in-memory reducer payloads、raw invariants、ancestry、双向 default-deny、`exclude_source_exact` 未原样复制、`forbid_target_exact` absence、synthesized-target disjointness、第 5.1 节逐 bytes closed transforms 与历史 allowlist全部通过；最后命令无输出。`verify_official_results.py` 不调用 `reduce_run()` 且 `_commit_staged_metrics` tripwire 未触发。
 
 ### 11.6 Manifest 本身自检
 
@@ -1106,7 +1143,7 @@ $forbidStart = ($manifestLines | Select-String '^### 6\.2 ').LineNumber
 $forbidEnd = ($manifestLines | Select-String '^## 7\. ').LineNumber
 if (@($forbidStart).Count -ne 1 -or @($forbidEnd).Count -ne 1) { throw 'forbid-target section bounds are ambiguous' }
 $forbiddenTargets = $manifestLines[($forbidStart - 1)..($forbidEnd - 2)] -join "`n"
-$mustSynthesize = @('.gitattributes', '.gitignore', 'README.md', 'AGENTS.md', 'Doc/Experiments/README.md', 'Doc/Experiments/design.md', 'Doc/Experiments/metrics.md', 'Doc/Experiments/system-integration.md', 'Doc/Experiments/corpus-manifest.md', 'Doc/Experiments/code-map.md', 'verification/run_verification.py', 'verification/fast-tests.txt', 'verification/verify_authoritative_corpus.py', 'verification/verify_official_results.py', 'verification/verify_extraction.py', 'verification/extraction_manifest.json')
+$mustSynthesize = @('.gitattributes', '.gitignore', 'README.md', 'AGENTS.md', 'tests/__init__.py', 'tests/experiments/__init__.py', 'Doc/Experiments/README.md', 'Doc/Experiments/design.md', 'Doc/Experiments/metrics.md', 'Doc/Experiments/system-integration.md', 'Doc/Experiments/corpus-manifest.md', 'Doc/Experiments/code-map.md', 'verification/run_verification.py', 'verification/fast-tests.txt', 'verification/verify_authoritative_corpus.py', 'verification/verify_official_results.py', 'verification/verify_extraction.py', 'verification/extraction_manifest.json')
 foreach ($target in $mustSynthesize) {
     if ($forbiddenTargets.Contains("``$target``")) { throw "synthesized target is forbidden: $target" }
 }
