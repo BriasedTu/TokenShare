@@ -59,7 +59,6 @@
 \title{\textit{Share Your Tokens!}  A  Community Protocol for Composing Distributed Tokens  for   ``Intelligent'' Tasks}
 % \title{Shared Token Economics:  A Protocol for Leveraging Local Tokens  for  Distributed ``Intelligent'' Tasks}
  % Verifiable and Scalable
-% \author{Anonymous Author(s)}
 
 \usepackage{authblk}
 \author[1$\dagger$]{\textbf{Hongzhan Tu}}
@@ -85,7 +84,16 @@
 \begin{abstract}
 Large-scale public-good tasks, such as scientific computation, low-resource language documentation, and multi-source data annotation, increasingly require not only generation but also decomposition, verification, revision, and accountable integration. Modern AI systems suggest that useful outputs can often be obtained by spending sufficient tokens; however, the required token, compute, and human-execution resources may exceed the capacity of any single user or organization. Meanwhile, many personal devices, local GPUs, cloud credits, tool-execution environments, and human annotators remain under-utilized.
 
-This paper proposes TokenMosaic, a protocol for aggregating idle tokens and heterogeneous execution capacity into useful, verifiable work. TokenMosaic represents a large task as a recursively decomposable task tree or DAG, assigns atomic units to distributed clients, supports local and server-side verification, reassigns failed tasks, recursively merges accepted outputs, and records contributions through a ledger. Unlike proof-of-work systems that coordinate untrusted participants around artificial computation, TokenMosaic focuses on useful computation with real public-good value. We outline the protocol design, fault-tolerance mechanisms, incentive settlement, and evaluation plan, aiming to measure not only final output quality but also reliability, provenance, recoverability, cost, and verifiability.
+This paper studies that long-term vision through a trusted local research
+prototype. Task-specific plugins deterministically construct a task DAG;
+the local runtime coordinates workers through attempts and leases, checks
+Factorization candidates or Lean proofs, merges accepted results, and records
+events and experimental contribution facts in local storage. A controlled AI
+executor supplies real model outputs for the designated online experiments,
+while the remaining experiments replay frozen traces. The prototype does not
+implement an open distributed network, capability-driven decomposition from
+online clients, real payments, or protection against malicious participants.
+Those capabilities remain future directions rather than claims evaluated here.
 \end{abstract}
 
 \section{Introduction}
@@ -97,20 +105,41 @@ However, meaningful tasks often require far more than a single prompt-response i
 
 At the same time, a large amount of useful capacity remains idle. Personal devices, local GPUs, laboratory servers, browser-based tool environments, cloud credits, human annotators, and user-owned AI agents are often under-utilized. Although each contributor may only provide a small amount of tokens, computation, or time, their aggregated capacity can be substantial.
 
-This motivates the central question of this paper: Can we design a protocol that enables a community to collectively complete useful computational tasks by sharing tokenized resources, while preserving correctness, accountability, and fault tolerance?
+This motivates the long-term question of this paper: can a community
+collectively complete useful computational tasks by sharing tokenized
+resources while preserving correctness, accountability, and fault tolerance?
 
-We propose TokenMosaic, a scalable, verifiable, fault-tolerant, and automated protocol for shared token economics. TokenMosaic represents a large task as a hierarchical task tree or task DAG. A root task is recursively decomposed into subtasks according to the number of available clients, their capability profiles, estimated task complexity, and verification cost. Each atomic task unit is assigned to one or more clients, locally validated before submission, verified again by master or verifier nodes, and recursively merged into higher-level outputs. Through this process, idle tokens and execution capacity are converted into auditable, mergeable, and useful work.
+We examine a narrower, executable precursor to that vision. TokenMosaic is
+implemented as a trusted local research prototype in which Factorization and
+Lean plugins deterministically construct range plans or preregistered lemma
+DAGs. A local coordinator assigns their task units to registered workers,
+tracks attempts and leases, applies the plugin parser and verifier or checker,
+requeues eligible failures, merges accepted results, and persists an event
+ledger. The task split is not adapted to online client capabilities, and the
+current system does not provide a public worker network or real economic
+settlement.
 
-TokenMosaic is inspired by decentralized systems such as Bitcoin and smart contracts. These systems show that mutually untrusted participants can be coordinated through shared ledgers, commitments, and incentive-compatible rules. Yet Bitcoin’s proof-of-work computation is intentionally artificial: it secures the network but does not directly produce scientific, educational, or public-interest outputs. TokenMosaic instead asks how distributed tokens, computation, and human/program execution capacity can be organized to complete useful and socially meaningful tasks.
+TokenMosaic is inspired by decentralized systems such as Bitcoin and smart contracts. These systems show that mutually untrusted participants can be coordinated through shared ledgers, commitments, and incentive-compatible rules. Yet Bitcoin’s proof-of-work computation is intentionally artificial: it secures the network but does not directly produce scientific, educational, or public-interest outputs. The long-term research vision behind TokenMosaic instead asks how distributed tokens, computation, and human/program execution capacity could be organized to complete useful and socially meaningful tasks.
 
-This shift from meaningless computation to useful computation introduces new challenges. Useful tasks require decomposition, capability-aware routing, heterogeneous execution, local and global verification, fault recovery, provenance tracking, and incentive settlement. Contributors may be slow, unreliable, malicious, offline, or equipped with different models and tools. Therefore, the protocol must not only pool resources, but also preserve correctness, recover from failure, and make the final output auditable.
+An eventual community deployment would introduce additional questions about
+capability-aware routing, heterogeneous remote execution, malicious or offline
+participants, identity, and payment. These are not implemented or evaluated in
+the current prototype. The present study instead asks whether deterministic
+task graphs, plugin-owned verification, bounded recovery, and local replay can
+produce auditable experimental outcomes in a trusted environment.
 
 This paper makes three main \textbf{contributions}:
 
 \begin{itemize}
-\item We formulate shared token economics as a protocol problem for useful distributed intelligent tasks.
- \item We design TokenMosaic, a recursive protocol that supports task decomposition, client-side validation, server-side verification, fault recovery, result merging, and token settlement.
-\item  We propose an evaluation framework that measures output quality, reliability, verification cost, provenance, recovery, and efficiency rather than only final-answer correctness.
+\item We formulate shared token economics as a research direction for useful
+distributed intelligent tasks and state which parts remain outside the current
+prototype.
+\item We implement a trusted local protocol prototype with deterministic or
+preregistered task DAGs, attempts and leases, bounded recovery, plugin-owned
+Factorization and Lean verification, result merging, an AI executor, and local
+event and contribution records.
+\item We evaluate the prototype with five frozen experiments that distinguish
+actual provider observations from logical, simulated, and trace-backed results.
 \end{itemize}
 
 
@@ -134,40 +163,38 @@ However, this token-based view also exposes a scaling bottleneck. As tasks becom
 
 At the same time, a large amount of useful capacity remains idle. Personal devices, local GPUs, laboratory servers, cloud credits, browser-based tool environments, human annotators, and user-owned AI agents are often under-utilized. Individually, each contributor may only provide a small amount of tokens, computation, or execution time. Collectively, however, these idle resources may form a substantial pool of distributed capacity.
 
-A natural question is therefore: \emph{Can we design a protocol that allows a community to collectively complete useful computational tasks by sharing tokenized incentives, while ensuring correctness, accountability, and fault tolerance?}
+A natural long-term question is therefore: \emph{Can a community collectively
+complete useful computational tasks by sharing tokenized resources while
+ensuring correctness, accountability, and fault tolerance?}
 
 
-TokenMosaic addresses this question by proposing a scalable, verifiable, fault-tolerant, and automated protocol for distributed token sharing. The key idea is to represent a large task as a recursively decomposable task tree or task graph. A root task is divided into subtasks; each subtask can be further decomposed according to the number of available clients, their capability profiles, the estimated task complexity, and the cost of verification. Each atomic task unit is assigned to one or more clients, locally validated before submission, verified again by the master or verifier nodes, and recursively merged into higher-level outputs. Through this process, idle tokens are not merely donated or consumed; they are converted into auditable, mergeable, and useful work.
+The current work tests only the protocol mechanisms that can be studied in a
+trusted local environment. Factorization ranges and Lean lemma DAGs are
+deterministic or preregistered before execution; they are not generated from
+the number or capability profiles of online clients. A local runtime assigns
+these task units to registered workers, verifies outputs through the
+task-specific plugin and checker, retries eligible failures, merges accepted
+results, and records the run in local artifacts, SQLite state, and an event
+ledger.
 
-Existing decentralized systems provide an important precedent. Bitcoin demonstrates that a large number of mutually untrusted participants can be coordinated through shared ledgers, cryptographic commitments, and incentive-compatible rules. Smart contracts further show that task states, deposits, rewards, and disputes can be managed by transparent and programmable mechanisms. Yet Bitcoin's proof-of-work computation is intentionally artificial: its computational puzzle secures the network but does not directly produce scientific, educational, or public-interest outputs. TokenMosaic focuses on a different and more practical problem: how to organize distributed tokens, computational capacity, and human or program execution capacity to complete useful, verifiable, and socially meaningful tasks.
+Existing decentralized systems provide motivation for a possible future
+community deployment. Bitcoin and smart contracts illustrate how public
+networks can coordinate commitments and incentives, while also showing that
+proof-of-work computation need not produce a useful application result. The
+prototype evaluated here does not reproduce those trust or economic
+mechanisms: it has no blockchain, wallet, smart contract, open membership, or
+real payment path.
 
-This shift from meaningless computation to useful computation introduces new challenges. Useful tasks are rarely solved by repeated hashing alone. They require task decomposition, capability-aware routing, heterogeneous execution, local and global verification, fault recovery, provenance tracking, and incentive settlement. Contributors may be slow, unreliable, malicious, offline, or equipped with different models and tools. Therefore, the protocol must not only pool resources, but also preserve correctness, recover from failure, and make the final output auditable. TokenMosaic is designed as a protocol layer for this setting: it recursively decomposes large tasks, allocates atomic work units, verifies submissions, reassigns failed tasks, merges accepted results, and records contributions through a ledger.
-
-
-
-
-% %  shashpear:  it solves anything with enougth tokens.
-
-% broader sense of tokens: tool-generated tokens;
-
-% % Large-scale tasks need more tokens? rieman conjecture.  it is afforadablke to a single indivisual.
-
-
-% % numbers ?
-
-
-
-% Large-scale scientific and social-good computing tasks often require substantial computational resources. Examples include protein folding simulation, climate modeling, public-health data analysis, large-scale literature mining, multilingual data annotation, and benchmark construction for artificial intelligence systems. Although these tasks are socially meaningful, they are often difficult to execute at scale because the required computing power, human labor, and verification effort are distributed across many individuals and institutions. At the same time, a large amount of under-utilized computing capacity exists on personal devices, laboratory servers, edge devices, and institutional clusters.
-
-
-
-% Existing decentralized systems provide important inspiration. Bitcoin demonstrates that a large number of untrusted participants can coordinate around a shared ledger through cryptographic commitments and incentive-compatible mechanisms. Smart contracts further show that programmable rules can autonomously manage task assignment, reward distribution, and dispute resolution. However, most existing blockchain-based protocols either focus on financial transactions or rely on computational puzzles that do not directly contribute to socially useful work. In contrast, scientific and public-interest computing requires a protocol in which useful tasks can be decomposed, assigned, verified, merged, and rewarded in a reliable and scalable manner.
-
-% This paper proposes a token-sharing protocol for useful distributed computation. The central idea is to represent a large task as a recursively decomposable task tree. A master task can be divided into multiple subtasks; each subtask can further be divided into smaller subtasks depending on the number of available clients and the complexity of the computation. In this way, a task can be dynamically expanded from $N$ subtasks to $N^2$ or even more fine-grained units. This recursive decomposition allows the system to adapt to the current number of participating clients and their available computational capacity.
+The present experiments therefore make a narrower claim. They test local
+task-DAG execution, parser and verifier boundaries, bounded reassignment,
+merge readiness, replay, and resource accounting under preregistered faults.
+The experimental contribution and sandbox-settlement objects are local ledger
+records only; they do not transfer value. Capability-aware remote routing,
+malicious participants, production security, and incentive settlement remain
+future work.
 
 
 
-% The motivation of this work is therefore threefold. First, we aim to transform idle or fragmented computational resources into a coordinated network for socially meaningful tasks. Second, we aim to design a recursive and adaptive task-decomposition protocol that can scale with the number of available clients. Third, we aim to build a verifiable and fault-tolerant incentive mechanism that borrows from blockchain and smart-contract systems, while focusing on useful computation rather than artificial proof-of-work puzzles.
 
 % Paste-ready formatted replacement for Sections 3--5.
 % The main preamble must provide: amsmath, amsthm, booktabs, tabularx,
@@ -214,7 +241,10 @@ where $\mathcal{E}$ is the frozen executor registry, $s$ is the root-task status
     \qquad
     \widehat{Y} = \operatorname{Canonical}(G, \Pi).
 \end{equation}
-Thus, a generated answer is not yet an outcome: it becomes one only after typed parsing, verification, canonical binding, and completion of every required merge dependency. Section~\ref{sec:protocol} defines the protocol records that give each term above an implementation-level counterpart.
+Thus, a generated answer is not yet an outcome: it becomes one only after typed parsing, verification, canonical binding, and completion of every required merge dependency. Section~\ref{sec:tokenmosaic-protocol} defines the protocol records that give each term above an implementation-level counterpart.
+The set $C$ is local experimental accounting: it records accepted protocol
+facts and sandbox settlement entries but does not represent a payment,
+wallet balance, or transferable token.
 
 \subsection{Desiderata of the TokenMosaic Protocol}
 \label{sec:desiderata}
@@ -284,8 +314,8 @@ evidence mandatory parts of the extension boundary.
 
 \begin{desideratum}[Scalability]
 When additional workers or execution resources become available, the protocol
-should be able to convert at least part of that capacity into useful throughput,
-shorter completion time, broader search coverage, or additional recovery
+should be able to convert at least part of that capacity into shorter completion
+time, broader search coverage, or additional recovery
 opportunities. This property is empirical rather than automatic: coordination
 overhead, duplicated work, verifier bottlenecks, merge costs, and serial
 dependencies can limit or even reverse the benefit of adding workers.
@@ -295,7 +325,8 @@ The desideratum follows the scaling objective studied in cluster computing,
 dynamic task runtimes, distributed scheduling, and volunteer computing
 \citep{dean2004mapreduce,moritz2018ray,ousterhout2013sparrow,anderson2020boinc}.
 Accordingly, TokenMosaic evaluates scalability through worker count, completion
-time, throughput, token or cost consumption, and the observed saturation point,
+time, paired speedup, parallel efficiency, worker utilization, token or cost
+consumption, and the observed saturation point,
 rather than presuming monotonic speedup.
 
 
@@ -336,6 +367,13 @@ controlled task constructions and recorded execution evidence.
 \label{sec:tokenmosaic-protocol}
 
 This section describes the protocol itself: how a structured task is divided into executable units, how those units are assigned and checked, how verified results are combined, and how failed work is retried without discarding completed progress. The goal is to make the rules of coordination explicit while leaving task-specific reasoning to the corresponding task plugin.
+
+The executable system described here is a trusted local prototype, not a
+network protocol deployment. Plugins construct deterministic Factorization
+range plans or preregistered Lean lemma DAGs before scheduling; registered
+local executors then run the planned units. Attempts and leases coordinate the
+local runtime, and the event ledger is a local persistence mechanism rather
+than a blockchain or payment ledger.
 
 \subsection{Protocol Overview}
 \label{subsec:protocol-and-recovery-overview}
@@ -768,6 +806,8 @@ TokenMosaic stores two complementary kinds of history. Artifacts answer \emph{wh
 The event ledger is append-only and hash-linked, while the SQLite index is a rebuildable query view rather than a second source of truth. Replay reconstructs task state from the persisted events and artifacts instead of invoking the executor again. A root result can therefore be traced backward through its merge record, selected child outputs, verification reports, submissions, attempts, leases, execution requests, and original inputs.
 
 This distinction also clarifies the meaning of contribution in TokenMosaic. Spending model tokens, compute, checker time, or human effort creates an execution artifact. It becomes accepted contribution evidence only after it passes the declared parser and verifier, becomes canonical, and supports a completed dependency or merge. The protocol therefore accounts for useful accepted work rather than raw expenditure alone.
+This accounting is confined to local experimental records and does not issue
+rewards or settle real payments.
 
 
 \section{Fault Tolerance and Recovery}
@@ -779,6 +819,12 @@ Section~\ref{sec:tokenmosaic-protocol} describes the normal path. In practice, a
 \label{subsec:failure-model}
 
 A runtime anomaly becomes a protocol failure when it reaches a boundary at which normal progress can no longer continue. Table~\ref{tab:failure-boundaries-balanced} maps each boundary to the fact observed by the protocol and the resulting interpretation. The common retry rule operates over these typed observations, while the parent merge policy separately decides whether the missing unit is still necessary.
+
+The failure model is non-adversarial and preregistered. It covers ordinary
+provider or executor errors, parser and checker rejection, no-return and late
+submission behavior, bounded retry, and controlled worker-process death in a
+trusted local environment. It does not claim Byzantine fault tolerance,
+malicious-participant isolation, authentication, or production security.
 
 \begin{table}[!h]
 \centering
@@ -1440,8 +1486,7 @@ stratified case-cluster percentile bootstrap intervals. Failure reports
 retain the terminal category and the stage and origin at which execution
 stopped.
 
-For worker count \(w\), speedup, parallel efficiency, and throughput are
-defined as
+For worker count \(w\), speedup and parallel efficiency are defined as
 \[
 S(w)=\frac{T_{\mathrm{logical}}(1)}{T_{\mathrm{logical}}(w)},
 \qquad
@@ -1537,46 +1582,6 @@ records and ordinary JSONL/CSV metric outputs. Recomputing the analysis
 reads those records without invoking the model again, so replay conditions
 continue to use the original model outputs and recorded execution facts.
 
-\section{Sclaing Law of TokenMosaic}
-
-\subsection{Scaling Law of working nodes}
-% 越多的worker，时间花地越少
-
-
-\subsection{Scaling Law to Challenging problems}
-
-Lean problem sets; grouping:
-
-\section{Robust Testing of TokenMosaic}
-
-
-
-\subsection{Robust to Error Injection}
-Input
-[1254, 2563, 215654, ]
-default \#time \#token
-% Error I  [比例 1- 100\%;  Yes or no （ratio）； \#time \#token;  ] [false negative vs. false positive]
-Error II
-fail if and only if both [false negative]
-
-
-\subsection{Robust to heterogeneous  models}
-[Stronger + low models]
-[Stronger]
-[low]
-
-% think mode； model size；
-
-
-\subsection{ablation}
-
-
-\subsection{Robust to dead nodes}
-
-
-
-
-
 \section{Experimental Analysis}
 
 The five experiments organize the protocol-level evaluation around five
@@ -1633,36 +1638,82 @@ validity, and actual-versus-simulated qualification.
 
 
 
-\section{How to Join TokenMosaic}
-
-skill and how to use!
-% decompose + merge
-% regester
-
-
-
 \section{Related Work}
 
 \paragraph{Distributed task allocation and market coordination.}
-TokenMosaic builds on a long line of work on allocating work among distributed agents. The Contract Net Protocol introduced a negotiation pattern in which tasks are announced, potential contractors bid, and managers award work to selected agents \citep{smith1980contract}. Multi-robot task allocation later formalized the relation among agents, tasks, utilities, costs, and assignment structure \citep{gerkey2004formal}, while market-based coordination studied how decentralized bidding mechanisms can trade off communication cost, robustness, and solution quality \citep{dias2006market}. These works justify treating contributor selection as a protocol-level allocation problem. TokenMosaic differs in that the allocated object is not a single atomic job: it is a recursively expandable task tree or DAG whose leaves may require model tokens, tools, local computation, or human judgment, and whose rewards are delayed until verification and merge succeed.
+The Contract Net Protocol introduced a negotiation pattern in which tasks are
+announced, potential contractors bid, and managers award work to selected
+agents \citep{smith1980contract}. Multi-robot task allocation later formalized
+the relation among agents, tasks, utilities, costs, and assignment structure
+\citep{gerkey2004formal}, while market-based coordination studied decentralized
+bidding \citep{dias2006market}. These works motivate a future contributor
+selection layer. The current TokenMosaic prototype instead schedules a frozen,
+plugin-defined task DAG over registered local workers; it implements neither
+online bidding nor reward transfer.
 
 \paragraph{Complex crowdsourcing and decentralized crowdsourcing.}
-Human-computation systems show that complex work can be decomposed, distributed, reviewed, and recomposed. CrowdForge proposes partition, map, and reduce primitives for crowdsourcing complex work \citep{kittur2011crowdforge}, and Turkomatic explores recursive task and workflow design for Mechanical Turk-style settings \citep{kulkarni2011turkomatic}. Blockchain-based crowdsourcing systems such as CrowdBC and decentralized HIT protocols add payments, dispute handling, and reduced reliance on centralized platforms \citep{li2018crowdbc,liang2022decentralizedhit}. These systems are important precedents for TokenMosaic's task publication, contribution accounting, and settlement layer. Their main limitation for our setting is that they are usually designed around human microtasks or fixed crowdsourcing workflows, whereas TokenMosaic targets heterogeneous intelligent work involving LLM agents, local tools, verifiers, recursive decomposition, and task-specific acceptance functions.
+Human-computation systems show that complex work can be decomposed, distributed,
+reviewed, and recomposed. CrowdForge proposes partition, map, and reduce
+primitives \citep{kittur2011crowdforge}, and Turkomatic explores recursive
+workflow design \citep{kulkarni2011turkomatic}. Blockchain-based crowdsourcing
+systems add payments and dispute handling
+\citep{li2018crowdbc,liang2022decentralizedhit}. TokenMosaic currently reuses
+only the decomposition-and-verification idea in a trusted local prototype with
+LLM endpoints, local tools, and typed task-specific verifiers. Human task
+publication, disputes, and payments are possible future extensions, not
+implemented layers.
 
 \paragraph{Volunteer and distributed execution systems.}
-Volunteer and cluster-computing systems provide practical lessons for unreliable and heterogeneous execution. BOINC supports volunteer scientific computation over devices that differ in capability, availability, and reliability \citep{anderson2020boinc}. MapReduce popularized partitioned data processing with automatic scheduling, failure handling, and re-execution on commodity clusters \citep{dean2004mapreduce}. Ray supports dynamic task graphs for AI applications \citep{moritz2018ray}, while Sparrow studies decentralized low-latency scheduling for short parallel tasks \citep{ousterhout2013sparrow}. TokenMosaic borrows the engineering vocabulary of leases, checkpoints, heartbeats, redundant execution, and reassignment. Its focus, however, is semantic and verifiable intelligent production rather than only data-parallel computation: a work unit must include an input schema, output schema, verifier, provenance record, and merge rule.
+Volunteer and cluster-computing systems provide practical lessons for
+unreliable and heterogeneous execution. BOINC supports volunteer scientific
+computation \citep{anderson2020boinc}; MapReduce provides automatic scheduling
+and re-execution \citep{dean2004mapreduce}; Ray supports dynamic task graphs
+\citep{moritz2018ray}; and Sparrow studies decentralized low-latency scheduling
+\citep{ousterhout2013sparrow}. The TokenMosaic prototype adopts attempts,
+leases, and bounded reassignment inside one local runtime. It does not implement
+a volunteer network or cross-machine scheduler, and its task graphs are
+deterministic or preregistered rather than adapted to online machines.
 
 \paragraph{Blockchains, verifiable computation, and useful work.}
-Bitcoin demonstrates that mutually untrusted participants can be coordinated through a public ledger and proof-of-work incentives \citep{nakamoto2008bitcoin}. Ethereum generalizes the ledger into programmable smart contracts for decentralized applications \citep{buterin2014ethereum}. TrueBit studies interactive verification for off-chain computation, allowing expensive computations to be checked by blockchain-linked protocols \citep{teutsch2019truebit}. Proof-of-useful-work systems such as Ofelimos attempt to replace artificial hash puzzles with useful optimization work \citep{fitzi2022ofelimos}. TokenMosaic is adjacent to these systems but has a different objective: it is not a consensus protocol and does not require useful work to secure a blockchain. Instead, it uses ledgered commitments, verification records, and settlement rules to coordinate useful AI- and human-assisted production.
+Bitcoin demonstrates coordination through a public ledger and proof-of-work
+incentives \citep{nakamoto2008bitcoin}; Ethereum provides programmable smart
+contracts \citep{buterin2014ethereum}; TrueBit studies interactive verification
+for off-chain computation \citep{teutsch2019truebit}; and Ofelimos studies
+proof of useful work \citep{fitzi2022ofelimos}. TokenMosaic is not a consensus
+protocol and does not use useful work to secure a blockchain. Its present
+ledger, contribution, and sandbox-settlement objects are local experiment
+records only. Blockchain commitments and real settlement are outside the
+prototype.
 
 \paragraph{LLM decomposition, tool use, and multi-agent workflows.}
-Recent LLM research shows that complex reasoning benefits from explicit intermediate structure. Decomposed Prompting, Least-to-Most Prompting, Tree of Thoughts, and ReAct all externalize decomposition, search, tool use, or intermediate reasoning states \citep{khot2023decomposed,zhou2023least,yao2023tree,yao2023react}. HuggingGPT and related tool-use systems use an LLM to plan subtasks and route them to external models or tools \citep{shen2023hugginggpt}. Multi-agent frameworks such as CAMEL, AutoGen, MetaGPT, and ChatDev further introduce role specialization, agent communication, and structured software-production workflows \citep{li2023camel,wu2023autogen,hong2024metagpt,qian2023chatdev}. These works motivate TokenMosaic's use of decomposition, roles, and tool-facing agents. The gap is that most LLM-agent systems assume a trusted orchestrator and evaluate final task success, while TokenMosaic treats resource allocation, failure recovery, verifier selection, contribution provenance, and reward settlement as first-class protocol objects.
+Recent LLM research externalizes decomposition, search, tool use, or intermediate
+reasoning \citep{khot2023decomposed,zhou2023least,yao2023tree,yao2023react}.
+HuggingGPT routes planned subtasks to models or tools
+\citep{shen2023hugginggpt}, while CAMEL, AutoGen, MetaGPT, and ChatDev add roles
+and agent communication
+\citep{li2023camel,wu2023autogen,hong2024metagpt,qian2023chatdev}. TokenMosaic's
+current AI executor generates candidates only within plugin-defined,
+deterministic or preregistered task plans. It does not ask an LLM to discover
+the protocol decomposition, select remote contributors, or negotiate rewards.
 
 \paragraph{Verification-heavy intelligent tasks.}
-Formal proof assistants provide a useful testbed because accepted outputs can be checked deterministically. The Lean mathematical library shows how a large community can maintain formalized mathematics in Lean \citep{mathlib2020}. miniF2F provides a cross-system benchmark for formal olympiad-level mathematics \citep{zheng2021minif2f}, and LeanDojo exposes Lean proof states, premises, interaction data, and benchmarks for retrieval-augmented theorem proving \citep{yang2023leandojo}. These works support our Lean proof-production application: TokenMosaic can treat a theorem, subgoal, tactic patch, error log, or auxiliary lemma as a task unit, while Lean supplies a replayable verifier.
+Formal proof assistants provide a useful testbed because accepted outputs can
+be checked deterministically. The Lean mathematical library supports
+formalized mathematics \citep{mathlib2020}; miniF2F provides a formal benchmark
+\citep{zheng2021minif2f}; and LeanDojo exposes proof states and premises
+\citep{yang2023leandojo}. In the current application, TokenMosaic executes only
+the theorem and lemma units in a fixed preregistered plan, while a pinned local
+Lean environment checks candidate and root proofs. Arbitrary online subgoal or
+tactic-plan discovery is not implemented.
 
 \paragraph{Annotation quality and low-resource public-good NLP.}
-Crowdsourced annotation research provides mature models for noisy contributors and uncertain labels. Dawid--Skene style aggregation estimates latent labels and worker error rates \citep{dawid1979maximum}; GLAD models both annotator ability and item difficulty \citep{whitehill2009glad}; MACE estimates annotator competence under noisy or adversarial conditions \citep{hovy2013mace}; and Snorkel shows how weak supervision sources can be combined into probabilistic labels \citep{ratner2017snorkel}. Low-resource language work also warns that public-good NLP is not merely a data-scarcity problem: language technologies are unevenly distributed across the world's languages \citep{joshi2020state}, participatory projects such as Masakhane emphasize community involvement \citep{nekoto2020participatory}, and NLLB combines large-scale data construction with human-centered evaluation for many languages \citep{nllb2022}. These lines motivate TokenMosaic's emphasis on provenance, uncertainty, expert escalation, and community review rather than treating generated artifacts as automatically authoritative.
+Crowdsourced annotation research models noisy contributors and uncertain labels
+\citep{dawid1979maximum,whitehill2009glad,hovy2013mace,ratner2017snorkel}, while
+low-resource NLP emphasizes unequal language coverage and community involvement
+\citep{joshi2020state,nekoto2020participatory,nllb2022}. These works motivate a
+future public-good application, but annotation aggregation, expert escalation,
+community governance, and adversarial contributor handling are not part of the
+current Factorization/Lean prototype or its evidence.
 
 
 
@@ -1677,11 +1728,11 @@ Crowdsourced annotation research provides mature models for noisy contributors a
 \toprule
 Line of work & Main contribution & Gap addressed by TokenMosaic \\
 \midrule
-Task allocation & Negotiated or market-based assignment among agents & Recursive task DAGs with verification-aware routing and delayed settlement \\
-Complex crowdsourcing & Human workflow decomposition and recomposition & Heterogeneous LLM, tool, compute, and human contributors with typed verifiers \\
-Distributed execution & Scheduling and recovery for unreliable machines & Semantic intelligent work units with provenance, audit, and merge rules \\
-Blockchain and smart contracts & Trustless ledgers, programmable settlement, verifiable off-chain computation & Useful contribution accounting rather than artificial proof-of-work or consensus mining \\
-LLM-agent systems & Planning, tool use, role specialization, and agent communication & Fault tolerance, resource sharing, contribution attribution, and protocol-level incentives \\
+Task allocation & Negotiated or market-based assignment among agents & Frozen task DAGs with lease-based local scheduling and verification \\
+Complex crowdsourcing & Human workflow decomposition and recomposition & Local LLM/tool execution with typed Factorization and Lean verifiers \\
+Distributed execution & Scheduling and recovery for unreliable machines & Trusted local runtime with accepted-result and merge records \\
+Blockchain and smart contracts & Trustless ledgers, programmable settlement, verifiable off-chain computation & Local accounting records without consensus, blockchain, or payment \\
+LLM-agent systems & Planning, tool use, role specialization, and agent communication & Plugin-defined decomposition, checked candidates, and bounded recovery \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1689,102 +1740,52 @@ LLM-agent systems & Planning, tool use, role specialization, and agent communica
 
 \section{Conclusion}
 
-This paper proposes TokenMosaic, a protocol for turning idle tokens, local computation, tool-execution capacity, and human effort into useful distributed intelligent work. Instead of treating AI tasks as isolated prompt-response interactions, TokenMosaic frames large public-good tasks as recursively decomposable, verifiable, fault-tolerant, and ledger-recorded production processes.
+This paper presents TokenMosaic as a trusted local research prototype for
+coordinating verifiable task-DAG execution. The implemented system combines a
+local attempt-and-lease runtime, deterministic Factorization plans,
+preregistered Lean lemma DAGs and a real Lean checker, controlled AI API
+execution, bounded recovery, merge rules, and replayable local records. The
+five experiments evaluate those mechanisms and explicitly distinguish actual
+provider observations from trace-backed and simulated quantities.
 
-The key idea is simple: large tasks can be divided into smaller units, assigned to heterogeneous contributors, locally and globally verified, recursively merged, and rewarded according to transparent protocol rules. By combining ideas from decentralized ledgers, smart contracts, crowdsourcing, distributed systems, and multi-agent AI, TokenMosaic aims to move from artificial proof-of-work toward useful proof-of-contribution.
+The broader idea of pooling community-owned tokens, tools, computation, and
+human effort remains a research vision. The present prototype does not provide
+an open distributed worker network, dynamic decomposition from online client
+capabilities, blockchain consensus, wallets, real token payment, or protection
+against malicious participants. Its contribution and sandbox-settlement
+objects record local experimental facts only.
 
-The protocol is not intended to make all tasks distributed or decentralized. For small or weakly decomposable tasks, coordination overhead may outweigh the benefits. Its value is expected to appear in tasks that are large, modular, verification-heavy, and socially meaningful. Future work will implement TokenMosaic on concrete benchmarks such as low-resource language knowledge organization and multi-source annotation, and evaluate whether shared token economics can provide a reliable foundation for scalable public-good AI collaboration.
+Future work may study cross-machine participation, economic incentives,
+identity and adversarial security, and public-good applications such as
+low-resource language knowledge organization or multi-source annotation. Such
+extensions require separate implementations and evidence; they are not
+conclusions of the current Factorization and Lean experiments.
 
 
 \section*{Ethical considerations}
 
-The protocol is intended for public-good production, but public-good framing does not remove risk. Low-resource language work can expose community knowledge, cultural context, and identity. Early experiments will therefore use synthetic languages. Real-language studies require licensing review, community consent, careful data governance, and expert validation. Annotation tasks may include sensitive data; the protocol must support privacy constraints, minimal disclosure, and source-specific access control. The ledger should support accountability and reward attribution, but it must not become a coercive surveillance mechanism. Finally, model-generated content must preserve uncertainty flags and should never be presented as community-authoritative without appropriate human or community review.
+The current experiments use Factorization and Lean benchmark tasks in a
+trusted local environment; they do not recruit community workers, process
+community language data, or distribute payments. A future public-good or
+cross-machine deployment would require separate review of licensing, consent,
+privacy, identity, access control, labor and payment practices, and adversarial
+security. Local event and contribution records should not be misread as a
+deployed reputation or surveillance system, and model-generated content should
+not be presented as community-authoritative without appropriate review.
 
 
 
 \bibliographystyle{plainnat}
 \bibliography{reference}
 
-\section{Implementation Todo List}
-
-\subsection{Phase 1: Shared TokenMosaic Harness}
-
-\begin{itemize}[leftmargin=*]
-  \item Implement task registry with root task creation, task ids, and task states.
-  \item Implement task graph with parent-child dependencies and checkpoint status.
-  \item Implement lease state transitions: \texttt{Pending}, \texttt{Leased}, \texttt{Submitted}, \texttt{Verified}, \texttt{Rejected}, \texttt{Expired}, \texttt{Merged}.
-  \item Implement timeout detection and re-queue.
-  \item Implement the common verifier interface.
-  \item Implement ledger logging with structured JSON or CSV output.
-  \item Implement synthetic client profiles: fast, slow, unreliable, invalid, offline, and high-reputation.
-  \item Implement experiment configuration files for seeds, client count, failure rate, timeout, redundancy, and budget.
-\end{itemize}
-
-\subsection{Phase 2: Factorization Experiments}
-
-\begin{itemize}[leftmargin=*]
-  \item Generate factorization benchmark instances with hidden factors.
-  \item Implement search-range decomposition.
-  \item Implement factorization clients.
-  \item Implement modular verification for factor candidates.
-  \item Implement negative range certificates.
-  \item Implement factorization baselines.
-  \item Run pilot experiments on small integers.
-  \item Run full experiments over bit length, client count, failure rate, lease duration, and checkpoint policy.
-  \item Export aggregate metrics and raw logs.
-\end{itemize}
-
-\subsection{Phase 3: Lean Experiments}
-
-\begin{itemize}[leftmargin=*]
-  \item Freeze Lean, Mathlib, Lake, and environment hash.
-  \item Select theorem benchmark sets.
-  \item Build theorem-to-root-task conversion.
-  \item Implement Lean verifier with canonical replay.
-  \item Implement direct proof submissions.
-  \item Implement decomposition submissions with subgoals and merge rules.
-  \item Implement error-log repair tasks.
-  \item Implement checkpoint reuse for verified subproofs.
-  \item Implement Lean baselines.
-  \item Run pilot experiments on small theorem sets.
-  \item Run full experiments over theorem difficulty, token budget, client count, failure rate, and decomposition depth.
-  \item Export aggregate metrics and raw logs.
-\end{itemize}
-
-\subsection{Phase 4: Analysis and Reporting}
-
-\begin{itemize}[leftmargin=*]
-  \item Plot client count versus completion time.
-  \item Plot failure rate versus recovery time.
-  \item Compare checkpoint and no-checkpoint conditions.
-  \item Compare TokenMosaic against all baselines.
-  \item Run audit replay from ledger logs.
-  \item Identify negative cases where coordination overhead dominates.
-  \item Prepare tables for success rate, cost, recovery, and auditability.
-  \item Write the experimental results section using both aggregate metrics and failure analysis.
-\end{itemize}
-
-\section{Minimum Success Criteria}
-
-The experimental phase is ready for paper reporting when:
-\begin{itemize}[leftmargin=*]
-  \item Each application has at least one successful end-to-end TokenMosaic run.
-  \item Each baseline can be executed under the same benchmark configuration.
-  \item Raw logs can reproduce aggregate metrics.
-  \item Audit replay can reconstruct at least one successful final output from ledger records.
-  \item Failure cases are preserved rather than discarded.
-  \item The experiment scripts can be rerun from fixed configuration files and random seeds.
-\end{itemize}
-
 \section{Artifact Availability}
 \label{app:artifact}
 
-The source code, experimental scripts, and supplementary materials for this work are available at:
-
-\begin{center}
-\url{https://anonymous.4open.science/r/TokenMosaic-0D4E/}
-\end{center}
-
-This repository is anonymized for double-blind review. The permanent public repository will be released upon acceptance.
+The source code, Slim V2 experimental facilities, frozen configurations, and
+frozen metric outputs used by this manuscript are provided with the
+accompanying repository branch. The approximately 7.14\,GB raw experiment
+archive is retained separately; its long-term hosting location remains to be
+decided with the supervising authors. No permanent archive URL is claimed
+here.
 
 \end{document}
