@@ -120,7 +120,7 @@ TokenShare/
 
 1. 非当前 experiments 的旧实验源码与旧实验 tests；
 2. formal/paper runner、旧 adapters、budget、receipt、evidence、checkpoint、response-bank、publication/eligibility/gate、lineage/digest closure；
-3. 旧 pilot、smoke、旧 model cohort、旧 paper profile/config 和不被当前题库闭包引用的 benchmark 文件；
+3. 不属于正式题库的旧题库版本，以及未被当前 experiments、正式题库 manifest 或验证路径引用的旧 pilot、smoke、旧 model cohort、旧 paper profile/config；正式题库必须完整迁移到 `benchmarks/experiments/`，不得删题、换题或重写内容；
 4. 旧 Rxx 状态链、feature/handoff、历史计划、旧实验权威、archive 文档和阶段过程文件；
 5. legacy verification profiles、旧 LeanAudit/paper runner 启动入口及其测试 manifest；
 6. Git 已跟踪的 `local/pytest-*`、旧实验 launcher、日志、fixture 输出和其他过程产物；
@@ -191,6 +191,17 @@ TokenShare/
 6. 任何需要改变系统本体语义、实验公式、题库 case、正式结果内容或冻结 schema 的发现必须停止并报告用户，不能借清洗自行修改。
 
 ## 10. 风险驱动验证
+
+阶段阻断门包含以下明确规则：
+
+| 清洗阶段 | 必须证明的行为 |
+|---|---|
+| 正式命名迁移 | 全部 experiments tests、CLI `plan`、imports 和 schema 路径通过 |
+| descriptor 抽离 | Factorization、Lean adapter 和 provider transport focused tests 通过 |
+| 旧源码删除 | 静态依赖闭包中没有任何被删模块；全部保留测试通过 |
+| **旧题库与无引用配置清理** | 正式题库完整保留，迁移后 case 集、选择结果和 SHA-256 与清洗前完全一致 |
+| 文档与验证重构 | 从全新 checkout 可以按 README 完成安装、plan 和离线 smoke |
+| 正式结果发布 | Git 内 metrics 与正式原始 Full 重新归约结果逐文件一致 |
 
 每阶段只运行与其风险对应的 focused verification；最终至少包括：
 
