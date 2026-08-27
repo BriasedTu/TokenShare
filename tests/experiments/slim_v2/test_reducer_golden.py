@@ -1824,6 +1824,60 @@ def test_exp5_infrastructure_invalid_cell_keeps_missing_usage_null(
         assert row["missing_reasons"][metric] == "usage_missing"
 
 
+def test_exp5_parsed_unsubmitted_with_infrastructure_invalid_preserves_reason_precedence(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "exp5-parsed-unsubmitted-infra")
+    root = _inventory(
+        "exp5",
+        "parsed-unsubmitted-infra-model",
+        "parsed-unsubmitted-infra-case",
+        configured_model="zai-org/GLM-5.2",
+    )
+    attempt = _attempt("exp5")
+    attempt.result_kind = "parsed"
+    attempt.parse_result = "parsed"
+    attempt.verifier_result = None
+    attempt.checker_result = None
+    attempt.canonical_accepted = False
+    attempt.missing_reason["attempts[].verifier_result"] = (
+        "not_applicable_or_unavailable"
+    )
+    attempt.validate(experiment_id="exp5")
+    store.write_frozen_inventories(
+        conditions=[], roots=[root], exp3_references=[], exp4_challenges=[]
+    )
+    store.write_root_result(
+        _infrastructure_invalid_result_with_facts(
+            root,
+            attempt=attempt,
+            runtime_ms=10,
+        )
+    )
+
+    reduce_run(store.run_dir)
+
+    row = _read_rows(store.run_dir / "metrics" / "tables" / "exp5.jsonl")[0]
+    assert row["actual_first_provider_attempt_count"] == 1
+    assert row["actual_total_tokens"] == 100
+    assert row["actual_cost_estimate_cny"] == pytest.approx(1.0)
+    assert row["first_attempt_nonpass_rate"] is None
+    assert row["not_applicable_reasons"]["first_attempt_nonpass_rate"] == (
+        "not_applicable_or_unavailable"
+    )
+    for metric in (
+        "first_attempt_verification_rejection_rate",
+        "first_attempt_call_coverage",
+    ):
+        assert row[metric] is None
+        assert row["missing_reasons"][metric] == (
+            "infrastructure_invalid_root_present"
+        )
+        assert row["metric_metadata"][metric]["missing_reason"] == (
+            "infrastructure_invalid_root_present"
+        )
+
+
 def test_exp5_parsed_unsubmitted_attempt_nulls_only_nonpass_quality_metrics(
     tmp_path: Path,
 ) -> None:
@@ -2115,6 +2169,34 @@ def test_exp1_missing_protocol_runtime_carries_direct_cell_reason(
     assert row["missing_reasons"]["root_end_to_end_elapsed_ms"] == (
         "insufficient_observations_for_sample_variance"
     )
+
+
+def test_exp1_missing_protocol_usage_carries_usage_missing_reason(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    store = RunStore(run_dir)
+    root = _inventory("exp1", "exp1-hard", "exp1-usage-missing")
+    store.write_frozen_inventories(
+        conditions=[],
+        roots=[root],
+        exp3_references=[],
+        exp4_challenges=[],
+    )
+    store.write_root_result(
+        _result(
+            root,
+            attempt=_attempt("exp1", total_tokens=None, cost=None),
+        )
+    )
+
+    reduce_run(run_dir)
+
+    row = _read_rows(run_dir / "metrics" / "tables" / "exp1.jsonl")[0]
+    assert row["actual_provider_latency_ms"] == 10
+    for metric in ("actual_total_tokens", "actual_cost_estimate_cny"):
+        assert row[metric] is None
+        assert row["missing_reasons"][metric] == "usage_missing"
 
 
 def test_required_slot_missing_nulls_the_whole_exp4_cell_interval(

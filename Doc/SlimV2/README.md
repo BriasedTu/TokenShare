@@ -10,7 +10,7 @@ scope: Slim V2 agent routing and boundaries
 
 本目录是后续 Slim V2 设计与实现 Agent 的唯一入口。根据 2026-08-20 用户决定，除非当前任务明确指定其他维护范围，所有后续实验设施的设计、实现和运行都默认进入 Slim V2，不需要用户重复声明。四份前置权威文档已获得用户批准并冻结，是 Slim V2 范围内的当前权威；它们不改写 Slim V2 之外的 V1/legacy 状态。常规流程仍由用户逐阶段批准设计规格和实施计划；用户显式启动 `slim_v2_stage_relay_protocol.md` 时，则由该协议规定的多 reviewer 审查、完成标准和 `approved_under_user_delegation` 状态履行这两次委托审批。两种流程都不能绕过 shared-code 修改所需的再次用户批准。当前唯一例外是用户在 2026-08-21 已直接批准 Experiment 4 结构性局部旁路所需的最小 shared gap 修复；精确接口、文件范围、三票结论和验证门以 `slim_v2_exp4_structural_bypass_design.md` 为准，不能外推到其他 shared 修改。
 
-> **当前唯一 focus（2026-08-23）**：本次 Exp5 最小变更已实施：正式 cohort 为 GLM、Qwen、MiniMax 三个 `thinking_budget=max_tokens=100000` 的真实 `repeat0` 模型，DeepSeek V3 已移出 Exp5；Exp1 `deepseek-v4-flash` 已仅作为质量、ordinal-0 token 与原始成本/价格的无延迟 supplemental reference，独立输出且不改变五张正式指标表或摘要。下一步是在零调用 preflight 后启动新的三模型 Exp5 Representative；旧 v1结果不迁移、不复用，旧Pro cohort不标为Flash证据，Exp4 route evidence仍延期，除非它实际阻断本轮输出。
+> **当前唯一 focus（2026-08-27）**：三模型 Flash Full run `slim-v2-full-flash-20260823-233000-b4c8e951` 的 7,017 个 paper roots 与 106 个 Experiment 3 references 已全部保留，并在 `2026-08-27` 的最小 reducer missing-reason 修复后发布五张正式指标表与 `summary.json`。修复只为 Exp1 缺 provider usage 的 token/cost totals 写 `usage_missing`，并闭合 Exp5 parsed-unsubmitted 与 infrastructure-invalid 同 cell 时的科学缺失原因；不改公式、schema、provider、runner 或原始 run。发布前后 1,088,134 个非 metrics 文件的 metadata fingerprint 和 21,260 个 reducer/费用关键输入文件的内容 SHA 完全一致，未新增 provider 调用。实施与验证证据见 `2026-08-27-reducer-missing-reason-repair-plan.md`；下一步是从该 run 的正式 metrics 做论文结果分析，不再运行重复 Full。
 
 ## 目标
 

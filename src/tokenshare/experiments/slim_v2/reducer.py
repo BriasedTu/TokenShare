@@ -1060,7 +1060,11 @@ def _reduce_exp1(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
                 _result_attempt_sum(result, field, protocol_only=True)
                 for result in results
             ]
-            row[total_name] = _sum_nullable(values)
+            total = _sum_nullable(values)
+            if total is None and field in {"total_tokens", "cost_estimate_cny"}:
+                _set_missing(row, total_name, "usage_missing")
+            else:
+                _set_value(row, total_name, total)
             raw = [
                 {
                     "case_id": str(result.case_id), "domain": result.domain,
@@ -2668,12 +2672,14 @@ def _reduce_exp5(observations: Sequence[_Observation]) -> list[dict[str, Any]]:
                 {**identity, "numerator": root_actual,
                  "denominator": len(observation.inventory.planned_ai_unit_ids)}
             )
-        if infrastructure_invalid_present and not parsed_unsubmitted_present:
-            for metric in (
-                "first_attempt_nonpass_rate",
+        if infrastructure_invalid_present:
+            invalid_metrics = [
                 "first_attempt_verification_rejection_rate",
                 "first_attempt_call_coverage",
-            ):
+            ]
+            if not parsed_unsubmitted_present:
+                invalid_metrics.insert(0, "first_attempt_nonpass_rate")
+            for metric in invalid_metrics:
                 _set_missing(
                     row, metric, "infrastructure_invalid_root_present"
                 )
