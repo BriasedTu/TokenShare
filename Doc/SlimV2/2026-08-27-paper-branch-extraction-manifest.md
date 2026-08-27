@@ -346,7 +346,7 @@ $sourceStatus = @(git status --porcelain=v1)
 if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0) { throw 'all existing source changes require prior thematic commits' }
 ```
 
-1. 用 `apply_patch` 在 source `.gitattributes` EOF 逐行加入以下 20 个 final exact source path 的 `-text`；不得使用目录规则或 glob。任何对同一路径生效的旧 exact `text` 或 `eol=` rule 必须删除/替换，或者由这组位于 EOF 的 final rules 覆盖：
+1. 用 `apply_patch` 先删除或替换任何对同一路径生效的旧 exact `text` 或 `eol=` rule，再在 source `.gitattributes` EOF 逐行加入以下 20 个 final exact source path 的 `-text`；不得使用目录规则或 glob。只追加 `-text` 而保留冲突 `eol=` line 不合格：
 
 ```gitattributes
 benchmarks/paper/factorization_catalog.v2.jsonl -text
@@ -396,9 +396,12 @@ $rawPaths = @(
     'fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean',
     'fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean'
 )
-$expectedStaged = @('.gitattributes') + $rawPaths | Sort-Object
+$allowedStaged = @('.gitattributes') + $rawPaths
 $actualStaged = @(git diff --cached --name-only | Sort-Object)
-if ($LASTEXITCODE -ne 0 -or (Compare-Object $expectedStaged $actualStaged)) { throw 'raw freeze staged set mismatch' }
+if ($LASTEXITCODE -ne 0) { throw 'cannot inspect raw freeze staged set' }
+if ($actualStaged -notcontains '.gitattributes') { throw '.gitattributes must be staged' }
+$outsideStaged = @($actualStaged | Where-Object { $_ -notin $allowedStaged })
+if ($outsideStaged.Count -ne 0) { throw "raw freeze staged set contains an outside path: $($outsideStaged -join ', ')" }
 foreach ($path in $rawPaths) {
     $attributes = @(git check-attr text eol -- $path)
     if ($LASTEXITCODE -ne 0) { throw "git check-attr failed: $path" }
@@ -406,6 +409,8 @@ foreach ($path in $rawPaths) {
     if (Compare-Object $expectedAttributes $attributes) { throw "raw attributes are not final: $path" }
 }
 ```
+
+`git add` 可省略内容与当前 index 已 byte-identical 的 raw path，因此 `$actualStaged` 只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256。
 
 3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
 4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
@@ -463,14 +468,14 @@ benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Unsupport
 | `fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean` | `benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean` | `45393c97a1a61a4dd5607da8bbfb73690657b9f1ba61e07d39180a581cfcde85` |
 | `fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean` | `benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean` | `a6e79e5563ef4dccf0d7985e941c247d70e6e418ba0ba0bbc65785b33ac0619b` |
 
-Freeze tag 创建后运行以下固定 Python body；`sha` 必须是 annotated tag 的 peeled commit SHA：
+Stage 后先不传参数运行以下固定 Python body，验证全部 20 个 index blobs；freeze tag 创建后再传入 annotated tag 的 peeled commit SHA，同时复核 index 与 frozen commit blobs：
 
 ```python
 import hashlib
 import subprocess
 import sys
 
-sha = sys.argv[1]
+sha = sys.argv[1] if len(sys.argv) == 2 else None
 expected = {
     "benchmarks/paper/factorization_catalog.v2.jsonl": "9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774",
     "benchmarks/paper/lean_catalog.v1.jsonl": "1b2b709ce459d1c72966c708bf6fabfd6a747842fdbd853f2b0d42b74a3052c3",
@@ -494,10 +499,22 @@ expected = {
     "fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean": "a6e79e5563ef4dccf0d7985e941c247d70e6e418ba0ba0bbc65785b33ac0619b",
 }
 for path, wanted in expected.items():
-    raw = subprocess.check_output(["git", "cat-file", "blob", f"{sha}:{path}"])
-    actual = hashlib.sha256(raw).hexdigest()
-    if actual != wanted:
-        raise SystemExit(f"raw blob SHA-256 mismatch: {path}: {actual}")
+    oid = subprocess.check_output(
+        ["git", "rev-parse", f":{path}"], text=True
+    ).strip()
+    index_raw = subprocess.check_output(["git", "cat-file", "blob", oid])
+    index_actual = hashlib.sha256(index_raw).hexdigest()
+    if index_actual != wanted:
+        raise SystemExit(f"index blob SHA-256 mismatch: {path}: {index_actual}")
+    if sha is not None:
+        frozen_raw = subprocess.check_output(
+            ["git", "cat-file", "blob", f"{sha}:{path}"]
+        )
+        frozen_actual = hashlib.sha256(frozen_raw).hexdigest()
+        if frozen_actual != wanted:
+            raise SystemExit(
+                f"frozen blob SHA-256 mismatch: {path}: {frozen_actual}"
+            )
 ```
 
 Sidecar 中的旧路径是冻结 logical identity，不能重写 sidecar。实现必须先以旧 key 校验记录的 digest，再把 key 映射到上表 public physical path 读取 bytes。严格旧 key allowlist 见第 10 节。Sidecar exact structure counts 是：top-level fields=`4`，字段名为 `schema_version`、`authority`、`semantic_projection`、`sidecar_digest`；`authority.raw_files=3`；`semantic_projection.environment.files=12`；`semantic_projection.checker.files=1`。验证器必须同时比较这些计数、键名、raw SHA-256 与逐项 mapping。
@@ -1017,9 +1034,11 @@ if ($LASTEXITCODE -ne 0 -or $cacheHits.Count -ne 0) { throw 'tracked paper cache
 ### 11.6 Manifest 本身自检
 
 ```powershell
-git show --check --oneline HEAD
-if ($LASTEXITCODE -ne 0) { throw 'committed manifest patch has whitespace errors' }
 $manifestPath = 'Doc/SlimV2/2026-08-27-paper-branch-extraction-manifest.md'
+$manifestCommit = git log -1 --format=%H -- $manifestPath
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($manifestCommit)) { throw 'cannot resolve manifest commit' }
+git show --check --oneline $manifestCommit -- $manifestPath
+if ($LASTEXITCODE -ne 0) { throw 'committed manifest patch has whitespace errors' }
 $anglePattern = ([char]60) + '[^' + ([char]62) + ']+' + ([char]62)
 $wordPattern = @(('TO' + 'DO'), ('T' + 'BD'), ('FIX' + 'ME'), (([char]31867) + ([char]20284) + ([char]25991) + ([char]20214)), (([char]30456) + ([char]20851) + ([char]27979) + ([char]35797))) -join '|'
 $shortHashPattern = '[0-9a-f]{8}' + ([char]8230)
@@ -1041,7 +1060,7 @@ foreach ($target in $mustSynthesize) {
 }
 ```
 
-期望：`git show --check --oneline HEAD` 退出码 0；它检查 committed patch。角括号占位、禁用词、allowlist wildcard、abbreviated SHA 与 synthesized-target contradiction 扫描均无输出。不得以 clean working tree 的 `git diff --check` 代替 committed-content 检查。
+期望：`git show --check --oneline $manifestCommit -- $manifestPath` 退出码 0；它检查该 manifest 最近一次 committed patch，后续 Task B commits 不会改变检查对象。角括号占位、禁用词、allowlist wildcard、abbreviated SHA 与 synthesized-target contradiction 扫描均无输出。不得以 mutable `HEAD` 或 clean working tree 的 `git diff --check` 代替该 committed-content 检查。
 
 ## 12. `minimum_dependency_request`
 
