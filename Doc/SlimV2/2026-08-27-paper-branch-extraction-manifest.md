@@ -397,6 +397,57 @@ $rawPaths = @(
     'fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean'
 )
 $allowedStaged = @('.gitattributes') + $rawPaths
+
+git add -- '.gitattributes'
+if ($LASTEXITCODE -ne 0) { throw 'cannot stage .gitattributes for raw freeze' }
+foreach ($path in $rawPaths) {
+    if ($path -notin $allowedStaged -or $path -eq '.gitattributes') {
+        throw "normal raw stage escaped the allowed path set: $path"
+    }
+    git add -- $path
+    if ($LASTEXITCODE -ne 0) { throw "normal raw stage failed: $path" }
+}
+
+# 仅靠上面的 normal git add 不足以闭合 raw-byte freeze：stat-cache 命中时，
+# Git 可能不会在 .gitattributes 改为 -text 后重新读取 working-file raw bytes。
+# 因此必须逐路径读取现有 stage-0 mode，写入无 filter 的 raw blob，再精确更新 index。
+foreach ($path in $rawPaths) {
+    if ($path -notin $allowedStaged -or $path -eq '.gitattributes') {
+        throw "forced raw index stage escaped the allowed path set: $path"
+    }
+
+    $stageLines = @(git ls-files --stage -- $path)
+    if ($LASTEXITCODE -ne 0) { throw "cannot inspect existing index entry: $path" }
+    if ($stageLines.Count -ne 1) { throw "expected exactly one index entry: $path" }
+    if ($stageLines[0] -notmatch '^([0-7]{6}) ([0-9a-fA-F]{40}|[0-9a-fA-F]{64}) 0\t(.+)$') {
+        throw "expected one stage-0 index entry with a valid mode and OID: $path"
+    }
+    $mode = $Matches[1]
+    $stagePath = $Matches[3]
+    if ($stagePath -ne $path) { throw "index entry path mismatch: $path => $stagePath" }
+
+    $rawOidLines = @(git hash-object -w --no-filters -- $path)
+    if ($LASTEXITCODE -ne 0) { throw "cannot write raw blob: $path" }
+    if ($rawOidLines.Count -ne 1) { throw "expected one raw blob OID: $path" }
+    $rawOid = $rawOidLines[0].Trim()
+    if ($rawOid -notmatch '^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$') {
+        throw "invalid raw blob OID: $path => $rawOid"
+    }
+
+    git update-index --cacheinfo "$mode,$rawOid,$path"
+    if ($LASTEXITCODE -ne 0) { throw "cannot force raw blob into index: $path" }
+    $updatedOidLines = @(git rev-parse --verify ":$path")
+    if ($LASTEXITCODE -ne 0) { throw "cannot resolve updated index blob: $path" }
+    if ($updatedOidLines.Count -ne 1) { throw "expected one updated index OID: $path" }
+    $updatedOid = $updatedOidLines[0].Trim()
+    if ($updatedOid -notmatch '^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$') {
+        throw "invalid updated index OID: $path => $updatedOid"
+    }
+    if ($updatedOid -ne $rawOid) {
+        throw "forced raw index stage did not select the raw blob: $path"
+    }
+}
+
 $actualStaged = @(git diff --cached --name-only | Sort-Object)
 if ($LASTEXITCODE -ne 0) { throw 'cannot inspect raw freeze staged set' }
 if ($actualStaged -notcontains '.gitattributes') { throw '.gitattributes must be staged' }
@@ -410,7 +461,7 @@ foreach ($path in $rawPaths) {
 }
 ```
 
-`git add` 可省略内容与当前 index 已 byte-identical 的 raw path，因此 `$actualStaged` 只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256。
+normal `git add` 可省略其认为与当前 index 相同的 raw path；但已观察到的 stat-cache 条件会让它在 attributes 变化后仍不重新读取 working raw bytes，因此上述强制 raw index step 是 raw freeze 的必要闭包。强制步骤完成后，`$actualStaged` 仍只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256；20 项必须全部通过该 gate。
 
 3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
 4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
