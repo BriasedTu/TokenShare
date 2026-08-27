@@ -371,7 +371,7 @@ fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean -text
 fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean -text
 ```
 
-2. 在 stage 前对这 20 个 working files 逐个执行 `Get-FileHash -Algorithm SHA256`，结果必须等于下表对应 SHA-256；保存这份 pre-stage map。然后只对 `.gitattributes` 与下面 `$rawPaths` 中每个 exact path 分别执行 `git add -- $path`；禁止 broad selector、formatter、checkout、`git add --renormalize` 或任何会改 working-file bytes 的命令。Stage 后必须执行此 exact-set 与 attribute gate：
+2. 在 stage 前对这 20 个 working files 逐个执行 `Get-FileHash -Algorithm SHA256`，结果必须等于下表对应 SHA-256；保存这份 pre-stage map。然后只对 `.gitattributes` 与下面 `$rawPaths` 中每个 exact path 分别执行 `git add -- $path`；禁止 broad selector、formatter、checkout、`git add --renormalize` 或任何会改 working-file bytes 的命令。Stage 后必须执行此 exact-set 与 index attribute gate，并拒绝 `.gitattributes` 的任何 unstaged drift：
 
 ```powershell
 $rawPaths = @(
@@ -453,15 +453,19 @@ if ($LASTEXITCODE -ne 0) { throw 'cannot inspect raw freeze staged set' }
 if ($actualStaged -notcontains '.gitattributes') { throw '.gitattributes must be staged' }
 $outsideStaged = @($actualStaged | Where-Object { $_ -notin $allowedStaged })
 if ($outsideStaged.Count -ne 0) { throw "raw freeze staged set contains an outside path: $($outsideStaged -join ', ')" }
+git diff --quiet -- '.gitattributes'
+$attributeDiffExit = $LASTEXITCODE
+if ($attributeDiffExit -eq 1) { throw '.gitattributes has unstaged drift' }
+if ($attributeDiffExit -ne 0) { throw "cannot inspect .gitattributes drift: exit $attributeDiffExit" }
 foreach ($path in $rawPaths) {
-    $attributes = @(git check-attr text eol -- $path)
-    if ($LASTEXITCODE -ne 0) { throw "git check-attr failed: $path" }
+    $attributes = @(git check-attr --cached text eol -- $path)
+    if ($LASTEXITCODE -ne 0) { throw "cached git check-attr failed: $path" }
     $expectedAttributes = @("$path`: text: unset", "$path`: eol: unspecified")
-    if (Compare-Object $expectedAttributes $attributes) { throw "raw attributes are not final: $path" }
+    if (Compare-Object $expectedAttributes $attributes) { throw "staged raw attributes are not final: $path" }
 }
 ```
 
-normal `git add` 可省略其认为与当前 index 相同的 raw path；但已观察到的 stat-cache 条件会让它在 attributes 变化后仍不重新读取 working raw bytes，因此上述强制 raw index step 是 raw freeze 的必要闭包。强制步骤完成后，`$actualStaged` 仍只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256；20 项必须全部通过该 gate。
+normal `git add` 可省略其认为与当前 index 相同的 raw path；但已观察到的 stat-cache 条件会让它在 attributes 变化后仍不重新读取 working raw bytes，因此上述强制 raw index step 是 raw freeze 的必要闭包。强制步骤完成后，`$actualStaged` 仍只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。attribute gate 明确从 index 中读取已 staged 的 `.gitattributes`，并在此之前证明 working tree 没有 `.gitattributes` drift。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256；20 项必须全部通过该 gate。
 
 3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
 4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
