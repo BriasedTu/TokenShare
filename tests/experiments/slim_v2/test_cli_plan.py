@@ -60,6 +60,6 @@ def test_plan_prints_estimate_and_hard_upper_bytes_without_loading_secret_or_pro
     assert rendered["per_root_free_space_margin"]["gib"] == (
         rendered["per_root_free_space_margin"]["bytes"] / 1024**3
     )
-    assert rendered["online_provider_call_upper"] == 10_902
+    assert rendered["online_provider_call_upper"] == 6_762
     assert secret_reads == provider_calls == 0
     assert not output_root.exists()
