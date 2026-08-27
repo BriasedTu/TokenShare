@@ -15,18 +15,20 @@ date: 2026-08-27
 本文把 `audit_head` 上的三路只读审计结论冻结为机械抽取边界。`audit_head` 只用于证明清单来源；实际抽取必须等 Task B 完成 reducer 修正、非 `paper/**` 来源整理和 baseline 后，解析 annotated tag `experiments-pre-cleanup-20260827^{}` 得到唯一的 `frozen_sha`。顶层 `paper/**` 完全排除：不读取、不复制、不验证、不审查，也不因其在来源工作树持续变化而阻塞。历史目录名 `benchmarks/paper/**` 是正式题库/配置来源，不属于顶层排除项。任何 writer 只能使用：
 
 ```powershell
+$sourceRoot = 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline'
+$targetRoot = 'E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction'
 $freezeTag = 'experiments-pre-cleanup-20260827'
-$frozenSha = git rev-parse "$freezeTag^{}"
+$frozenSha = git -C $sourceRoot rev-parse "$freezeTag^{}"
 if ($LASTEXITCODE -ne 0) { throw 'cannot resolve freeze tag' }
-$freezeType = git cat-file -t $freezeTag
+$freezeType = git -C $sourceRoot cat-file -t $freezeTag
 if ($LASTEXITCODE -ne 0 -or $freezeType -ne 'tag') { throw 'freeze source must be an annotated tag' }
-$targetStatus = @(git status --porcelain=v1)
+$targetStatus = @(git -C $targetRoot status --porcelain=v1)
 if ($LASTEXITCODE -ne 0 -or $targetStatus.Count -ne 0) { throw 'target worktree must be clean before restore' }
-$targetCached = @(git diff --cached --name-only)
+$targetCached = @(git -C $targetRoot diff --cached --name-only)
 if ($LASTEXITCODE -ne 0 -or $targetCached.Count -ne 0) { throw 'target index must be empty before restore' }
-git show "$frozenSha`:src/tokenshare/protocol_engine.py"
+git -C $sourceRoot show "$frozenSha`:src/tokenshare/protocol_engine.py"
 if ($LASTEXITCODE -ne 0) { throw 'frozen source path is unavailable' }
-git restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_engine.py'
+git -C $targetRoot restore --source=$frozenSha --staged --worktree -- 'src/tokenshare/protocol_engine.py'
 if ($LASTEXITCODE -ne 0) { throw 'target restore failed' }
 ```
 
@@ -41,12 +43,12 @@ if ($LASTEXITCODE -ne 0) { throw 'target restore failed' }
 - `forbid_target_exact`：该 path/selector 的任何命中不得存在于 final target；它只能包含确实应消失的旧路径或功能。
 - 默认规则是双向 deny：frozen tracked source 只有属于 `keep_exact`、`move_exact` 或点名 synthesis input 才能读取；final tracked target 只有属于 `keep_exact` target、`move_exact` target 或 `synthesize` target 才能存在。所有 `forbid_target_exact` 命中必须为零，且 `synthesize` target 与 `forbid_target_exact` 集必须不相交。
 
-目录 selector 以 `git ls-tree -r --name-only $frozenSha -- 'src/tokenshare'` 这类带本清单已枚举 exact path 的命令取得 tracked 全集；本文对每个 selector 给出完整保留或完整排除集合，不读取 ignored/untracked 内容。唯一例外是第 8 节点名的正式 raw 目录 12 个只读发布文件。
+目录 selector 以 `git -C $sourceRoot ls-tree -r --name-only $frozenSha -- 'src/tokenshare'` 这类带本清单已枚举 exact path 的命令取得 tracked 全集；本文对每个 selector 给出完整保留或完整排除集合，不读取 ignored/untracked 内容。唯一例外是第 8 节点名的正式 raw 目录 12 个只读发布文件。
 
 Freeze evidence 分两阶段，禁止 baseline 自引用：
 
 1. Baseline JSON 只记录 `pre_baseline_source_sha`，即提交两份 baseline 文档前的权威 source evidence commit；baseline 文件不得包含 `frozen_sha`、tag object SHA 或 peeled commit SHA。Baseline commit 只能提交两份 baseline 文档，且其父提交必须精确等于 `pre_baseline_source_sha`。
-2. Baseline 文档提交后，当前 commit 才是候选 frozen commit。创建 tag 前必须证明 `refs/tags/experiments-pre-cleanup-20260827` 不存在；检查命令只接受 exit `1`，exit `0` 或其他错误都停止。`git tag -a` 必须退出 0；随后 `git cat-file -t refs/tags/experiments-pre-cleanup-20260827` 必须精确为 `tag`，记录 tag object SHA，并断言 peeled SHA 等于当前 baseline commit。
+2. Baseline 文档提交后，当前 commit 才是候选 frozen commit。创建 tag 前必须证明 `refs/tags/experiments-pre-cleanup-20260827` 不存在；检查命令只接受 exit `1`，exit `0` 或其他错误都停止。`git -C $sourceRoot tag -a` 必须退出 0；随后 `git -C $sourceRoot cat-file -t refs/tags/experiments-pre-cleanup-20260827` 必须精确为 `tag`，记录 tag object SHA，并断言 peeled SHA 等于当前 baseline commit。
 3. 真正的 freeze identity 只在 tag 创建后写入 target-side `verification/extraction_manifest.json` 与验收证据。该文件固定记录 `pre_baseline_source_sha`、`source_tag`、`tag_object_sha`、`peeled_commit_sha` 和 target ancestry check；验证器必须重新解析 tag object/type/peeled commit，不能信任文件自报值。
 
 Task C 原生 Git 创建合同同样 fail-closed：`show-ref` 只接受 exit `1` 表示目标 branch 不存在；`rev-parse`/`mktree`/`commit-tree` 输出必须是与 `--show-object-format` 一致的单个 40/64 hex OID；`cat-file -t` 必须分别证明 tag/tree/commit 类型；empty tree 必须零 paths；empty commit 必须只有 peeled freeze commit 一个 parent；worktree 先 detached 创建并验证，再创建 branch。任何命令非零、输出为空/多行、类型/parent/ancestry/status 不符都立即停止；branch switch 失败时只按 exact path + clean status + CAS ref 条件回滚，不留下半创建 branch/worktree。
@@ -245,8 +247,11 @@ Task C 原生 Git 创建合同同样 fail-closed：`show-ref` 只接受 exit `1`
 
 ```powershell
 conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_runtime_adapter.py -q
+if ($LASTEXITCODE -ne 0) { throw 'Lean runtime-adapter focused gate failed' }
 conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_fixed_plan.py -q
+if ($LASTEXITCODE -ne 0) { throw 'Lean fixed-plan focused gate failed' }
 conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_lemma_graph_merge_policy.py -q
+if ($LASTEXITCODE -ne 0) { throw 'Lean merge-policy focused gate failed' }
 ```
 
 期望三个文件与 frozen blobs 的唯一文本差异分别等于上述 2、1、1 个 exact path substitutions；收集到的 catalog records、plan shape、merge results 与 frozen tests 等价，且三个 target test files 不再含 `benchmarks/paper/`。
@@ -347,14 +352,14 @@ test_deepseek_executor_timeout_marks_usage_missing
 Task B writer 第一次触碰 `.gitattributes` 前必须执行以下 source guard。所有非顶层 `paper/**` 的 source working-tree changes 必须先以各自 thematic commit 提交；顶层排除项保持原样且不得混入 raw freeze commit：
 
 ```powershell
-$sourceCached = @(git diff --cached --name-only)
+$sourceCached = @(git -C $sourceRoot diff --cached --name-only)
 if ($LASTEXITCODE -ne 0 -or $sourceCached.Count -ne 0) { throw 'source index must be empty before raw freeze work' }
-$attributeDrift = @(git diff --name-only -- '.gitattributes')
+$attributeDrift = @(git -C $sourceRoot diff --name-only -- '.gitattributes')
 if ($LASTEXITCODE -ne 0 -or $attributeDrift.Count -ne 0) { throw '.gitattributes already has an unstaged change' }
-git diff --quiet -- . ':(exclude)paper/**'
+git -C $sourceRoot diff --quiet -- . ':(exclude)paper/**'
 if ($LASTEXITCODE -eq 1) { throw 'tracked non-paper worktree changes require prior thematic commits' }
 if ($LASTEXITCODE -ne 0) { throw "cannot inspect tracked non-paper worktree: exit $LASTEXITCODE" }
-$sourceUntracked = @(git ls-files --others --exclude-standard -- . ':(exclude)paper/**')
+$sourceUntracked = @(git -C $sourceRoot ls-files --others --exclude-standard -- . ':(exclude)paper/**')
 if ($LASTEXITCODE -ne 0 -or $sourceUntracked.Count -ne 0) { throw 'untracked non-paper worktree changes require resolution' }
 ```
 
@@ -383,7 +388,7 @@ fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean -text
 fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean -text
 ```
 
-2. 在 stage 前对这 20 个 working files 逐个执行 `Get-FileHash -Algorithm SHA256`，结果必须等于下表对应 SHA-256；保存这份 pre-stage map。然后只对 `.gitattributes` 与下面 `$rawPaths` 中每个 exact path 分别执行 `git add -- $path`；禁止 broad selector、formatter、checkout、`git add --renormalize` 或任何会改 working-file bytes 的命令。Stage 后必须执行此 exact-set 与 index attribute gate，并拒绝 `.gitattributes` 的任何 unstaged drift：
+2. 在 stage 前对这 20 个 working files 逐个执行 `Get-FileHash -Algorithm SHA256`，结果必须等于下表对应 SHA-256；保存这份 pre-stage map。然后只对 `.gitattributes` 与下面 `$rawPaths` 中每个 exact path 分别执行 `git -C $sourceRoot add -- $path`；禁止 broad selector、formatter、checkout、`git -C $sourceRoot add --renormalize` 或任何会改 working-file bytes 的命令。Stage 后必须执行此 exact-set 与 index attribute gate，并拒绝 `.gitattributes` 的任何 unstaged drift：
 
 ```powershell
 $rawPaths = @(
@@ -410,17 +415,17 @@ $rawPaths = @(
 )
 $allowedStaged = @('.gitattributes') + $rawPaths
 
-git add -- '.gitattributes'
+git -C $sourceRoot add -- '.gitattributes'
 if ($LASTEXITCODE -ne 0) { throw 'cannot stage .gitattributes for raw freeze' }
 foreach ($path in $rawPaths) {
     if ($path -notin $allowedStaged -or $path -eq '.gitattributes') {
         throw "normal raw stage escaped the allowed path set: $path"
     }
-    git add -- $path
+    git -C $sourceRoot add -- $path
     if ($LASTEXITCODE -ne 0) { throw "normal raw stage failed: $path" }
 }
 
-# 仅靠上面的 normal git add 不足以闭合 raw-byte freeze：stat-cache 命中时，
+# 仅靠上面的 normal git -C $sourceRoot add 不足以闭合 raw-byte freeze：stat-cache 命中时，
 # Git 可能不会在 .gitattributes 改为 -text 后重新读取 working-file raw bytes。
 # 因此必须逐路径读取现有 stage-0 mode，写入无 filter 的 raw blob，再精确更新 index。
 foreach ($path in $rawPaths) {
@@ -428,7 +433,7 @@ foreach ($path in $rawPaths) {
         throw "forced raw index stage escaped the allowed path set: $path"
     }
 
-    $stageLines = @(git ls-files --stage -- $path)
+    $stageLines = @(git -C $sourceRoot ls-files --stage -- $path)
     if ($LASTEXITCODE -ne 0) { throw "cannot inspect existing index entry: $path" }
     if ($stageLines.Count -ne 1) { throw "expected exactly one index entry: $path" }
     if ($stageLines[0] -notmatch '^([0-7]{6}) ([0-9a-fA-F]{40}|[0-9a-fA-F]{64}) 0\t(.+)$') {
@@ -438,7 +443,7 @@ foreach ($path in $rawPaths) {
     $stagePath = $Matches[3]
     if ($stagePath -ne $path) { throw "index entry path mismatch: $path => $stagePath" }
 
-    $rawOidLines = @(git hash-object -w --no-filters -- $path)
+    $rawOidLines = @(git -C $sourceRoot hash-object -w --no-filters -- $path)
     if ($LASTEXITCODE -ne 0) { throw "cannot write raw blob: $path" }
     if ($rawOidLines.Count -ne 1) { throw "expected one raw blob OID: $path" }
     $rawOid = $rawOidLines[0].Trim()
@@ -446,9 +451,9 @@ foreach ($path in $rawPaths) {
         throw "invalid raw blob OID: $path => $rawOid"
     }
 
-    git update-index --cacheinfo "$mode,$rawOid,$path"
+    git -C $sourceRoot update-index --cacheinfo "$mode,$rawOid,$path"
     if ($LASTEXITCODE -ne 0) { throw "cannot force raw blob into index: $path" }
-    $updatedOidLines = @(git rev-parse --verify ":$path")
+    $updatedOidLines = @(git -C $sourceRoot rev-parse --verify ":$path")
     if ($LASTEXITCODE -ne 0) { throw "cannot resolve updated index blob: $path" }
     if ($updatedOidLines.Count -ne 1) { throw "expected one updated index OID: $path" }
     $updatedOid = $updatedOidLines[0].Trim()
@@ -460,26 +465,26 @@ foreach ($path in $rawPaths) {
     }
 }
 
-$actualStaged = @(git diff --cached --name-only | Sort-Object)
+$actualStaged = @(git -C $sourceRoot diff --cached --name-only | Sort-Object)
 if ($LASTEXITCODE -ne 0) { throw 'cannot inspect raw freeze staged set' }
 if ($actualStaged -notcontains '.gitattributes') { throw '.gitattributes must be staged' }
 $outsideStaged = @($actualStaged | Where-Object { $_ -notin $allowedStaged })
 if ($outsideStaged.Count -ne 0) { throw "raw freeze staged set contains an outside path: $($outsideStaged -join ', ')" }
-git diff --quiet -- '.gitattributes'
+git -C $sourceRoot diff --quiet -- '.gitattributes'
 $attributeDiffExit = $LASTEXITCODE
 if ($attributeDiffExit -eq 1) { throw '.gitattributes has unstaged drift' }
 if ($attributeDiffExit -ne 0) { throw "cannot inspect .gitattributes drift: exit $attributeDiffExit" }
 foreach ($path in $rawPaths) {
-    $attributes = @(git check-attr --cached text eol -- $path)
+    $attributes = @(git -C $sourceRoot check-attr --cached text eol -- $path)
     if ($LASTEXITCODE -ne 0) { throw "cached git check-attr failed: $path" }
     $expectedAttributes = @("$path`: text: unset", "$path`: eol: unspecified")
     if (Compare-Object $expectedAttributes $attributes) { throw "staged raw attributes are not final: $path" }
 }
 ```
 
-normal `git add` 可省略其认为与当前 index 相同的 raw path；但已观察到的 stat-cache 条件会让它在 attributes 变化后仍不重新读取 working raw bytes，因此上述强制 raw index step 是 raw freeze 的必要闭包。强制步骤完成后，`$actualStaged` 仍只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。attribute gate 明确从 index 中读取已 staged 的 `.gitattributes`，并在此之前证明 working tree 没有 `.gitattributes` drift。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256；20 项必须全部通过该 gate。
+normal `git -C $sourceRoot add` 可省略其认为与当前 index 相同的 raw path；但已观察到的 stat-cache 条件会让它在 attributes 变化后仍不重新读取 working raw bytes，因此上述强制 raw index step 是 raw freeze 的必要闭包。强制步骤完成后，`$actualStaged` 仍只要求是 allowed set 的子集、包含 `.gitattributes` 且不含 outside path；不得要求 20 个 raw paths 全部出现在 staged diff。attribute gate 明确从 index 中读取已 staged 的 `.gitattributes`，并在此之前证明 working tree 没有 `.gitattributes` drift。无论某 path 是否出现在 staged diff，都必须对 `$rawPaths` 全 20 项运行下方 Python body 的 index-blob gate：用 `git -C $sourceRoot rev-parse ":$path"` 得到 index blob OID，再以 binary stdout 读取 blob 并对照表中 SHA-256；20 项必须全部通过该 gate。
 
-3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
+3. Stage 后再次对 20 个 working files 执行 `Get-FileHash -Algorithm SHA256` 并逐值等于 pre-stage map；随后提交 raw bytes。创建 annotated tag 后解析 peeled SHA，必须用下方固定 Python snippet 直接取得 `git -C $sourceRoot cat-file blob` stdout bytes 并逐值校验，不得用 PowerShell text pipeline、redirect 或 string 承接 raw blob。任何值不等立即停止。Git blob object ID 是 Git 对 blob header 与内容计算的对象标识；本表 SHA-256 只对 raw content bytes 计算，两者不得互换。
 4. Freeze tag 产生后，所有抽取只读 peeled commit 的 blob；不得再读取 source live checkout，也不得要求 live source HEAD 或 status 保持不变。Sidecar 的 raw bytes 必须保持 byte-identical，尤其不得解析后重新序列化。
 
 Target synthesized `.gitattributes` 必须逐行包含以下 32 个 exact public path 的 `-text`，保证启用 `core.autocrlf` 的 fresh checkout 仍保持 frozen/baseline raw bytes；不得以旧 source EOL 推断或转换：
@@ -558,6 +563,7 @@ import hashlib
 import subprocess
 import sys
 
+source_root = r"E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline"
 sha = sys.argv[1] if len(sys.argv) == 2 else None
 expected = {
     "benchmarks/paper/factorization_catalog.v2.jsonl": "9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774",
@@ -583,15 +589,17 @@ expected = {
 }
 for path, wanted in expected.items():
     oid = subprocess.check_output(
-        ["git", "rev-parse", f":{path}"], text=True
+        ["git", "-C", source_root, "rev-parse", f":{path}"], text=True
     ).strip()
-    index_raw = subprocess.check_output(["git", "cat-file", "blob", oid])
+    index_raw = subprocess.check_output(
+        ["git", "-C", source_root, "cat-file", "blob", oid]
+    )
     index_actual = hashlib.sha256(index_raw).hexdigest()
     if index_actual != wanted:
         raise SystemExit(f"index blob SHA-256 mismatch: {path}: {index_actual}")
     if sha is not None:
         frozen_raw = subprocess.check_output(
-            ["git", "cat-file", "blob", f"{sha}:{path}"]
+            ["git", "-C", source_root, "cat-file", "blob", f"{sha}:{path}"]
         )
         frozen_actual = hashlib.sha256(frozen_raw).hexdigest()
         if frozen_actual != wanted:
@@ -703,11 +711,11 @@ Baseline JSON 中 `full_root_identities` 与 `full_reference_identities` 必须�
 | `verification/verify_authoritative_corpus.py` | 第 3.4、4 节 corpus/完整 arrays | 完整数组与 identity 逐元素对等，非抽样 |
 | `verification/verify_official_results.py` | 第 3.5 节 result/reducer 只读验证 | 第 8 节 tripwire 合同 |
 | `verification/extraction_manifest.json` | annotated tag 创建后的 target-side freeze evidence | exact fields=`pre_baseline_source_sha/source_tag/tag_object_sha/peeled_commit_sha/target_ancestry_check`；不得由 baseline 预填 |
-| `verification/verify_extraction.py` | freeze-tag ancestry、extraction manifest、tracked boundary、absence、allowlist | 重解析 tag object/type/peeled commit；要求两个 tests package markers tracked 且 empty；default-deny 与第 9、10 节全量扫描；`git ls-files -- 'paper/**'` 必须为空 |
+| `verification/verify_extraction.py` | freeze-tag ancestry、extraction manifest、tracked boundary、absence、allowlist | 重解析 tag object/type/peeled commit；要求两个 tests package markers tracked 且 empty；default-deny 与第 9、10 节全量扫描；`git -C $targetRoot ls-files -- 'paper/**'` 必须为空 |
 
 ### 5.1 Byte-level closed-transform gate
 
-`verification/verify_extraction.py` 必须用 `subprocess.check_output(["git", "cat-file", "blob", f"{frozen_sha}:{source_path}"])` 取得 frozen bytes。所有 `byte_identical keep/move` 逐 bytes 等于 target `read_bytes()`。所有 path-only `keep_then_synthesize` 与第 3.1–3.3 节 moved Python/CMD files 必须按下表顺序对 frozen bytes 执行 `bytes.count(old)`、断言 exact count、再执行 `bytes.replace(old, new)`；最终 bytes 必须等于 target bytes。禁止 decode/encode、EOL normalization、formatter 或表外代码差异。
+`verification/verify_extraction.py` 必须用 `subprocess.check_output(["git", "-C", str(target_root), "cat-file", "blob", f"{frozen_sha}:{source_path}"])` 取得 frozen bytes；`target_root` 必须是验证器当前 target/review repository 的解析绝对路径。所有 `byte_identical keep/move` 逐 bytes 等于 target `read_bytes()`。所有 path-only `keep_then_synthesize` 与第 3.1–3.3 节 moved Python/CMD files 必须按下表顺序对 frozen bytes 执行 `bytes.count(old)`、断言 exact count、再执行 `bytes.replace(old, new)`；最终 bytes 必须等于 target bytes。禁止 decode/encode、EOL normalization、formatter 或表外代码差异。
 
 `EXP_SCOPE` 是第 3.1 节 14 个 exact sources、第 3.2 节 12 个 Python test exact sources与 `run_slim_v2.cmd` 的并集；source→target 由各节逐行决定。下表 count 是整个 exact scope 的总 occurrence count，验证器还必须按每个 source→target 独立生成 expected bytes：
 
@@ -888,7 +896,7 @@ benchmarks/paper/paper_suite_scale_profile.v1.json
 
 | Exact path / selector | 原因 |
 |---|---|
-| top-level `paper/**` | 整个 workspace 完全排除；不得读取、复制、验证或审查，final target `git ls-files -- 'paper/**'` 必须为空。此规则不匹配必须保留并迁移的 `benchmarks/paper/**` |
+| top-level `paper/**` | 整个 workspace 完全排除；不得读取、复制、验证或审查，final target `git -C $targetRoot ls-files -- 'paper/**'` 必须为空。此规则不匹配必须保留并迁移的 `benchmarks/paper/**` |
 | `Doc/SlimV2/**` | 工程代号、阶段/修复/relay 过程文档；不原样进入公开分支 |
 | `progress.md`、`feature_list.json`、`session-handoff.md` | 开发过程状态，不是公开事实 |
 | `init.ps1`、`init.sh` | 旧全局/Full/LeanAudit launcher |
@@ -922,7 +930,7 @@ benchmarks/paper/paper_suite_scale_profile.v1.json
 3. monkeypatch `tokenshare.experiments.reducer._commit_staged_metrics` 为立即抛错 tripwire；任何调用都使验证失败；
 4. 仅调用 `_reduce_run_staged(raw_root, {})`，捕获 5 CSV + 5 JSONL + `summary.json` 共 11 payload；逐 target relative path、逐 bytes 与 Git 发布 metrics 比较；
 5. 禁止调用 `reduce_run()`；静态检查脚本 AST/源码也必须证明不存在该 call；
-6. `--verify-worktree-index` 对 12 个 target paths 读取 working bytes 与 binary `git cat-file blob` index bytes，逐项比较 baseline SHA-256/size；working/cached `git check-attr text eol` 都必须为 `text: unset`、`eol: unspecified`；禁止 PowerShell text pipeline 承接 blob；
+6. `--verify-worktree-index` 对 12 个 target paths 读取 working bytes 与通过当前 target/review repo 显式 `git -C` 的 binary `cat-file blob` index bytes，逐项比较 baseline SHA-256/size；working/cached attributes 同样通过该显式 repository root 检查，且都必须为 `text: unset`、`eol: unspecified`；禁止 PowerShell text pipeline 承接 blob；
 7. 运行前后复核 raw 非 metrics file count/bytes 与 critical-file count/manifest SHA-256；任一变化即失败。两个 opaque metadata fingerprints 只作 historical evidence，不重算、不作 gate；
 8. raw 缺失时默认仍检查 Git result manifest、working/index bytes 和 attributes；显式 `--require-raw` 才要求 raw 存在。Task H fresh checkout 必须运行 `--verify-worktree-index`，证明 checkout bytes/index blobs 仍与 baseline 相同。
 
@@ -1056,6 +1064,14 @@ function Assert-RepoPythonImport {
     conda run -n tokenshare python -c "from pathlib import Path; import tokenshare; actual=Path(tokenshare.__file__).resolve(); expected=Path(r'$expectedPackageRoot').resolve(); assert actual.parent == expected, f'wrong tokenshare import: {actual} != {expected}'"
     if ($LASTEXITCODE -ne 0) { throw "tokenshare import escaped repository root: $resolvedRepoRoot" }
 }
+
+function Assert-NativeSuccess {
+    param(
+        [Parameter(Mandatory = $true)][int]$ExitCode,
+        [Parameter(Mandatory = $true)][string]$Step
+    )
+    if ($ExitCode -ne 0) { throw "$Step failed with exit code $ExitCode" }
+}
 ```
 
 ### 11.1 Corpus gate
@@ -1063,7 +1079,9 @@ function Assert-RepoPythonImport {
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/verify_authoritative_corpus.py
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'corpus identity verifier'
 conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_corpus.py -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'corpus focused pytest'
 ```
 
 期望：第 3.4、4、7 节完整 arrays/identity/file SHA/sidecar mapping 全部对等；不是抽样。
@@ -1073,7 +1091,9 @@ conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_co
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/run_verification.py --focused system
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'system verification gate'
 conda run -n tokenshare python -m compileall -q src/tokenshare tests/core tests/storage tests/local_runtime tests/plugins tests/executors
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'system compileall gate'
 ```
 
 期望：core/storage/local runtime/Factorization、Lean 纯合同、executor transport/descriptor/deterministic/mock 通过；Factorization k>1 纵向路径通过；network=0；不执行真实 Lean checker。
@@ -1083,8 +1103,11 @@ conda run -n tokenshare python -m compileall -q src/tokenshare tests/core tests/
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/run_verification.py --focused experiments
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'experiments verification gate'
 conda run -n tokenshare python -m compileall -q src/tokenshare/experiments tests/experiments verification
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'experiments compileall gate'
 conda run -n tokenshare python -m tokenshare.experiments.cli plan --profile full --run-id extraction-target-plan
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'experiments full-plan gate'
 ```
 
 期望：12 moved tests + corpus test、fake Exp1–5、resume、reducer golden、GUI/CLI/import 通过；plan 完整数组与第 4 节相等，`full_root_identities`/`full_reference_identities` 的 items、canonical bytes 与 SHA 全部一致；Exp2–4 provider calls=0；network=0。
@@ -1111,8 +1134,10 @@ if ($proc.ExitCode -ne 0) { throw "Lean checker smoke failed with exit code $($p
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/verify_official_results.py --raw-root 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline\TokenShareData\outputs\slim_v2\slim-v2-full-flash-20260823-233000-b4c8e951' --require-raw --verify-worktree-index
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'official-results gate'
 conda run -n tokenshare python verification/verify_extraction.py --frozen-sha $frozenSha
-$paperTracked = @(git ls-files -- 'paper/**')
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'extraction gate'
+$paperTracked = @(git -C $targetRoot ls-files -- 'paper/**')
 if ($LASTEXITCODE -ne 0 -or $paperTracked.Count -ne 0) { throw 'top-level paper workspace is tracked in target' }
 ```
 
@@ -1122,11 +1147,11 @@ if ($LASTEXITCODE -ne 0 -or $paperTracked.Count -ne 0) { throw 'top-level paper 
 
 ```powershell
 $manifestPath = 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-manifest.md'
-$manifestCommit = git log -1 --format=%H $frozenSha -- $manifestPath
+$manifestCommit = git -C $sourceRoot log -1 --format=%H $frozenSha -- $manifestPath
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($manifestCommit)) { throw 'cannot resolve manifest commit' }
-git show --check --oneline $manifestCommit -- $manifestPath
+git -C $sourceRoot show --check --oneline $manifestCommit -- $manifestPath
 if ($LASTEXITCODE -ne 0) { throw 'committed manifest patch has whitespace errors' }
-$manifestText = @(git show "$manifestCommit`:$manifestPath")
+$manifestText = @(git -C $sourceRoot show "$manifestCommit`:$manifestPath")
 if ($LASTEXITCODE -ne 0 -or $manifestText.Count -eq 0) { throw 'cannot read committed manifest from frozen history' }
 $anglePattern = ([char]60) + '[^' + ([char]62) + ']+' + ([char]62)
 $wordPattern = @(('TO' + 'DO'), ('T' + 'BD'), ('FIX' + 'ME'), (([char]31867) + ([char]20284) + ([char]25991) + ([char]20214)), (([char]30456) + ([char]20851) + ([char]27979) + ([char]35797))) -join '|'
@@ -1149,7 +1174,7 @@ foreach ($target in $mustSynthesize) {
 }
 ```
 
-该 gate 从 target/review worktree 执行，但 `$manifestCommit` 的 history search 被 `$frozenSha` 限定，且扫描文本来自 `git show "$manifestCommit`:$manifestPath"`；即使后续 Task B commit 删除该 path，empty-tree deletion 也不能成为解析结果，final target 无需 tracked `Doc/SlimV2`。期望 `git show --check --oneline $manifestCommit -- $manifestPath` 退出码 0；角括号占位、禁用词、allowlist wildcard、abbreviated SHA 与 synthesized-target contradiction 扫描均无输出。不得以 mutable `HEAD`、target working path 或 clean working tree 的 `git diff --check` 代替该 frozen-history committed-content 检查。
+该 gate 从 target/review worktree 执行，但 `$manifestCommit` 的 history search 被 `$frozenSha` 限定，且扫描文本来自 `git -C $sourceRoot show "$manifestCommit`:$manifestPath"`；即使后续 Task B commit 删除该 path，empty-tree deletion 也不能成为解析结果，final target 无需 tracked `Doc/SlimV2`。期望 `git -C $sourceRoot show --check --oneline $manifestCommit -- $manifestPath` 退出码 0；角括号占位、禁用词、allowlist wildcard、abbreviated SHA 与 synthesized-target contradiction 扫描均无输出。不得以 mutable `HEAD`、target working path 或 clean working tree 的 `git -C $sourceRoot diff --check` 代替该 frozen-history committed-content 检查。
 
 ## 12. `minimum_dependency_request`
 
@@ -1171,19 +1196,19 @@ foreach ($target in $mustSynthesize) {
 批准前必须重新执行：
 
 ```powershell
-$frozenSha = git rev-parse 'experiments-pre-cleanup-20260827^{}'
+$frozenSha = git -C $sourceRoot rev-parse 'experiments-pre-cleanup-20260827^{}'
 if ($LASTEXITCODE -ne 0) { throw 'cannot resolve peeled freeze SHA' }
-$freezeType = git cat-file -t 'experiments-pre-cleanup-20260827'
+$freezeType = git -C $sourceRoot cat-file -t 'experiments-pre-cleanup-20260827'
 if ($LASTEXITCODE -ne 0 -or $freezeType -ne 'tag') { throw 'not annotated' }
 $request = Get-Content -LiteralPath 'Doc/Experiments/dependency-requests/current.json' -Encoding UTF8 | ConvertFrom-Json
 $path = [string]$request.path
 if ([string]::IsNullOrWhiteSpace($path)) { throw 'dependency path is required' }
-git cat-file -e "$frozenSha`:$path"
+git -C $sourceRoot cat-file -e "$frozenSha`:$path"
 if ($LASTEXITCODE -ne 0) { throw "dependency path is absent from peeled SHA: $path" }
 if ($null -ne $request.symbol) {
     $symbol = [string]$request.symbol
     if ([string]::IsNullOrWhiteSpace($symbol)) { throw 'dependency symbol must be nonempty when present' }
-    $blobLines = @(git cat-file blob "$frozenSha`:$path")
+    $blobLines = @(git -C $sourceRoot cat-file blob "$frozenSha`:$path")
     if ($LASTEXITCODE -ne 0) { throw "cannot inspect dependency blob: $path" }
     $symbolHit = @($blobLines | Select-String -SimpleMatch -Pattern $symbol)
     if ($symbolHit.Count -eq 0) { throw "exact dependency symbol is absent from frozen blob: $symbol" }

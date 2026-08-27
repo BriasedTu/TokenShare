@@ -68,6 +68,14 @@ function Assert-RepoPythonImport {
     conda run -n tokenshare python -c "from pathlib import Path; import tokenshare; actual=Path(tokenshare.__file__).resolve(); expected=Path(r'$expectedPackageRoot').resolve(); assert actual.parent == expected, f'wrong tokenshare import: {actual} != {expected}'"
     if ($LASTEXITCODE -ne 0) { throw "tokenshare import escaped repository root: $resolvedRepoRoot" }
 }
+
+function Assert-NativeSuccess {
+    param(
+        [Parameter(Mandatory = $true)][int]$ExitCode,
+        [Parameter(Mandatory = $true)][string]$Step
+    )
+    if ($ExitCode -ne 0) { throw "$Step failed with exit code $ExitCode" }
+}
 ```
 
 除带有明确 `git -C` 或绝对脚本路径的命令外，Task D–G 的相对路径命令必须在 `Push-Location $targetRoot` 与 `Pop-Location` 之间执行；Task H 的验证命令必须在 `Push-Location $reviewRoot` 与 `Pop-Location` 之间执行。这样 Python 的 repository root、fixture 相对路径和 import 根都来自被验证的工作树，而不是来源工作树。
@@ -129,7 +137,8 @@ function Assert-RepoPythonImport {
 - [x] 已运行文档自检并通过：
 
 ```powershell
-git diff --check -- 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-manifest.md'
+git -C $sourceRoot diff --check -- 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-manifest.md'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'manifest diff check'
 $forbiddenTerms = @(('TO' + 'DO'), ('T' + 'BD'), ('FIX' + 'ME'), (([char]31867) + ([char]20284) + ([char]25991) + ([char]20214)), (([char]30456) + ([char]20851) + ([char]27979) + ([char]35797))) -join '|'
 Select-String -Path 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-manifest.md' -Encoding UTF8 -Pattern $forbiddenTerms
 ```
@@ -156,7 +165,7 @@ Manifest 初始提交为 `bbbfd6587e9a234e7371a62d60c0d83c2f524c3c`；随后 man
 
 ```powershell
 $rawFreezeCommit = '342971a7247ffb88dc599dd436e34e3ed10403cd'
-git merge-base --is-ancestor $rawFreezeCommit HEAD
+git -C $sourceRoot merge-base --is-ancestor $rawFreezeCommit HEAD
 if ($LASTEXITCODE -ne 0) { throw 'raw-byte freeze commit is not an ancestor of current HEAD' }
 ```
 
@@ -168,27 +177,31 @@ if ($LASTEXITCODE -ne 0) { throw 'raw-byte freeze commit is not an ancestor of c
 
 ```powershell
 conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_reducer_golden.py -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'source reducer golden pytest'
 conda run -n tokenshare python -m compileall -q src/tokenshare/experiments/slim_v2/reducer.py
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'source reducer compileall'
 ```
 
 预期：pytest 退出码 0（当前已知基线为 40 passed，若数量不同必须解释收集差异）；compileall 退出码 0。
 
 - [x] Harness/docs source topics 已按真实意图提交，`progress.md` 的其他工作未被抹除。
 
-- [x] 各已完成 source topic 在提交前核验 cached paths；当前非顶层 `paper/**` 的 tracked/untracked 工作树为空。后续提交继续只用 `git diff --quiet -- . ':(exclude)paper/**'` 与 `git ls-files --others --exclude-standard -- . ':(exclude)paper/**'` 复核，不运行会枚举顶层排除项的裸 status 命令。
+- [x] 各已完成 source topic 在提交前核验 cached paths；当前非顶层 `paper/**` 的 tracked/untracked 工作树为空。后续提交继续只用 `git -C $sourceRoot diff --quiet -- . ':(exclude)paper/**'` 与 `git -C $sourceRoot ls-files --others --exclude-standard -- . ':(exclude)paper/**'` 复核，不运行会枚举顶层排除项的裸 status 命令。
 
 - [ ] 冻结前只要求来源 index 为空且顶层 `paper/**` 之外的工作树干净。用 pathspec 排除顶层 `paper/**`，不得为了通过 guard 读取、提交、暂存、恢复或移动其中内容：
 
 ```powershell
-$sourceCached = @(git diff --cached --name-only)
+$sourceCached = @(git -C $sourceRoot diff --cached --name-only)
 if ($LASTEXITCODE -ne 0 -or $sourceCached.Count -ne 0) { throw 'source index must be empty before freeze' }
-git diff --quiet -- . ':(exclude)paper/**'
+git -C $sourceRoot diff --quiet -- . ':(exclude)paper/**'
 if ($LASTEXITCODE -eq 1) { throw 'tracked non-paper worktree changes remain' }
 if ($LASTEXITCODE -ne 0) { throw "cannot inspect tracked non-paper status: exit $LASTEXITCODE" }
-$sourceUntracked = @(git ls-files --others --exclude-standard -- . ':(exclude)paper/**')
+$sourceUntracked = @(git -C $sourceRoot ls-files --others --exclude-standard -- . ':(exclude)paper/**')
 if ($LASTEXITCODE -ne 0 -or $sourceUntracked.Count -ne 0) { throw 'untracked non-paper worktree changes remain' }
-$preBaselineSourceSha = git rev-parse HEAD
-git show --no-patch --format='%H %s' $preBaselineSourceSha
+$preBaselineSourceSha = git -C $sourceRoot rev-parse HEAD
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'resolve pre-baseline source commit'
+git -C $sourceRoot show --no-patch --format='%H %s' $preBaselineSourceSha
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'show pre-baseline source commit'
 ```
 
 预期：index 为空、非 `paper/**` tracked/untracked status 为空；show 返回 `pre_baseline_source_sha` 及最后一个来源主题提交。顶层 `paper/**` 可以继续变化。
@@ -216,6 +229,7 @@ git show --no-patch --format='%H %s' $preBaselineSourceSha
 
 ```powershell
 conda run -n tokenshare python -m tokenshare.experiments.slim_v2.cli plan --profile full --run-id extraction-baseline-plan
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'source baseline plan'
 ```
 
 预期：退出码 0，输出/落盘 plan 可被 baseline reader 解析；不得增加当前 source CLI 未实现的格式化参数。
@@ -225,11 +239,16 @@ conda run -n tokenshare python -m tokenshare.experiments.slim_v2.cli plan --prof
 - [ ] 提交两份 baseline 文件：
 
 ```powershell
-git add -- 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-baseline.md' 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-baseline.json'
-git diff --cached --name-only
-git commit -m 'docs(experiments): record extraction baseline'
-$baselineCommit = git rev-parse HEAD
-$baselineParent = git rev-parse "$baselineCommit^"
+git -C $sourceRoot add -- 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-baseline.md' 'Doc/SlimV2/2026-08-27-experiments-clean-extraction-baseline.json'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'stage baseline documents'
+git -C $sourceRoot diff --cached --name-only
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'inspect staged baseline documents'
+git -C $sourceRoot commit -m 'docs(experiments): record extraction baseline'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'commit extraction baseline'
+$baselineCommit = git -C $sourceRoot rev-parse HEAD
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'resolve baseline commit'
+$baselineParent = git -C $sourceRoot rev-parse "$baselineCommit^"
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'resolve baseline parent'
 if ($baselineParent -ne $preBaselineSourceSha) { throw "baseline parent $baselineParent does not match pre-baseline evidence $preBaselineSourceSha" }
 ```
 
@@ -239,19 +258,19 @@ if ($baselineParent -ne $preBaselineSourceSha) { throw "baseline parent $baselin
 
 ```powershell
 $tagRef = "refs/tags/$freezeTag"
-git show-ref --verify --quiet $tagRef
+git -C $sourceRoot show-ref --verify --quiet $tagRef
 $tagExistsExit = $LASTEXITCODE
 if ($tagExistsExit -eq 0) { throw "freeze tag already exists: $tagRef" }
 if ($tagExistsExit -ne 1) { throw "cannot inspect freeze tag: exit $tagExistsExit" }
-$baselineCommit = git rev-parse HEAD
+$baselineCommit = git -C $sourceRoot rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($baselineCommit)) { throw 'cannot resolve baseline commit' }
-git tag -a $freezeTag $baselineCommit -m 'Freeze source for experiments clean extraction on 2026-08-27'
+git -C $sourceRoot tag -a $freezeTag $baselineCommit -m 'Freeze source for experiments clean extraction on 2026-08-27'
 if ($LASTEXITCODE -ne 0) { throw 'annotated freeze tag creation failed' }
-$freezeType = git cat-file -t $tagRef
+$freezeType = git -C $sourceRoot cat-file -t $tagRef
 if ($LASTEXITCODE -ne 0 -or $freezeType -ne 'tag') { throw 'freeze ref is not an annotated tag object' }
-$tagObjectSha = git rev-parse $tagRef
+$tagObjectSha = git -C $sourceRoot rev-parse $tagRef
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagObjectSha)) { throw 'cannot resolve tag object SHA' }
-$peeledSha = git rev-parse "$tagRef^{}"
+$peeledSha = git -C $sourceRoot rev-parse "$tagRef^{}"
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($peeledSha)) { throw 'cannot resolve peeled commit SHA' }
 if ($peeledSha -ne $baselineCommit) { throw "freeze tag peeled to $peeledSha, expected baseline commit $baselineCommit" }
 $frozenSha = $peeledSha
@@ -436,6 +455,7 @@ if ($LASTEXITCODE -ne 0 -or $postSkeletonStatus.Count -ne 0) { throw 'target wor
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python -m pytest tests/executors/test_ai_api_descriptor.py -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'descriptor RED pytest'
 ```
 
 预期：因 `descriptors.py` 尚不存在或 adapter 尚未改接而失败；失败原因必须与预期一致。
@@ -449,8 +469,11 @@ conda run -n tokenshare python -m pytest tests/executors/test_ai_api_descriptor.
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python -m pytest tests/executors/test_ai_api_descriptor.py -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'descriptor GREEN pytest'
 conda run -n tokenshare python -m pytest tests/core tests/storage tests/local_runtime tests/plugins/factorization -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'target system focused pytest'
 conda run -n tokenshare python -m compileall -q src/tokenshare
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'target system compileall'
 ```
 
 预期：全部退出码 0。Lean 相关纯合同测试按 manifest 单独运行；本阶段不运行全量 catalog。
@@ -467,8 +490,11 @@ Get-ChildItem -LiteralPath "$targetRoot\src" -Recurse -File | Select-String -Enc
 
 ```powershell
 git -C $targetRoot add -- 'src/tokenshare' 'tests/core' 'tests/storage' 'tests/local_runtime' 'tests/plugins' 'tests/executors'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'stage Task D system extraction'
 git -C $targetRoot diff --cached --name-only
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'inspect Task D staged paths'
 git -C $targetRoot commit -m 'refactor(system): extract protocol runtime and plugin core'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'commit Task D system extraction'
 ```
 
 ## 7. Task E：迁移正式题库、语义权威和 provider 配置
@@ -510,9 +536,13 @@ git -C $targetRoot commit -m 'refactor(system): extract protocol runtime and plu
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_corpus.py -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'authoritative corpus pytest'
 conda run -n tokenshare python verification/verify_authoritative_corpus.py
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'authoritative corpus verifier'
 conda run -n tokenshare python -m pytest tests/plugins/lean_proof/test_lean_environment.py tests/plugins/lean_proof/test_lean_fixture_project_manifest.py tests/plugins/lean_proof/test_lean_preflight.py -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Lean corpus path pytest'
 git -C $targetRoot diff --check
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task E diff check'
 ```
 
 预期：全部退出码 0；题库测试与独立 verifier 都证明完整 case/selection/identity arrays/count/canonical bytes/SHA 对等，不只是文件存在。
@@ -523,7 +553,9 @@ git -C $targetRoot diff --check
 
 ```powershell
 git -C $targetRoot add -- 'benchmarks/experiments' 'configs/experiments' 'src/tokenshare/plugins' 'tests/experiments/test_authoritative_corpus.py' 'tests/plugins/lean_proof' 'verification/verify_authoritative_corpus.py' 'Doc/Experiments'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'stage Task E corpus extraction'
 git -C $targetRoot commit -m 'data(experiments): preserve authoritative corpora and configs'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'commit Task E corpus extraction'
 ```
 
 ## 8. Task F：抽取并公开当前实验设施
@@ -559,8 +591,11 @@ git -C $targetRoot commit -m 'data(experiments): preserve authoritative corpora 
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python -m pytest tests/experiments -q
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'target experiments pytest'
 conda run -n tokenshare python -m compileall -q src/tokenshare/experiments
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'target experiments compileall'
 conda run -n tokenshare python -m tokenshare.experiments.cli plan --profile full --run-id extraction-target-plan
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'target experiments plan'
 ```
 
 预期：pytest 与 compileall 退出码 0；plan 输出中的 case 集、选择摘要和 provider-call bounds 与 baseline JSON 逐字段一致，公开路径只出现在路径字段中。CLI 不使用未实现的格式化参数。
@@ -582,7 +617,9 @@ Get-ChildItem -LiteralPath "$targetRoot\tests" -Recurse -File | Select-String -E
 
 ```powershell
 git -C $targetRoot add -- 'src/tokenshare/experiments' 'tests/experiments' 'run_experiments.cmd' 'README.md' 'REPRODUCIBILITY.md' 'Doc/Experiments' 'verification'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'stage Task F experiments extraction'
 git -C $targetRoot commit -m 'refactor(experiments): publish the current experiment facility'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'commit Task F experiments extraction'
 ```
 
 ## 9. Task G：保留正式结果和最小验证 harness
@@ -652,9 +689,12 @@ if ($LASTEXITCODE -ne 0) { throw 'official result working/index byte gate failed
 ```powershell
 Assert-RepoPythonImport -RepoRoot $targetRoot
 conda run -n tokenshare python verification/verify_official_results.py --raw-root 'E:\TokenEcnomic\TokenShareWorktrees\slim-v2-baseline\TokenShareData\outputs\slim_v2\slim-v2-full-flash-20260823-233000-b4c8e951' --require-raw --verify-worktree-index
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task G official-results gate'
 conda run -n tokenshare python verification/verify_authoritative_corpus.py
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task G authoritative-corpus gate'
 conda run -n tokenshare python verification/verify_extraction.py --frozen-sha $frozenSha
-$paperTracked = @(git ls-files -- 'paper/**')
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task G extraction gate'
+$paperTracked = @(git -C $targetRoot ls-files -- 'paper/**')
 if ($LASTEXITCODE -ne 0 -or $paperTracked.Count -ne 0) { throw 'top-level paper workspace must be absent from target' }
 ```
 
@@ -666,8 +706,11 @@ if ($LASTEXITCODE -ne 0 -or $paperTracked.Count -ne 0) { throw 'top-level paper 
 
 ```powershell
 git -C $targetRoot add -- 'results/experiments' 'verification' 'Doc/Experiments/code-map.md' 'README.md' 'RESULTS.md' 'REPRODUCIBILITY.md' 'AGENTS.md'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task G final staging'
 git -C $targetRoot diff --cached --name-only
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task G cached-path inspection'
 git -C $targetRoot commit -m 'data(experiments): preserve formal results and verification harness'
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task G commit'
 ```
 
 ## 10. Task H：干净检出验证与三路最终评审
@@ -682,9 +725,13 @@ git -C $targetRoot commit -m 'data(experiments): preserve formal results and ver
 ```powershell
 $reviewRoot = 'E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-review'
 if (Test-Path -LiteralPath $reviewRoot) { throw "review path already exists: $reviewRoot" }
-$targetSha = git -C $targetRoot rev-parse HEAD
-git worktree add --detach -- $reviewRoot $targetSha
-git -C $reviewRoot status --porcelain=v1
+$targetShaLines = @(git -C $targetRoot rev-parse HEAD)
+if ($LASTEXITCODE -ne 0 -or $targetShaLines.Count -ne 1 -or $targetShaLines[0].Trim() -notmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw 'cannot resolve target SHA for review worktree' }
+$targetSha = $targetShaLines[0].Trim()
+git -C $targetRoot worktree add --detach -- $reviewRoot $targetSha
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task H detached review worktree creation'
+$reviewStatus = @(git -C $reviewRoot status --porcelain=v1)
+if ($LASTEXITCODE -ne 0 -or $reviewStatus.Count -ne 0) { throw 'review worktree is not clean after creation' }
 ```
 
 预期：review status 无输出。
@@ -698,10 +745,15 @@ Assert-RepoPythonImport -RepoRoot $reviewRoot
 conda run -n tokenshare python -c "import sys; from pathlib import Path; blocked={Path(r'$sourceRoot').resolve(),Path(r'$targetRoot').resolve()}; actual={Path(p).resolve() for p in sys.path if p}; assert blocked.isdisjoint(actual), f'cross-worktree sys.path contamination: {blocked & actual}'"
 if ($LASTEXITCODE -ne 0) { throw 'review Python path isolation failed' }
 conda run -n tokenshare python -m compileall -q "$reviewRoot\src" "$reviewRoot\tests" "$reviewRoot\verification"
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task H compileall gate'
 conda run -n tokenshare python "$reviewRoot\verification\run_verification.py" --focused system
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task H system gate'
 conda run -n tokenshare python "$reviewRoot\verification\run_verification.py" --focused experiments
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task H experiments gate'
 conda run -n tokenshare python "$reviewRoot\verification\verify_official_results.py" --verify-worktree-index
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task H official-results gate'
 conda run -n tokenshare python "$reviewRoot\verification\verify_extraction.py" --frozen-sha $frozenSha
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task H extraction gate'
 ```
 
 预期：全部退出码 0；system gate 包含 protocol/store/replay、Factorization 多 worker；experiments gate 包含 corpus、plan、fake vertical、resume、reducer golden、网络 tripwire 0 calls；official result gate 在 fresh checkout、没有 raw 时仍逐项验证 12 个 working/index blobs 的 SHA-256/size 与 32 条 `.gitattributes` 规则。
@@ -732,7 +784,8 @@ Get-ChildItem -LiteralPath $runtimePaths -Recurse -File | Select-String -Encodin
 ```powershell
 $resolvedReviewRoot = (Resolve-Path -LiteralPath $reviewRoot).Path
 if ($resolvedReviewRoot -ne $reviewRoot) { throw "unexpected review path: $resolvedReviewRoot" }
-git worktree remove -- $reviewRoot
+git -C $targetRoot worktree remove -- $reviewRoot
+Assert-NativeSuccess -ExitCode $LASTEXITCODE -Step 'Task H detached review worktree removal'
 ```
 
 预期：worktree remove 成功；目标 writer worktree保留，来源 worktree未改变。
