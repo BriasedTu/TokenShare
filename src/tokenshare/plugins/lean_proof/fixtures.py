@@ -198,7 +198,13 @@ class LeanUnsupportedDecompositionFixtureFlowResult:
 
 
 def default_lean_fixture_project_path() -> Path:
-    return Path(__file__).resolve().parents[4] / "fixtures" / "lean_proof_project"
+    return (
+        Path(__file__).resolve().parents[4]
+        / "benchmarks"
+        / "experiments"
+        / "fixtures"
+        / "lean_proof_project"
+    )
 
 
 def build_lean_fixture_manifest(

@@ -24,7 +24,7 @@ LEAN_TEXT_NORMALIZATION = "utf8_lf.v1"
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_LEAN_SEMANTIC_AUTHORITY_PATH = (
     _REPOSITORY_ROOT
-    / "benchmarks/paper/lean_environment_semantic_authority.v1.json"
+    / "benchmarks/experiments/lean_environment_semantic_authority.v1.json"
 )
 
 _RAW_AUTHORITY_PATHS = {
@@ -32,20 +32,48 @@ _RAW_AUTHORITY_PATHS = {
     "graph_catalog": "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl",
     "preflight_manifest": "benchmarks/paper/lean_checker_preflight.v1.json",
 }
-_ENVIRONMENT_SOURCE_PATHS = (
-    "fixtures/lean_proof_project/lean-toolchain",
-    "fixtures/lean_proof_project/lakefile.lean",
-    "fixtures/lean_proof_project/TokenShare.lean",
-    "fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean",
-    "fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean",
-    "fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean",
-    "fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean",
-    "fixtures/lean_proof_project/TokenShare/Helper.lean",
-    "fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean",
-    "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean",
-    "fixtures/lean_proof_project/TokenShare/Merge.lean",
-    "fixtures/lean_proof_project/TokenShare/SplitRules.lean",
-)
+_RAW_AUTHORITY_LOGICAL_TO_PHYSICAL = {
+    logical: logical.replace("benchmarks/paper/", "benchmarks/experiments/")
+    for logical in _RAW_AUTHORITY_PATHS.values()
+}
+_ENVIRONMENT_SOURCE_PATHS = {
+    "fixtures/lean_proof_project/lean-toolchain": (
+        "benchmarks/experiments/fixtures/lean_proof_project/lean-toolchain"
+    ),
+    "fixtures/lean_proof_project/lakefile.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/lakefile.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/Helper.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Helper.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/Merge.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/Merge.lean"
+    ),
+    "fixtures/lean_proof_project/TokenShare/SplitRules.lean": (
+        "benchmarks/experiments/fixtures/lean_proof_project/TokenShare/SplitRules.lean"
+    ),
+}
 _CHECKER_SOURCE_PATHS = (
     "src/tokenshare/plugins/lean_proof/checker.py",
 )
@@ -73,7 +101,7 @@ def load_lean_semantic_authority(
 
     root = Path(repository_root or _REPOSITORY_ROOT).resolve()
     path = (
-        root / "benchmarks/paper/lean_environment_semantic_authority.v1.json"
+        root / "benchmarks/experiments/lean_environment_semantic_authority.v1.json"
         if sidecar_path is None
         else Path(sidecar_path)
     )
@@ -140,8 +168,8 @@ def semantic_environment_projection(
 
     root = Path(repository_root).resolve()
     files = {
-        relative: normalized_text_digest(root / relative)
-        for relative in _ENVIRONMENT_SOURCE_PATHS
+        logical: normalized_text_digest(root / physical)
+        for logical, physical in _ENVIRONMENT_SOURCE_PATHS.items()
     }
     body: JsonObject = {
         "schema_version": LEAN_SEMANTIC_PROJECTION_SCHEMA_VERSION,
@@ -199,19 +227,30 @@ def _validate_v1_authority(
     raw_digests: dict[str, str] = {}
     for relative in _RAW_AUTHORITY_PATHS.values():
         expected = _require_digest(f"raw authority {relative}", raw_files[relative])
-        actual = _bytes_digest((repository_root / relative).read_bytes())
+        actual = _bytes_digest(
+            (repository_root / _RAW_AUTHORITY_LOGICAL_TO_PHYSICAL[relative]).read_bytes()
+        )
         if actual != expected:
             raise ValueError(f"v1 authority byte drift: {relative}")
         raw_digests[relative] = actual
 
-    direct_rows = _read_jsonl(repository_root / _RAW_AUTHORITY_PATHS["direct_catalog"])
-    graph_rows = _read_jsonl(repository_root / _RAW_AUTHORITY_PATHS["graph_catalog"])
+    direct_rows = _read_jsonl(
+        repository_root
+        / _RAW_AUTHORITY_LOGICAL_TO_PHYSICAL[_RAW_AUTHORITY_PATHS["direct_catalog"]]
+    )
+    graph_rows = _read_jsonl(
+        repository_root
+        / _RAW_AUTHORITY_LOGICAL_TO_PHYSICAL[_RAW_AUTHORITY_PATHS["graph_catalog"]]
+    )
     for row in direct_rows + graph_rows:
         if row.get("environment_digest") != environment_digest:
             raise ValueError("v1 authority environment_digest mismatch")
 
     preflight = _read_json_object(
-        repository_root / _RAW_AUTHORITY_PATHS["preflight_manifest"]
+        repository_root
+        / _RAW_AUTHORITY_LOGICAL_TO_PHYSICAL[
+            _RAW_AUTHORITY_PATHS["preflight_manifest"]
+        ]
     )
     if preflight.get("environment_digest") != environment_digest:
         raise ValueError("v1 preflight environment_digest mismatch")

@@ -1,0 +1,62 @@
+# Experiment design contract
+
+本文件是公开分支的实验设计摘要。详细开发历史已被清洗；本分支只保留运行冻结实验和核验正式结果所必需的系统、corpus、配置、结果与 harness。
+
+## 设计原则
+
+TokenShare experiments 是“冻结实验计划 + 现有系统本体 + 两种回答来源 + 普通增量输出 + 离线 reducer”。
+
+- 协议状态、租约、attempt、verification、canonical、merge、settlement 等行为由现有 TokenShare runtime 负责。
+- Factorization 与 Lean 领域语义由各自插件负责。
+- 实验层只负责枚举冻结 condition/root、选择回答来源、记录最小原始字段并离线汇总指标。
+- 公开分支不建立第二套协议真值，也不引入发布资格、预算审批或证据闭包。
+
+## 两种回答来源
+
+| 来源 | 使用范围 | 约束 |
+|---|---|---|
+| real-provider caller | Experiment 1 与 Experiment 5 | 只命中冻结 provider entry；保存 raw response、usage、latency、model identity；secret 不落盘 |
+| fixed-response trace executor | Experiment 2、3、4 | 只读 Experiment 1 per-unit trace；按 `case_id × source_repeat_id=0 × planned_ai_unit_id` 查找；provider calls 固定为 0 |
+
+fixed-response trace 缺少当前 ordinal 时，只能确定性回退到同一 trace 的最后一个自然 attempt；不得补调用、换模型或读取其他来源。
+
+## Experiment 1
+
+- 覆盖 Factorization 与 Lean 两个 domain。
+- 使用 DeepSeek Flash entry `deepseek_v4_flash_exp1_baseline`。
+- 每个 root 先运行完整协议生命周期并提交 root 结果。
+- 同 profile 下会被 Experiment 2–4 消费的 source roots 才执行 coverage tail；非 source roots 明确记录 `trace_tail_status=not_required_by_downstream`。
+- coverage tail 的时间、tokens、cost 单列，不进入 Experiment 1 正文 protocol runtime。
+
+## Experiment 2
+
+- 完整继承 Experiment 1 的 task split、planned AI units、prompt 与依赖。
+- 唯一实验变量是 worker count。
+- 运行使用 fixed-response trace executor，不调用 provider。
+- speedup 和效率指标使用逻辑调度器观测值，不从真实 provider latency 重跑。
+
+## Experiment 3
+
+- 使用冻结五类 rate fault：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。
+- worker death 是单独预注册实验条件，不是新增 fault type。
+- token/latency 采用冻结扰动公式，正文资源为 simulated trace-attributed。
+- 运行仍只复用 Experiment 1 trace，不调用 provider。
+
+## Experiment 4
+
+- 使用 FULL、四个单机制关闭、六个双机制关闭，共 11 个 modes。
+- challenge plan 在 mode 展开前按 `case_id × repeat_id` 固定；注入器不能读取 mode。
+- outcome 必须来自实际 route/event/artifact/checker 证据，不能由 mode 配置反推。
+- `{R,M}` 使用 `RECOVERY_MERGE_FIRST`：premature merge 抢先时 recovery 观察记为 preempted，不能双计 stuck。
+
+## Experiment 5
+
+- 使用 SiliconFlow 三个冻结 endpoint：`zai-org/GLM-5.2`、`Qwen/Qwen3-14B`、`MiniMaxAI/MiniMax-M2.5`。
+- 每个 AI unit 最多一次 provider attempt。
+- 记录 provider usage、latency、model identity、pricing version 与 cost estimate。
+
+## 输出模型
+
+每个预注册 root 至少写一行普通 JSONL。单 root 的 provider failure、parse failure、verifier/checker rejection、retry exhaustion 或 no-final 都必须保留固定身份与失败分类；不得通过删除失败样本改变分母。
+
+基础设施错误与实验失败分开记录。Lean checker 的 `environment_error`、`timeout`、`helper_error` 属于 infrastructure-invalid；环境正常时的 proof rejection 属于实验结果。

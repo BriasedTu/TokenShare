@@ -167,9 +167,13 @@ def build_lean_environment_ref(
         "lake_project_root": manifest.project_root,
     }
     project_root = Path(manifest.project_root).resolve()
-    repository_root = project_root.parents[1]
-    sidecar_path = repository_root / DEFAULT_LEAN_SEMANTIC_AUTHORITY_PATH.name
-    sidecar_path = repository_root / "benchmarks/paper" / sidecar_path.name
+    repository_root = _repository_root_from_project_root(project_root)
+    sidecar_path = (
+        repository_root
+        / "benchmarks"
+        / "experiments"
+        / DEFAULT_LEAN_SEMANTIC_AUTHORITY_PATH.name
+    )
     if sidecar_path.is_file():
         authority = load_lean_semantic_authority(repository_root=repository_root)
         if (
@@ -211,6 +215,17 @@ def build_lean_environment_ref(
         clock_policy="fixed",
         created_at=manifest.created_at,
     )
+
+
+def _repository_root_from_project_root(project_root: Path) -> Path:
+    parts = project_root.parts
+    public_suffix = ("benchmarks", "experiments", "fixtures", "lean_proof_project")
+    if len(parts) >= len(public_suffix) and tuple(parts[-4:]) == public_suffix:
+        return project_root.parents[3]
+    legacy_suffix = ("fixtures", "lean_proof_project")
+    if len(parts) >= len(legacy_suffix) and tuple(parts[-2:]) == legacy_suffix:
+        return project_root.parents[1]
+    return project_root.parent
 
 
 def _validate_manifest_matches_current_project(
