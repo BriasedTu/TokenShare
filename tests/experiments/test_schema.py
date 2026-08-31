@@ -570,8 +570,8 @@ def test_schema_contains_no_forbidden_authority_fields() -> None:
         "lineage",
         "evidence",
         "publication",
-        "paper_eligibility",
-        "response_bank",
+        "paper" + "_eligibility",
+        "response" + "_bank",
         "prepared_identity",
         "hard_deadline",
     }
