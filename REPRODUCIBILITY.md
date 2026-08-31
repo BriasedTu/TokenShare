@@ -10,7 +10,7 @@ python -m venv .venv
 $env:PYTHONPATH = (Resolve-Path .\src).Path
 ```
 
-The public extraction currently contains the retained system implementation, the `tokenshare.experiments` package, `benchmarks/experiments/`, `configs/experiments/`, `Doc/Experiments/`, focused offline tests, and the authoritative corpus verifier. Later extraction stages add `results/experiments/` and final result/publication verification gates.
+The public extraction contains the retained system implementation, the `tokenshare.experiments` package, `benchmarks/experiments/`, `configs/experiments/`, `Doc/Experiments/`, `results/experiments/`, focused offline tests, and final result/publication verification gates.
 
 ## Current focused checks
 
@@ -26,6 +26,18 @@ Verify the authoritative corpus and public path manifest:
 .\.venv\Scripts\python verification/verify_authoritative_corpus.py
 ```
 
+Verify the retained official result files against their byte sizes, SHA-256 digests, row counts, and Git index blobs:
+
+```powershell
+.\.venv\Scripts\python verification/verify_official_results.py --verify-worktree-index
+```
+
+Verify the clean extraction boundary, frozen tag identity, corpus, and result gates together:
+
+```powershell
+.\.venv\Scripts\python verification/verify_extraction.py
+```
+
 Run the focused offline experiment tests:
 
 ```powershell
@@ -33,5 +45,3 @@ Run the focused offline experiment tests:
 ```
 
 These checks use deterministic or fake executors. Do not supply real provider credentials unless a separate run is explicitly authorized.
-
-The official result manifest, result verifier, extraction boundary gate, and raw archive instructions are added by the result/publication extraction stages.

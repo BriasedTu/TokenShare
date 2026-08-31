@@ -1,0 +1,75 @@
+{
+  "schema_version": "tokenshare.experiments.clean_extraction_manifest.v1",
+  "source_tag": "experiments-pre-cleanup-20260827",
+  "tag_object_sha": "018ac5c4a960ea10838a79287221e62fad7b1ac7",
+  "peeled_commit_sha": "bb5e637785afb6bd5743e4d89af4c02ab0736204",
+  "pre_baseline_source_sha": "019972b6ef45b198202f9ea650d7a2fd144bbe5e",
+  "target_branch": "codex/experiments-clean-extraction",
+  "generated_from_target_head": "4653aefeef565f5fe9cf168577ceb249cf0f4647",
+  "official_run_id": "slim-v2-full-flash-20260823-233000-b4c8e951",
+  "raw_archive_status": "pending_advisor_archive_decision",
+  "approved_scope_corrections": [
+    {
+      "task": "D",
+      "decision": "exclude legacy paper/evidence-bound local-runtime tests",
+      "paths": [
+        "tests/local_runtime/test_evidence_delivery_projection.py",
+        "tests/local_runtime/test_evidence_projection.py",
+        "tests/local_runtime/test_online_check_projection.py",
+        "tests/local_runtime/test_paper_budget_projection.py",
+        "tests/local_runtime/test_paper_eligibility_projection.py",
+        "tests/local_runtime/test_publication_gate_projection.py"
+      ]
+    },
+    {
+      "task": "D",
+      "decision": "remove legacy trace-delivery and response-bank closure from retained runtime",
+      "forbidden_symbols": [
+        "PreparedTraceDelivery",
+        "TraceConsumption",
+        "ParentTrace",
+        "prepared_delivery",
+        "trace_delivery_stager",
+        "TRACE_DELIVERY_COMMITTED",
+        "external_response_bank_locator",
+        "save_external_trace_wrapper"
+      ]
+    },
+    {
+      "task": "E",
+      "decision": "exclude Lean tests that require old paper_catalog helpers",
+      "paths": [
+        "tests/plugins/lean_proof/test_lean_fixed_plan.py",
+        "tests/plugins/lean_proof/test_lean_runtime_adapter.py"
+      ],
+      "note": "The retained public Lean checks use the pure environment, fixture, preflight, and lemma-graph merge-policy subset."
+    },
+    {
+      "task": "F",
+      "decision": "publish experiments at tokenshare.experiments with no slim_v2 compatibility package",
+      "forbidden_paths": [
+        "src/tokenshare/experiments/slim_v2",
+        "tests/experiments/slim_v2",
+        "run_slim_v2.cmd"
+      ]
+    }
+  ],
+  "historical_string_allowlist": [
+    {
+      "pattern": "tokenshare.slim_v2.*",
+      "reason": "Frozen schema identifiers preserved for persisted run/config/result compatibility."
+    },
+    {
+      "pattern": "slim_v2.pricing.*",
+      "reason": "Frozen pricing identifiers preserved as historical metric facts."
+    },
+    {
+      "pattern": "slim-v2-full-flash-20260823-233000-b4c8e951",
+      "reason": "Official result directory and run.json keep the historical internal run ID."
+    },
+    {
+      "pattern": "benchmarks/paper/**",
+      "reason": "Only allowed as frozen logical source-path provenance inside corpus metadata and exact legacy resume config comparison."
+    }
+  ]
+}

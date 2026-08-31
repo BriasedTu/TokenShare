@@ -9,7 +9,7 @@ This repository has one experiment facility: `tokenshare.experiments`. Its publi
 - the official benchmark corpus and provider configurations;
 - the official metrics retained from the full experiment run after the result extraction stage.
 
-The current public package contains the retained protocol runtime, plugin core, minimal executor closure, official corpus/config files, current experiment implementation, focused tests, and the authoritative corpus verifier. Later extraction stages add the retained official metrics and final publication verification gates.
+The current public package contains the retained protocol runtime, plugin core, minimal executor closure, official corpus/config files, current experiment implementation, retained official metrics, focused tests, and final publication verification gates.
 
 ## Public layout by extraction stage
 
@@ -20,14 +20,11 @@ The current public extraction contains:
 - `benchmarks/experiments/`: official benchmark corpus and proof fixtures.
 - `configs/experiments/`: official provider configurations without secrets.
 - `Doc/Experiments/`: experiment design, metrics, integration, corpus, and public package documentation.
-- `verification/`: the authoritative corpus verifier.
+- `verification/`: focused corpus, result, extraction, and offline test verification gates.
 - `run_experiments.cmd`: the Windows GUI launcher for `tokenshare.experiments.gui`.
 - the root documentation and repository policy files.
 
-Later extraction commits, before publication, will add:
-
 - `results/experiments/`: official result files and their manifest.
-- `verification/`: result and extraction gates beyond the current corpus verifier.
 
 ## Start here
 

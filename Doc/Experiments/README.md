@@ -9,8 +9,8 @@
 - 最小 executor 能力：真实 provider transport/body descriptor 所需闭包，以及普通离线测试 helper。
 - 公开实验代码入口：`src/tokenshare/experiments/`，命令行为 `python -m tokenshare.experiments.cli`，Windows GUI launcher 为 `run_experiments.cmd`。
 - 权威 corpus 与 provider config：`benchmarks/experiments/`、`configs/experiments/`。
-- 正式发布结果：`results/experiments/`（Task G 迁入）。
-- 最小验证入口：当前为 `verification/verify_authoritative_corpus.py`；result/extraction gates 后续迁入。
+- 正式发布结果：`results/experiments/`。
+- 最小验证入口：`verification/verify_authoritative_corpus.py`、`verification/verify_official_results.py`、`verification/verify_extraction.py` 与 `verification/run_verification.py`。
 
 ## 冻结来源身份
 
@@ -59,7 +59,9 @@ roots 在 runner 层串行执行；`worker_count` 只控制单个 root 内部 AI
 $repo = "E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction"
 $env:PYTHONPATH = "$repo\src;$repo"
 conda run -n tokenshare python verification/verify_authoritative_corpus.py
+conda run -n tokenshare python verification/verify_official_results.py --verify-worktree-index
+conda run -n tokenshare python verification/verify_extraction.py
 conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_corpus.py -q
 ```
 
-Task G 会迁入正式结果与 result verifier；Task H 会在 fresh clean review worktree 中运行完整 extraction gates、compileall 与一个有界本地 Lean checker smoke；不会调用真实 provider，不会重跑 Full 或 LeanAudit。
+Task H 会在 fresh clean review worktree 中运行完整 extraction gates、compileall 与一个有界本地 Lean checker smoke；不会调用真实 provider，不会重跑 Full 或 LeanAudit。

@@ -1,0 +1,92 @@
+{
+  "schema_version": "tokenshare.experiments.official_results_manifest.v1",
+  "run_id": "slim-v2-full-flash-20260823-233000-b4c8e951",
+  "historical_run_id_note": "The directory keeps the frozen run's historical internal identifier; the public facility is tokenshare.experiments.",
+  "source_relative_root": "TokenShareData/outputs/slim_v2/slim-v2-full-flash-20260823-233000-b4c8e951",
+  "raw_archive_status": "pending_advisor_archive_decision",
+  "raw_archive_location": "local_ignored_only",
+  "external_archive_url": null,
+  "non_metrics": {
+    "file_count": 1088134,
+    "bytes": 7143234452
+  },
+  "critical_files": {
+    "file_count": 21260,
+    "manifest_sha256": "96dc9ea143d7532c0e54482907bb12017247df4286a6656fbdc45f84705fea47",
+    "bytes": 855884698
+  },
+  "published_files": [
+    {
+      "relative_path": "run.json",
+      "sha256": "3fee9e896eeac6be2a4fa082dcdddef4db92b21742b6234333bc11a30e2e9478",
+      "bytes": 622,
+      "data_rows": null
+    },
+    {
+      "relative_path": "metrics/summary.json",
+      "sha256": "8a7f0d77d146e97d633f14cc4284501b2f4ecb479b70157e2559ece913b76932",
+      "bytes": 98364,
+      "data_rows": null
+    },
+    {
+      "relative_path": "metrics/tables/exp1.csv",
+      "sha256": "7518c226980a314b7879695fa9867865c0193c4da242b8eb20a8c24fadfce426",
+      "bytes": 55478,
+      "data_rows": 12
+    },
+    {
+      "relative_path": "metrics/tables/exp1.jsonl",
+      "sha256": "78f9f20c3369ffdd6b2c030b0a8816f73a91363c95ebb86177ebfa9320527611",
+      "bytes": 90523,
+      "data_rows": 12
+    },
+    {
+      "relative_path": "metrics/tables/exp2.csv",
+      "sha256": "5d19eff9a21b834f12d4122702758610d6743bed94de72704efca0e333e761d2",
+      "bytes": 450853,
+      "data_rows": 88
+    },
+    {
+      "relative_path": "metrics/tables/exp2.jsonl",
+      "sha256": "f791025e30ca96cde1834d2974bf7ee60eabd7e5f64549fd661d6103c4931760",
+      "bytes": 774706,
+      "data_rows": 88
+    },
+    {
+      "relative_path": "metrics/tables/exp3.csv",
+      "sha256": "c5d2b0337e821ada6581a9fa79465c8ff8313b57c694aad576088fe507d4fe1a",
+      "bytes": 3608819,
+      "data_rows": 684
+    },
+    {
+      "relative_path": "metrics/tables/exp3.jsonl",
+      "sha256": "989a236aa0ed833e065ed2ce5e0a82a0ae0a2e1ab3a18303066480956a7f554e",
+      "bytes": 6148600,
+      "data_rows": 684
+    },
+    {
+      "relative_path": "metrics/tables/exp4.csv",
+      "sha256": "5f905557262801d3bf5840d5976b5d92b0b69cf704cec01c5d6d2e7d54de25c3",
+      "bytes": 8331030,
+      "data_rows": 648
+    },
+    {
+      "relative_path": "metrics/tables/exp4.jsonl",
+      "sha256": "429fc896b83538b383e97e401ab91ef88fc9549e4541a77285ee1d0aa5c2c1d5",
+      "bytes": 13736952,
+      "data_rows": 648
+    },
+    {
+      "relative_path": "metrics/tables/exp5.csv",
+      "sha256": "32bddb953f56e3e5c85d560f70711d245a56260360c6a61c055a2e5e711df4ed",
+      "bytes": 18976,
+      "data_rows": 3
+    },
+    {
+      "relative_path": "metrics/tables/exp5.jsonl",
+      "sha256": "c7770c2b5571c68ca3dbb65c8e579ec8044b5e00d56bf2de4c2e4434d1b2ded5",
+      "bytes": 25955,
+      "data_rows": 3
+    }
+  ]
+}

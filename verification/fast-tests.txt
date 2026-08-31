@@ -1,0 +1,10 @@
+# Fast offline smoke/regression checks for the public extraction.
+tests/core
+tests/storage
+tests/executors
+tests/plugins/factorization
+tests/plugins/test_plugin_registry.py
+tests/experiments/test_case_source.py
+tests/experiments/test_cli_plan.py
+tests/experiments/test_gui_launcher.py
+tests/experiments/test_schema.py

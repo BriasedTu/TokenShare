@@ -1,0 +1,2662 @@
+{
+  "bootstrap_replicates": 10000,
+  "bootstrap_seed": 20260820,
+  "ci_level": 0.95,
+  "ci_method": "stratified_case_cluster_percentile_bootstrap",
+  "exp3_reference_inventory_count": 106,
+  "formal_metric_id_count": 153,
+  "formal_metric_ids": [
+    "preregistered_root_count",
+    "final_result_root_count",
+    "verified_correct_root_count",
+    "completion_rate",
+    "end_to_end_verified_success_rate",
+    "no_final_failure_count",
+    "incorrect_final_failure_count",
+    "infra_invalid_failure_count",
+    "failure_root_count",
+    "actual_end_to_end_wall_clock_ms",
+    "actual_provider_latency_ms",
+    "actual_total_tokens",
+    "actual_cost_estimate_cny",
+    "completion_rate",
+    "root_end_to_end_elapsed_ms",
+    "root_provider_latency_ms",
+    "root_total_tokens",
+    "root_cost_estimate_cny",
+    "trace_replay_wall_clock_ms",
+    "bank_slot_consumption",
+    "trace_attributed_tokens",
+    "trace_attributed_cost",
+    "trace_replay_paired_speedup",
+    "trace_replay_parallel_efficiency",
+    "paired_trace_token_multiplier",
+    "paired_trace_cost_multiplier",
+    "paired_speedup_planned_pair_count",
+    "paired_speedup_eligible_pair_count",
+    "paired_speedup_ineligible_pair_count",
+    "trace_replay_paired_speedup_median",
+    "trace_replay_paired_speedup_repeat_min",
+    "trace_replay_paired_speedup_repeat_max",
+    "trace_replay_paired_speedup_relative_difference",
+    "planned_ai_unit_count",
+    "executed_ai_unit_count",
+    "unscheduled_ai_unit_count",
+    "in_flight_at_witness",
+    "observed_peak_concurrency",
+    "worker_utilization",
+    "completion_rate",
+    "trace_replay_wall_clock_ms",
+    "trace_replay_paired_speedup",
+    "paired_trace_token_multiplier",
+    "observed_peak_concurrency",
+    "injected_fault_target_count",
+    "controlled_wrong_candidate_count",
+    "controlled_wrong_candidate_interception_count",
+    "controlled_wrong_candidate_interception_rate",
+    "controlled_wrong_candidate_escape_count",
+    "controlled_wrong_candidate_escape_rate",
+    "started_replacement_attempt_count",
+    "successful_replacement_attempt_count",
+    "replacement_attempt_success_rate",
+    "reassignment_count",
+    "discarded_simulated_trace_tokens",
+    "simulated_wall_clock_overhead_ms",
+    "simulated_token_overhead",
+    "simulated_trace_attributed_cost_overhead",
+    "kill_progress_error_signed_mean_pp",
+    "kill_progress_error_signed_max_pp",
+    "recovered_valid_canonical_required_slots",
+    "preregistered_required_slots",
+    "result_completeness_rate",
+    "unrecovered_root_count",
+    "completion_rate",
+    "controlled_wrong_candidate_interception_rate",
+    "replacement_attempt_success_rate",
+    "result_completeness_rate",
+    "simulated_wall_clock_overhead_ms",
+    "discarded_simulated_trace_tokens_per_root",
+    "kill_progress_error_signed_mean_pp",
+    "protocol_started_root_count",
+    "preflight_blocked_root_count",
+    "protocol_start_coverage",
+    "challenge_planned_root_count",
+    "challenge_target_opportunity_count",
+    "challenge_injection_count",
+    "missed_challenge_opportunity_count",
+    "challenge_applied_root_count",
+    "challenge_application_coverage",
+    "challenge_plan_mismatch_count",
+    "no_final_rate",
+    "incorrect_final_rate",
+    "required_slot_completion_rate",
+    "actual_execution_attempt_count",
+    "source_response_slot_consumption",
+    "planned_pair_count",
+    "runtime_valid_pair_count",
+    "runtime_invalid_pair_count",
+    "full_success_ablation_success",
+    "full_success_ablation_failure",
+    "full_failure_ablation_success",
+    "full_failure_ablation_failure",
+    "ablation_failure_given_full_success_rate",
+    "paired_end_to_end_success_loss_vs_full",
+    "paired_completion_loss_vs_full",
+    "paired_required_slot_completion_loss_vs_full",
+    "trace_replay_wall_clock_delta_vs_full",
+    "execution_attempt_delta_vs_full",
+    "source_slot_consumption_delta_vs_full",
+    "trace_attributed_token_delta_vs_full",
+    "trace_attributed_cost_delta_vs_full",
+    "independently_labeled_invalid_candidate_count",
+    "invalid_candidate_verifier_rejection_count",
+    "wrong_canonical_acceptance_count",
+    "wrong_canonical_acceptance_rate",
+    "root_checker_rejection_after_wrong_canonical_count",
+    "parser_required_input_count",
+    "raw_only_exposure_count",
+    "raw_only_acceptance_count",
+    "raw_only_acceptance_rate",
+    "recoverable_no_return_count",
+    "replacement_started_after_challenge_count",
+    "valid_final_after_challenge_count",
+    "valid_final_after_challenge_rate",
+    "stuck_task_count",
+    "stuck_task_rate",
+    "merge_gate_unsatisfied_observation_count",
+    "premature_merge_attempt_count",
+    "premature_merge_failure_count",
+    "premature_merge_failure_rate",
+    "completion_rate",
+    "required_slot_completion_rate",
+    "ablation_failure_given_full_success_rate",
+    "trace_replay_wall_clock_delta_vs_full",
+    "wrong_canonical_acceptance_rate",
+    "single_removal_success_loss_i",
+    "actual_first_provider_attempt_count",
+    "first_attempt_without_verifier_accepted_candidate_count",
+    "first_attempt_nonpass_rate",
+    "first_attempt_provider_transport_failure_count",
+    "first_attempt_parse_schema_unusable_count",
+    "first_attempt_verification_checker_rejection_count",
+    "first_attempt_checkable_candidate_count",
+    "first_attempt_explicitly_rejected_by_verifier_count",
+    "first_attempt_verification_rejection_rate",
+    "planned_first_attempt_ai_unit_count",
+    "actual_first_provider_attempt_count",
+    "first_attempt_call_coverage",
+    "actual_total_tokens",
+    "actual_cost_estimate_cny",
+    "repeat0_wall_clock_ms",
+    "model_wall_clock_median_ms",
+    "model_wall_clock_min_ms",
+    "model_wall_clock_max_ms",
+    "model_wall_clock_range_ms",
+    "completion_rate",
+    "first_attempt_nonpass_rate",
+    "first_attempt_verification_rejection_rate",
+    "first_attempt_call_coverage",
+    "root_actual_total_tokens",
+    "root_actual_cost_estimate_cny",
+    "repeat_wall_clock_ms"
+  ],
+  "formal_metric_occurrences": [
+    {
+      "evidence_fields": [
+        "preregistered_root_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "preregistered_root_count",
+      "ordinal": 0,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "final_result_root_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "final_result_root_count",
+      "ordinal": 1,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "verified_correct_root_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "verified_correct_root_count",
+      "ordinal": 2,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "completion_rate",
+        "completion_rate_ci95_low",
+        "completion_rate_ci95_high",
+        "completion_rate_bootstrap_variance",
+        "completion_rate_bootstrap_standard_error",
+        "metric_metadata.completion_rate.case_cluster_count",
+        "metric_metadata.completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "completion_rate",
+      "ordinal": 3,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "end_to_end_verified_success_rate",
+        "end_to_end_verified_success_rate_ci95_low",
+        "end_to_end_verified_success_rate_ci95_high",
+        "end_to_end_verified_success_rate_bootstrap_variance",
+        "end_to_end_verified_success_rate_bootstrap_standard_error",
+        "metric_metadata.end_to_end_verified_success_rate.case_cluster_count",
+        "metric_metadata.end_to_end_verified_success_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "end_to_end_verified_success_rate",
+      "ordinal": 4,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "no_final_failure_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "no_final_failure_count",
+      "ordinal": 5,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "incorrect_final_failure_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "incorrect_final_failure_count",
+      "ordinal": 6,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "infra_invalid_failure_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "infra_invalid_failure_count",
+      "ordinal": 7,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "failure_root_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "failure_root_count",
+      "ordinal": 8,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "actual_end_to_end_wall_clock_ms"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "actual_end_to_end_wall_clock_ms",
+      "ordinal": 9,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "actual_provider_latency_ms"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "actual_provider_latency_ms",
+      "ordinal": 10,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "actual_total_tokens"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "actual_total_tokens",
+      "ordinal": 11,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "actual_cost_estimate_cny"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "actual_cost_estimate_cny",
+      "ordinal": 12,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "completion_rate",
+        "completion_rate_ci95_low",
+        "completion_rate_ci95_high",
+        "completion_rate_bootstrap_variance",
+        "completion_rate_bootstrap_standard_error",
+        "metric_metadata.completion_rate.case_cluster_count",
+        "metric_metadata.completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_common",
+      "metric_id": "completion_rate",
+      "ordinal": 13,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "root_end_to_end_elapsed_ms",
+        "root_end_to_end_elapsed_ms_median",
+        "root_end_to_end_elapsed_ms_q25",
+        "root_end_to_end_elapsed_ms_q75",
+        "root_end_to_end_elapsed_ms_iqr",
+        "root_end_to_end_elapsed_ms_sample_variance",
+        "root_end_to_end_elapsed_ms_sample_stddev",
+        "root_end_to_end_elapsed_ms_median_ci95_low",
+        "root_end_to_end_elapsed_ms_median_ci95_high",
+        "root_end_to_end_elapsed_ms_median_bootstrap_variance",
+        "root_end_to_end_elapsed_ms_median_bootstrap_standard_error",
+        "metric_metadata.root_end_to_end_elapsed_ms.case_cluster_count",
+        "metric_metadata.root_end_to_end_elapsed_ms.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "root_end_to_end_elapsed_ms",
+      "ordinal": 14,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "root_provider_latency_ms",
+        "root_provider_latency_ms_median",
+        "root_provider_latency_ms_q25",
+        "root_provider_latency_ms_q75",
+        "root_provider_latency_ms_iqr",
+        "root_provider_latency_ms_sample_variance",
+        "root_provider_latency_ms_sample_stddev",
+        "root_provider_latency_ms_median_ci95_low",
+        "root_provider_latency_ms_median_ci95_high",
+        "root_provider_latency_ms_median_bootstrap_variance",
+        "root_provider_latency_ms_median_bootstrap_standard_error",
+        "metric_metadata.root_provider_latency_ms.case_cluster_count",
+        "metric_metadata.root_provider_latency_ms.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "root_provider_latency_ms",
+      "ordinal": 15,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "root_total_tokens",
+        "root_total_tokens_median",
+        "root_total_tokens_q25",
+        "root_total_tokens_q75",
+        "root_total_tokens_iqr",
+        "root_total_tokens_sample_variance",
+        "root_total_tokens_sample_stddev",
+        "root_total_tokens_median_ci95_low",
+        "root_total_tokens_median_ci95_high",
+        "root_total_tokens_median_bootstrap_variance",
+        "root_total_tokens_median_bootstrap_standard_error",
+        "metric_metadata.root_total_tokens.case_cluster_count",
+        "metric_metadata.root_total_tokens.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "root_total_tokens",
+      "ordinal": 16,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "root_cost_estimate_cny",
+        "root_cost_estimate_cny_median",
+        "root_cost_estimate_cny_q25",
+        "root_cost_estimate_cny_q75",
+        "root_cost_estimate_cny_iqr",
+        "root_cost_estimate_cny_sample_variance",
+        "root_cost_estimate_cny_sample_stddev",
+        "root_cost_estimate_cny_median_ci95_low",
+        "root_cost_estimate_cny_median_ci95_high",
+        "root_cost_estimate_cny_median_bootstrap_variance",
+        "root_cost_estimate_cny_median_bootstrap_standard_error",
+        "metric_metadata.root_cost_estimate_cny.case_cluster_count",
+        "metric_metadata.root_cost_estimate_cny.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp1",
+      "metric_id": "root_cost_estimate_cny",
+      "ordinal": 17,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp1"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_wall_clock_ms",
+        "trace_replay_wall_clock_ms_median",
+        "trace_replay_wall_clock_ms_q25",
+        "trace_replay_wall_clock_ms_q75",
+        "trace_replay_wall_clock_ms_iqr",
+        "trace_replay_wall_clock_ms_sample_variance",
+        "trace_replay_wall_clock_ms_sample_stddev",
+        "trace_replay_wall_clock_ms_median_ci95_low",
+        "trace_replay_wall_clock_ms_median_ci95_high",
+        "trace_replay_wall_clock_ms_median_bootstrap_variance",
+        "trace_replay_wall_clock_ms_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_wall_clock_ms.case_cluster_count",
+        "metric_metadata.trace_replay_wall_clock_ms.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_wall_clock_ms",
+      "ordinal": 18,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "bank_slot_consumption"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "bank_slot_consumption",
+      "ordinal": 19,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_attributed_tokens"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_attributed_tokens",
+      "ordinal": 20,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_attributed_cost"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_attributed_cost",
+      "ordinal": 21,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_paired_speedup",
+        "trace_replay_paired_speedup_median",
+        "trace_replay_paired_speedup_q25",
+        "trace_replay_paired_speedup_q75",
+        "trace_replay_paired_speedup_iqr",
+        "trace_replay_paired_speedup_sample_variance",
+        "trace_replay_paired_speedup_sample_stddev",
+        "trace_replay_paired_speedup_median_ci95_low",
+        "trace_replay_paired_speedup_median_ci95_high",
+        "trace_replay_paired_speedup_median_bootstrap_variance",
+        "trace_replay_paired_speedup_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_paired_speedup.case_cluster_count",
+        "metric_metadata.trace_replay_paired_speedup.valid_bootstrap_replicate_count",
+        "paired_speedup_planned_pair_count",
+        "paired_speedup_eligible_pair_count",
+        "paired_speedup_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_paired_speedup",
+      "ordinal": 22,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_parallel_efficiency",
+        "trace_replay_parallel_efficiency_median",
+        "trace_replay_parallel_efficiency_q25",
+        "trace_replay_parallel_efficiency_q75",
+        "trace_replay_parallel_efficiency_iqr",
+        "trace_replay_parallel_efficiency_sample_variance",
+        "trace_replay_parallel_efficiency_sample_stddev",
+        "trace_replay_parallel_efficiency_median_ci95_low",
+        "trace_replay_parallel_efficiency_median_ci95_high",
+        "trace_replay_parallel_efficiency_median_bootstrap_variance",
+        "trace_replay_parallel_efficiency_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_parallel_efficiency.case_cluster_count",
+        "metric_metadata.trace_replay_parallel_efficiency.valid_bootstrap_replicate_count",
+        "trace_replay_parallel_efficiency_planned_pair_count",
+        "trace_replay_parallel_efficiency_eligible_pair_count",
+        "trace_replay_parallel_efficiency_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_parallel_efficiency",
+      "ordinal": 23,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "paired_trace_token_multiplier",
+        "paired_trace_token_multiplier_median",
+        "paired_trace_token_multiplier_q25",
+        "paired_trace_token_multiplier_q75",
+        "paired_trace_token_multiplier_iqr",
+        "paired_trace_token_multiplier_sample_variance",
+        "paired_trace_token_multiplier_sample_stddev",
+        "paired_trace_token_multiplier_median_ci95_low",
+        "paired_trace_token_multiplier_median_ci95_high",
+        "paired_trace_token_multiplier_median_bootstrap_variance",
+        "paired_trace_token_multiplier_median_bootstrap_standard_error",
+        "metric_metadata.paired_trace_token_multiplier.case_cluster_count",
+        "metric_metadata.paired_trace_token_multiplier.valid_bootstrap_replicate_count",
+        "paired_trace_token_multiplier_planned_pair_count",
+        "paired_trace_token_multiplier_eligible_pair_count",
+        "paired_trace_token_multiplier_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "paired_trace_token_multiplier",
+      "ordinal": 24,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "paired_trace_cost_multiplier",
+        "paired_trace_cost_multiplier_median",
+        "paired_trace_cost_multiplier_q25",
+        "paired_trace_cost_multiplier_q75",
+        "paired_trace_cost_multiplier_iqr",
+        "paired_trace_cost_multiplier_sample_variance",
+        "paired_trace_cost_multiplier_sample_stddev",
+        "paired_trace_cost_multiplier_median_ci95_low",
+        "paired_trace_cost_multiplier_median_ci95_high",
+        "paired_trace_cost_multiplier_median_bootstrap_variance",
+        "paired_trace_cost_multiplier_median_bootstrap_standard_error",
+        "metric_metadata.paired_trace_cost_multiplier.case_cluster_count",
+        "metric_metadata.paired_trace_cost_multiplier.valid_bootstrap_replicate_count",
+        "paired_trace_cost_multiplier_planned_pair_count",
+        "paired_trace_cost_multiplier_eligible_pair_count",
+        "paired_trace_cost_multiplier_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "paired_trace_cost_multiplier",
+      "ordinal": 25,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "paired_speedup_planned_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "paired_speedup_planned_pair_count",
+      "ordinal": 26,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "paired_speedup_eligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "paired_speedup_eligible_pair_count",
+      "ordinal": 27,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "paired_speedup_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "paired_speedup_ineligible_pair_count",
+      "ordinal": 28,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_paired_speedup_median",
+        "trace_replay_paired_speedup_q25",
+        "trace_replay_paired_speedup_q75",
+        "trace_replay_paired_speedup_iqr",
+        "trace_replay_paired_speedup_sample_variance",
+        "trace_replay_paired_speedup_sample_stddev",
+        "trace_replay_paired_speedup_median_ci95_low",
+        "trace_replay_paired_speedup_median_ci95_high",
+        "trace_replay_paired_speedup_median_bootstrap_variance",
+        "trace_replay_paired_speedup_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_paired_speedup.case_cluster_count",
+        "metric_metadata.trace_replay_paired_speedup.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_paired_speedup_median",
+      "ordinal": 29,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_paired_speedup_repeat_min"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_paired_speedup_repeat_min",
+      "ordinal": 30,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_paired_speedup_repeat_max"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_paired_speedup_repeat_max",
+      "ordinal": 31,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_paired_speedup_relative_difference"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_paired_speedup_relative_difference",
+      "ordinal": 32,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "planned_ai_unit_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "planned_ai_unit_count",
+      "ordinal": 33,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "executed_ai_unit_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "executed_ai_unit_count",
+      "ordinal": 34,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "unscheduled_ai_unit_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "unscheduled_ai_unit_count",
+      "ordinal": 35,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "in_flight_at_witness"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "in_flight_at_witness",
+      "ordinal": 36,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "observed_peak_concurrency",
+        "observed_peak_concurrency_median",
+        "observed_peak_concurrency_q25",
+        "observed_peak_concurrency_q75",
+        "observed_peak_concurrency_iqr",
+        "observed_peak_concurrency_sample_variance",
+        "observed_peak_concurrency_sample_stddev",
+        "observed_peak_concurrency_median_ci95_low",
+        "observed_peak_concurrency_median_ci95_high",
+        "observed_peak_concurrency_median_bootstrap_variance",
+        "observed_peak_concurrency_median_bootstrap_standard_error",
+        "metric_metadata.observed_peak_concurrency.case_cluster_count",
+        "metric_metadata.observed_peak_concurrency.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "observed_peak_concurrency",
+      "ordinal": 37,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "worker_utilization",
+        "worker_utilization_median",
+        "worker_utilization_q25",
+        "worker_utilization_q75",
+        "worker_utilization_iqr",
+        "worker_utilization_sample_variance",
+        "worker_utilization_sample_stddev",
+        "worker_utilization_median_ci95_low",
+        "worker_utilization_median_ci95_high",
+        "worker_utilization_median_bootstrap_variance",
+        "worker_utilization_median_bootstrap_standard_error",
+        "metric_metadata.worker_utilization.case_cluster_count",
+        "metric_metadata.worker_utilization.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "worker_utilization",
+      "ordinal": 38,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "completion_rate",
+        "completion_rate_ci95_low",
+        "completion_rate_ci95_high",
+        "completion_rate_bootstrap_variance",
+        "completion_rate_bootstrap_standard_error",
+        "metric_metadata.completion_rate.case_cluster_count",
+        "metric_metadata.completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "completion_rate",
+      "ordinal": 39,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_wall_clock_ms",
+        "trace_replay_wall_clock_ms_median",
+        "trace_replay_wall_clock_ms_q25",
+        "trace_replay_wall_clock_ms_q75",
+        "trace_replay_wall_clock_ms_iqr",
+        "trace_replay_wall_clock_ms_sample_variance",
+        "trace_replay_wall_clock_ms_sample_stddev",
+        "trace_replay_wall_clock_ms_median_ci95_low",
+        "trace_replay_wall_clock_ms_median_ci95_high",
+        "trace_replay_wall_clock_ms_median_bootstrap_variance",
+        "trace_replay_wall_clock_ms_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_wall_clock_ms.case_cluster_count",
+        "metric_metadata.trace_replay_wall_clock_ms.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_wall_clock_ms",
+      "ordinal": 40,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_paired_speedup",
+        "trace_replay_paired_speedup_median",
+        "trace_replay_paired_speedup_q25",
+        "trace_replay_paired_speedup_q75",
+        "trace_replay_paired_speedup_iqr",
+        "trace_replay_paired_speedup_sample_variance",
+        "trace_replay_paired_speedup_sample_stddev",
+        "trace_replay_paired_speedup_median_ci95_low",
+        "trace_replay_paired_speedup_median_ci95_high",
+        "trace_replay_paired_speedup_median_bootstrap_variance",
+        "trace_replay_paired_speedup_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_paired_speedup.case_cluster_count",
+        "metric_metadata.trace_replay_paired_speedup.valid_bootstrap_replicate_count",
+        "paired_speedup_planned_pair_count",
+        "paired_speedup_eligible_pair_count",
+        "paired_speedup_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "trace_replay_paired_speedup",
+      "ordinal": 41,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "paired_trace_token_multiplier",
+        "paired_trace_token_multiplier_median",
+        "paired_trace_token_multiplier_q25",
+        "paired_trace_token_multiplier_q75",
+        "paired_trace_token_multiplier_iqr",
+        "paired_trace_token_multiplier_sample_variance",
+        "paired_trace_token_multiplier_sample_stddev",
+        "paired_trace_token_multiplier_median_ci95_low",
+        "paired_trace_token_multiplier_median_ci95_high",
+        "paired_trace_token_multiplier_median_bootstrap_variance",
+        "paired_trace_token_multiplier_median_bootstrap_standard_error",
+        "metric_metadata.paired_trace_token_multiplier.case_cluster_count",
+        "metric_metadata.paired_trace_token_multiplier.valid_bootstrap_replicate_count",
+        "paired_trace_token_multiplier_planned_pair_count",
+        "paired_trace_token_multiplier_eligible_pair_count",
+        "paired_trace_token_multiplier_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "paired_trace_token_multiplier",
+      "ordinal": 42,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "observed_peak_concurrency",
+        "observed_peak_concurrency_median",
+        "observed_peak_concurrency_q25",
+        "observed_peak_concurrency_q75",
+        "observed_peak_concurrency_iqr",
+        "observed_peak_concurrency_sample_variance",
+        "observed_peak_concurrency_sample_stddev",
+        "observed_peak_concurrency_median_ci95_low",
+        "observed_peak_concurrency_median_ci95_high",
+        "observed_peak_concurrency_median_bootstrap_variance",
+        "observed_peak_concurrency_median_bootstrap_standard_error",
+        "metric_metadata.observed_peak_concurrency.case_cluster_count",
+        "metric_metadata.observed_peak_concurrency.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp2",
+      "metric_id": "observed_peak_concurrency",
+      "ordinal": 43,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp2"
+    },
+    {
+      "evidence_fields": [
+        "injected_fault_target_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "injected_fault_target_count",
+      "ordinal": 44,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "controlled_wrong_candidate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "controlled_wrong_candidate_count",
+      "ordinal": 45,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "controlled_wrong_candidate_interception_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "controlled_wrong_candidate_interception_count",
+      "ordinal": 46,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "controlled_wrong_candidate_interception_rate",
+        "controlled_wrong_candidate_interception_rate_ci95_low",
+        "controlled_wrong_candidate_interception_rate_ci95_high",
+        "controlled_wrong_candidate_interception_rate_bootstrap_variance",
+        "controlled_wrong_candidate_interception_rate_bootstrap_standard_error",
+        "metric_metadata.controlled_wrong_candidate_interception_rate.case_cluster_count",
+        "metric_metadata.controlled_wrong_candidate_interception_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "controlled_wrong_candidate_interception_rate",
+      "ordinal": 47,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "controlled_wrong_candidate_escape_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "controlled_wrong_candidate_escape_count",
+      "ordinal": 48,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "controlled_wrong_candidate_escape_rate",
+        "controlled_wrong_candidate_escape_rate_ci95_low",
+        "controlled_wrong_candidate_escape_rate_ci95_high",
+        "controlled_wrong_candidate_escape_rate_bootstrap_variance",
+        "controlled_wrong_candidate_escape_rate_bootstrap_standard_error",
+        "metric_metadata.controlled_wrong_candidate_escape_rate.case_cluster_count",
+        "metric_metadata.controlled_wrong_candidate_escape_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "controlled_wrong_candidate_escape_rate",
+      "ordinal": 49,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "started_replacement_attempt_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "started_replacement_attempt_count",
+      "ordinal": 50,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "successful_replacement_attempt_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "successful_replacement_attempt_count",
+      "ordinal": 51,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "replacement_attempt_success_rate",
+        "replacement_attempt_success_rate_ci95_low",
+        "replacement_attempt_success_rate_ci95_high",
+        "replacement_attempt_success_rate_bootstrap_variance",
+        "replacement_attempt_success_rate_bootstrap_standard_error",
+        "metric_metadata.replacement_attempt_success_rate.case_cluster_count",
+        "metric_metadata.replacement_attempt_success_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "replacement_attempt_success_rate",
+      "ordinal": 52,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "reassignment_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "reassignment_count",
+      "ordinal": 53,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "discarded_simulated_trace_tokens"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "discarded_simulated_trace_tokens",
+      "ordinal": 54,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "simulated_wall_clock_overhead_ms",
+        "simulated_wall_clock_overhead_ms_median",
+        "simulated_wall_clock_overhead_ms_q25",
+        "simulated_wall_clock_overhead_ms_q75",
+        "simulated_wall_clock_overhead_ms_iqr",
+        "simulated_wall_clock_overhead_ms_sample_variance",
+        "simulated_wall_clock_overhead_ms_sample_stddev",
+        "simulated_wall_clock_overhead_ms_median_ci95_low",
+        "simulated_wall_clock_overhead_ms_median_ci95_high",
+        "simulated_wall_clock_overhead_ms_median_bootstrap_variance",
+        "simulated_wall_clock_overhead_ms_median_bootstrap_standard_error",
+        "metric_metadata.simulated_wall_clock_overhead_ms.case_cluster_count",
+        "metric_metadata.simulated_wall_clock_overhead_ms.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp3",
+      "metric_id": "simulated_wall_clock_overhead_ms",
+      "ordinal": 55,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "fault_reference_pair",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "simulated_token_overhead",
+        "simulated_token_overhead_median",
+        "simulated_token_overhead_q25",
+        "simulated_token_overhead_q75",
+        "simulated_token_overhead_iqr",
+        "simulated_token_overhead_sample_variance",
+        "simulated_token_overhead_sample_stddev",
+        "simulated_token_overhead_median_ci95_low",
+        "simulated_token_overhead_median_ci95_high",
+        "simulated_token_overhead_median_bootstrap_variance",
+        "simulated_token_overhead_median_bootstrap_standard_error",
+        "metric_metadata.simulated_token_overhead.case_cluster_count",
+        "metric_metadata.simulated_token_overhead.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp3",
+      "metric_id": "simulated_token_overhead",
+      "ordinal": 56,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "fault_reference_pair",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "simulated_trace_attributed_cost_overhead",
+        "simulated_trace_attributed_cost_overhead_median",
+        "simulated_trace_attributed_cost_overhead_q25",
+        "simulated_trace_attributed_cost_overhead_q75",
+        "simulated_trace_attributed_cost_overhead_iqr",
+        "simulated_trace_attributed_cost_overhead_sample_variance",
+        "simulated_trace_attributed_cost_overhead_sample_stddev",
+        "simulated_trace_attributed_cost_overhead_median_ci95_low",
+        "simulated_trace_attributed_cost_overhead_median_ci95_high",
+        "simulated_trace_attributed_cost_overhead_median_bootstrap_variance",
+        "simulated_trace_attributed_cost_overhead_median_bootstrap_standard_error",
+        "metric_metadata.simulated_trace_attributed_cost_overhead.case_cluster_count",
+        "metric_metadata.simulated_trace_attributed_cost_overhead.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp3",
+      "metric_id": "simulated_trace_attributed_cost_overhead",
+      "ordinal": 57,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "fault_reference_pair",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "kill_progress_error_signed_mean_pp",
+        "kill_progress_error_signed_mean_pp_ci95_low",
+        "kill_progress_error_signed_mean_pp_ci95_high",
+        "kill_progress_error_signed_mean_pp_bootstrap_variance",
+        "kill_progress_error_signed_mean_pp_bootstrap_standard_error",
+        "metric_metadata.kill_progress_error_signed_mean_pp.case_cluster_count",
+        "metric_metadata.kill_progress_error_signed_mean_pp.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "kill_progress_error_signed_mean_pp",
+      "ordinal": 58,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "kill_progress_error_signed_max_pp"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "kill_progress_error_signed_max_pp",
+      "ordinal": 59,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "recovered_valid_canonical_required_slots"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "recovered_valid_canonical_required_slots",
+      "ordinal": 60,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "preregistered_required_slots"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "preregistered_required_slots",
+      "ordinal": 61,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "result_completeness_rate",
+        "result_completeness_rate_ci95_low",
+        "result_completeness_rate_ci95_high",
+        "result_completeness_rate_bootstrap_variance",
+        "result_completeness_rate_bootstrap_standard_error",
+        "metric_metadata.result_completeness_rate.case_cluster_count",
+        "metric_metadata.result_completeness_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "result_completeness_rate",
+      "ordinal": 62,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "unrecovered_root_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "unrecovered_root_count",
+      "ordinal": 63,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "completion_rate",
+        "completion_rate_ci95_low",
+        "completion_rate_ci95_high",
+        "completion_rate_bootstrap_variance",
+        "completion_rate_bootstrap_standard_error",
+        "metric_metadata.completion_rate.case_cluster_count",
+        "metric_metadata.completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "completion_rate",
+      "ordinal": 64,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "controlled_wrong_candidate_interception_rate",
+        "controlled_wrong_candidate_interception_rate_ci95_low",
+        "controlled_wrong_candidate_interception_rate_ci95_high",
+        "controlled_wrong_candidate_interception_rate_bootstrap_variance",
+        "controlled_wrong_candidate_interception_rate_bootstrap_standard_error",
+        "metric_metadata.controlled_wrong_candidate_interception_rate.case_cluster_count",
+        "metric_metadata.controlled_wrong_candidate_interception_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "controlled_wrong_candidate_interception_rate",
+      "ordinal": 65,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "replacement_attempt_success_rate",
+        "replacement_attempt_success_rate_ci95_low",
+        "replacement_attempt_success_rate_ci95_high",
+        "replacement_attempt_success_rate_bootstrap_variance",
+        "replacement_attempt_success_rate_bootstrap_standard_error",
+        "metric_metadata.replacement_attempt_success_rate.case_cluster_count",
+        "metric_metadata.replacement_attempt_success_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "replacement_attempt_success_rate",
+      "ordinal": 66,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "result_completeness_rate",
+        "result_completeness_rate_ci95_low",
+        "result_completeness_rate_ci95_high",
+        "result_completeness_rate_bootstrap_variance",
+        "result_completeness_rate_bootstrap_standard_error",
+        "metric_metadata.result_completeness_rate.case_cluster_count",
+        "metric_metadata.result_completeness_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "result_completeness_rate",
+      "ordinal": 67,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "simulated_wall_clock_overhead_ms",
+        "simulated_wall_clock_overhead_ms_median",
+        "simulated_wall_clock_overhead_ms_q25",
+        "simulated_wall_clock_overhead_ms_q75",
+        "simulated_wall_clock_overhead_ms_iqr",
+        "simulated_wall_clock_overhead_ms_sample_variance",
+        "simulated_wall_clock_overhead_ms_sample_stddev",
+        "simulated_wall_clock_overhead_ms_median_ci95_low",
+        "simulated_wall_clock_overhead_ms_median_ci95_high",
+        "simulated_wall_clock_overhead_ms_median_bootstrap_variance",
+        "simulated_wall_clock_overhead_ms_median_bootstrap_standard_error",
+        "metric_metadata.simulated_wall_clock_overhead_ms.case_cluster_count",
+        "metric_metadata.simulated_wall_clock_overhead_ms.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp3",
+      "metric_id": "simulated_wall_clock_overhead_ms",
+      "ordinal": 68,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "death_reference_pair",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "discarded_simulated_trace_tokens_per_root",
+        "discarded_simulated_trace_tokens_per_root_median",
+        "discarded_simulated_trace_tokens_per_root_q25",
+        "discarded_simulated_trace_tokens_per_root_q75",
+        "discarded_simulated_trace_tokens_per_root_iqr",
+        "discarded_simulated_trace_tokens_per_root_sample_variance",
+        "discarded_simulated_trace_tokens_per_root_sample_stddev",
+        "discarded_simulated_trace_tokens_per_root_median_ci95_low",
+        "discarded_simulated_trace_tokens_per_root_median_ci95_high",
+        "discarded_simulated_trace_tokens_per_root_median_bootstrap_variance",
+        "discarded_simulated_trace_tokens_per_root_median_bootstrap_standard_error",
+        "metric_metadata.discarded_simulated_trace_tokens_per_root.case_cluster_count",
+        "metric_metadata.discarded_simulated_trace_tokens_per_root.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "discarded_simulated_trace_tokens_per_root",
+      "ordinal": 69,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "kill_progress_error_signed_mean_pp",
+        "kill_progress_error_signed_mean_pp_ci95_low",
+        "kill_progress_error_signed_mean_pp_ci95_high",
+        "kill_progress_error_signed_mean_pp_bootstrap_variance",
+        "kill_progress_error_signed_mean_pp_bootstrap_standard_error",
+        "metric_metadata.kill_progress_error_signed_mean_pp.case_cluster_count",
+        "metric_metadata.kill_progress_error_signed_mean_pp.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp3_cell_metrics",
+      "metric_id": "kill_progress_error_signed_mean_pp",
+      "ordinal": 70,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp3"
+    },
+    {
+      "evidence_fields": [
+        "protocol_started_root_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "protocol_started_root_count",
+      "ordinal": 71,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "preflight_blocked_root_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "preflight_blocked_root_count",
+      "ordinal": 72,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "protocol_start_coverage"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "protocol_start_coverage",
+      "ordinal": 73,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "challenge_planned_root_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "challenge_planned_root_count",
+      "ordinal": 74,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "challenge_target_opportunity_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "challenge_target_opportunity_count",
+      "ordinal": 75,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "challenge_injection_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "challenge_injection_count",
+      "ordinal": 76,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "missed_challenge_opportunity_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "missed_challenge_opportunity_count",
+      "ordinal": 77,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "challenge_applied_root_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "challenge_applied_root_count",
+      "ordinal": 78,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "challenge_application_coverage"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "challenge_application_coverage",
+      "ordinal": 79,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "challenge_plan_mismatch_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "challenge_plan_mismatch_count",
+      "ordinal": 80,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "no_final_rate",
+        "no_final_rate_ci95_low",
+        "no_final_rate_ci95_high",
+        "no_final_rate_bootstrap_variance",
+        "no_final_rate_bootstrap_standard_error",
+        "metric_metadata.no_final_rate.case_cluster_count",
+        "metric_metadata.no_final_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "no_final_rate",
+      "ordinal": 81,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "incorrect_final_rate",
+        "incorrect_final_rate_ci95_low",
+        "incorrect_final_rate_ci95_high",
+        "incorrect_final_rate_bootstrap_variance",
+        "incorrect_final_rate_bootstrap_standard_error",
+        "metric_metadata.incorrect_final_rate.case_cluster_count",
+        "metric_metadata.incorrect_final_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "incorrect_final_rate",
+      "ordinal": 82,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "required_slot_completion_rate",
+        "required_slot_completion_rate_ci95_low",
+        "required_slot_completion_rate_ci95_high",
+        "required_slot_completion_rate_bootstrap_variance",
+        "required_slot_completion_rate_bootstrap_standard_error",
+        "metric_metadata.required_slot_completion_rate.case_cluster_count",
+        "metric_metadata.required_slot_completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "required_slot_completion_rate",
+      "ordinal": 83,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "actual_execution_attempt_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "actual_execution_attempt_count",
+      "ordinal": 84,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "source_response_slot_consumption"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "source_response_slot_consumption",
+      "ordinal": 85,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "planned_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "planned_pair_count",
+      "ordinal": 86,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "runtime_valid_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "runtime_valid_pair_count",
+      "ordinal": 87,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "runtime_invalid_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "runtime_invalid_pair_count",
+      "ordinal": 88,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "full_success_ablation_success"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "full_success_ablation_success",
+      "ordinal": 89,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "full_success_ablation_failure"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "full_success_ablation_failure",
+      "ordinal": 90,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "full_failure_ablation_success"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "full_failure_ablation_success",
+      "ordinal": 91,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "full_failure_ablation_failure"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "full_failure_ablation_failure",
+      "ordinal": 92,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "ablation_failure_given_full_success_rate",
+        "ablation_failure_given_full_success_rate_ci95_low",
+        "ablation_failure_given_full_success_rate_ci95_high",
+        "ablation_failure_given_full_success_rate_bootstrap_variance",
+        "ablation_failure_given_full_success_rate_bootstrap_standard_error",
+        "metric_metadata.ablation_failure_given_full_success_rate.case_cluster_count",
+        "metric_metadata.ablation_failure_given_full_success_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "ablation_failure_given_full_success_rate",
+      "ordinal": 93,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "paired_end_to_end_success_loss_vs_full",
+        "paired_end_to_end_success_loss_vs_full_ci95_low",
+        "paired_end_to_end_success_loss_vs_full_ci95_high",
+        "paired_end_to_end_success_loss_vs_full_bootstrap_variance",
+        "paired_end_to_end_success_loss_vs_full_bootstrap_standard_error",
+        "metric_metadata.paired_end_to_end_success_loss_vs_full.case_cluster_count",
+        "metric_metadata.paired_end_to_end_success_loss_vs_full.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "paired_end_to_end_success_loss_vs_full",
+      "ordinal": 94,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "paired_completion_loss_vs_full",
+        "paired_completion_loss_vs_full_ci95_low",
+        "paired_completion_loss_vs_full_ci95_high",
+        "paired_completion_loss_vs_full_bootstrap_variance",
+        "paired_completion_loss_vs_full_bootstrap_standard_error",
+        "metric_metadata.paired_completion_loss_vs_full.case_cluster_count",
+        "metric_metadata.paired_completion_loss_vs_full.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "paired_completion_loss_vs_full",
+      "ordinal": 95,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "paired_required_slot_completion_loss_vs_full",
+        "paired_required_slot_completion_loss_vs_full_ci95_low",
+        "paired_required_slot_completion_loss_vs_full_ci95_high",
+        "paired_required_slot_completion_loss_vs_full_bootstrap_variance",
+        "paired_required_slot_completion_loss_vs_full_bootstrap_standard_error",
+        "metric_metadata.paired_required_slot_completion_loss_vs_full.case_cluster_count",
+        "metric_metadata.paired_required_slot_completion_loss_vs_full.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "paired_required_slot_completion_loss_vs_full",
+      "ordinal": 96,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_wall_clock_delta_vs_full",
+        "trace_replay_wall_clock_delta_vs_full_median",
+        "trace_replay_wall_clock_delta_vs_full_q25",
+        "trace_replay_wall_clock_delta_vs_full_q75",
+        "trace_replay_wall_clock_delta_vs_full_iqr",
+        "trace_replay_wall_clock_delta_vs_full_sample_variance",
+        "trace_replay_wall_clock_delta_vs_full_sample_stddev",
+        "trace_replay_wall_clock_delta_vs_full_median_ci95_low",
+        "trace_replay_wall_clock_delta_vs_full_median_ci95_high",
+        "trace_replay_wall_clock_delta_vs_full_median_bootstrap_variance",
+        "trace_replay_wall_clock_delta_vs_full_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_wall_clock_delta_vs_full.case_cluster_count",
+        "metric_metadata.trace_replay_wall_clock_delta_vs_full.valid_bootstrap_replicate_count",
+        "trace_replay_wall_clock_delta_vs_full_planned_pair_count",
+        "trace_replay_wall_clock_delta_vs_full_eligible_pair_count",
+        "trace_replay_wall_clock_delta_vs_full_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "trace_replay_wall_clock_delta_vs_full",
+      "ordinal": 97,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "execution_attempt_delta_vs_full",
+        "execution_attempt_delta_vs_full_median",
+        "execution_attempt_delta_vs_full_q25",
+        "execution_attempt_delta_vs_full_q75",
+        "execution_attempt_delta_vs_full_iqr",
+        "execution_attempt_delta_vs_full_sample_variance",
+        "execution_attempt_delta_vs_full_sample_stddev",
+        "execution_attempt_delta_vs_full_median_ci95_low",
+        "execution_attempt_delta_vs_full_median_ci95_high",
+        "execution_attempt_delta_vs_full_median_bootstrap_variance",
+        "execution_attempt_delta_vs_full_median_bootstrap_standard_error",
+        "metric_metadata.execution_attempt_delta_vs_full.case_cluster_count",
+        "metric_metadata.execution_attempt_delta_vs_full.valid_bootstrap_replicate_count",
+        "execution_attempt_delta_vs_full_planned_pair_count",
+        "execution_attempt_delta_vs_full_eligible_pair_count",
+        "execution_attempt_delta_vs_full_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "execution_attempt_delta_vs_full",
+      "ordinal": 98,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "source_slot_consumption_delta_vs_full",
+        "source_slot_consumption_delta_vs_full_median",
+        "source_slot_consumption_delta_vs_full_q25",
+        "source_slot_consumption_delta_vs_full_q75",
+        "source_slot_consumption_delta_vs_full_iqr",
+        "source_slot_consumption_delta_vs_full_sample_variance",
+        "source_slot_consumption_delta_vs_full_sample_stddev",
+        "source_slot_consumption_delta_vs_full_median_ci95_low",
+        "source_slot_consumption_delta_vs_full_median_ci95_high",
+        "source_slot_consumption_delta_vs_full_median_bootstrap_variance",
+        "source_slot_consumption_delta_vs_full_median_bootstrap_standard_error",
+        "metric_metadata.source_slot_consumption_delta_vs_full.case_cluster_count",
+        "metric_metadata.source_slot_consumption_delta_vs_full.valid_bootstrap_replicate_count",
+        "source_slot_consumption_delta_vs_full_planned_pair_count",
+        "source_slot_consumption_delta_vs_full_eligible_pair_count",
+        "source_slot_consumption_delta_vs_full_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "source_slot_consumption_delta_vs_full",
+      "ordinal": 99,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "trace_attributed_token_delta_vs_full",
+        "trace_attributed_token_delta_vs_full_median",
+        "trace_attributed_token_delta_vs_full_q25",
+        "trace_attributed_token_delta_vs_full_q75",
+        "trace_attributed_token_delta_vs_full_iqr",
+        "trace_attributed_token_delta_vs_full_sample_variance",
+        "trace_attributed_token_delta_vs_full_sample_stddev",
+        "trace_attributed_token_delta_vs_full_median_ci95_low",
+        "trace_attributed_token_delta_vs_full_median_ci95_high",
+        "trace_attributed_token_delta_vs_full_median_bootstrap_variance",
+        "trace_attributed_token_delta_vs_full_median_bootstrap_standard_error",
+        "metric_metadata.trace_attributed_token_delta_vs_full.case_cluster_count",
+        "metric_metadata.trace_attributed_token_delta_vs_full.valid_bootstrap_replicate_count",
+        "trace_attributed_token_delta_vs_full_planned_pair_count",
+        "trace_attributed_token_delta_vs_full_eligible_pair_count",
+        "trace_attributed_token_delta_vs_full_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "trace_attributed_token_delta_vs_full",
+      "ordinal": 100,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "trace_attributed_cost_delta_vs_full",
+        "trace_attributed_cost_delta_vs_full_median",
+        "trace_attributed_cost_delta_vs_full_q25",
+        "trace_attributed_cost_delta_vs_full_q75",
+        "trace_attributed_cost_delta_vs_full_iqr",
+        "trace_attributed_cost_delta_vs_full_sample_variance",
+        "trace_attributed_cost_delta_vs_full_sample_stddev",
+        "trace_attributed_cost_delta_vs_full_median_ci95_low",
+        "trace_attributed_cost_delta_vs_full_median_ci95_high",
+        "trace_attributed_cost_delta_vs_full_median_bootstrap_variance",
+        "trace_attributed_cost_delta_vs_full_median_bootstrap_standard_error",
+        "metric_metadata.trace_attributed_cost_delta_vs_full.case_cluster_count",
+        "metric_metadata.trace_attributed_cost_delta_vs_full.valid_bootstrap_replicate_count",
+        "trace_attributed_cost_delta_vs_full_planned_pair_count",
+        "trace_attributed_cost_delta_vs_full_eligible_pair_count",
+        "trace_attributed_cost_delta_vs_full_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "trace_attributed_cost_delta_vs_full",
+      "ordinal": 101,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "independently_labeled_invalid_candidate_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "independently_labeled_invalid_candidate_count",
+      "ordinal": 102,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "invalid_candidate_verifier_rejection_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "invalid_candidate_verifier_rejection_count",
+      "ordinal": 103,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "wrong_canonical_acceptance_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "wrong_canonical_acceptance_count",
+      "ordinal": 104,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "wrong_canonical_acceptance_rate",
+        "wrong_canonical_acceptance_rate_ci95_low",
+        "wrong_canonical_acceptance_rate_ci95_high",
+        "wrong_canonical_acceptance_rate_bootstrap_variance",
+        "wrong_canonical_acceptance_rate_bootstrap_standard_error",
+        "metric_metadata.wrong_canonical_acceptance_rate.case_cluster_count",
+        "metric_metadata.wrong_canonical_acceptance_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "wrong_canonical_acceptance_rate",
+      "ordinal": 105,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "root_checker_rejection_after_wrong_canonical_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "root_checker_rejection_after_wrong_canonical_count",
+      "ordinal": 106,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "parser_required_input_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "parser_required_input_count",
+      "ordinal": 107,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "raw_only_exposure_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "raw_only_exposure_count",
+      "ordinal": 108,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "raw_only_acceptance_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "raw_only_acceptance_count",
+      "ordinal": 109,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "raw_only_acceptance_rate",
+        "raw_only_acceptance_rate_ci95_low",
+        "raw_only_acceptance_rate_ci95_high",
+        "raw_only_acceptance_rate_bootstrap_variance",
+        "raw_only_acceptance_rate_bootstrap_standard_error",
+        "metric_metadata.raw_only_acceptance_rate.case_cluster_count",
+        "metric_metadata.raw_only_acceptance_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "raw_only_acceptance_rate",
+      "ordinal": 110,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "recoverable_no_return_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "recoverable_no_return_count",
+      "ordinal": 111,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "replacement_started_after_challenge_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "replacement_started_after_challenge_count",
+      "ordinal": 112,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "valid_final_after_challenge_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "valid_final_after_challenge_count",
+      "ordinal": 113,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "valid_final_after_challenge_rate",
+        "valid_final_after_challenge_rate_ci95_low",
+        "valid_final_after_challenge_rate_ci95_high",
+        "valid_final_after_challenge_rate_bootstrap_variance",
+        "valid_final_after_challenge_rate_bootstrap_standard_error",
+        "metric_metadata.valid_final_after_challenge_rate.case_cluster_count",
+        "metric_metadata.valid_final_after_challenge_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "valid_final_after_challenge_rate",
+      "ordinal": 114,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "stuck_task_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "stuck_task_count",
+      "ordinal": 115,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "stuck_task_rate",
+        "stuck_task_rate_ci95_low",
+        "stuck_task_rate_ci95_high",
+        "stuck_task_rate_bootstrap_variance",
+        "stuck_task_rate_bootstrap_standard_error",
+        "metric_metadata.stuck_task_rate.case_cluster_count",
+        "metric_metadata.stuck_task_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "stuck_task_rate",
+      "ordinal": 116,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "merge_gate_unsatisfied_observation_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "merge_gate_unsatisfied_observation_count",
+      "ordinal": 117,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "premature_merge_attempt_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "premature_merge_attempt_count",
+      "ordinal": 118,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "premature_merge_failure_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "premature_merge_failure_count",
+      "ordinal": 119,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "premature_merge_failure_rate",
+        "premature_merge_failure_rate_ci95_low",
+        "premature_merge_failure_rate_ci95_high",
+        "premature_merge_failure_rate_bootstrap_variance",
+        "premature_merge_failure_rate_bootstrap_standard_error",
+        "metric_metadata.premature_merge_failure_rate.case_cluster_count",
+        "metric_metadata.premature_merge_failure_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "premature_merge_failure_rate",
+      "ordinal": 120,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "completion_rate",
+        "completion_rate_ci95_low",
+        "completion_rate_ci95_high",
+        "completion_rate_bootstrap_variance",
+        "completion_rate_bootstrap_standard_error",
+        "metric_metadata.completion_rate.case_cluster_count",
+        "metric_metadata.completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "completion_rate",
+      "ordinal": 121,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "required_slot_completion_rate",
+        "required_slot_completion_rate_ci95_low",
+        "required_slot_completion_rate_ci95_high",
+        "required_slot_completion_rate_bootstrap_variance",
+        "required_slot_completion_rate_bootstrap_standard_error",
+        "metric_metadata.required_slot_completion_rate.case_cluster_count",
+        "metric_metadata.required_slot_completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_cell",
+      "metric_id": "required_slot_completion_rate",
+      "ordinal": 122,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "ablation_failure_given_full_success_rate",
+        "ablation_failure_given_full_success_rate_ci95_low",
+        "ablation_failure_given_full_success_rate_ci95_high",
+        "ablation_failure_given_full_success_rate_bootstrap_variance",
+        "ablation_failure_given_full_success_rate_bootstrap_standard_error",
+        "metric_metadata.ablation_failure_given_full_success_rate.case_cluster_count",
+        "metric_metadata.ablation_failure_given_full_success_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "ablation_failure_given_full_success_rate",
+      "ordinal": 123,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "trace_replay_wall_clock_delta_vs_full",
+        "trace_replay_wall_clock_delta_vs_full_median",
+        "trace_replay_wall_clock_delta_vs_full_q25",
+        "trace_replay_wall_clock_delta_vs_full_q75",
+        "trace_replay_wall_clock_delta_vs_full_iqr",
+        "trace_replay_wall_clock_delta_vs_full_sample_variance",
+        "trace_replay_wall_clock_delta_vs_full_sample_stddev",
+        "trace_replay_wall_clock_delta_vs_full_median_ci95_low",
+        "trace_replay_wall_clock_delta_vs_full_median_ci95_high",
+        "trace_replay_wall_clock_delta_vs_full_median_bootstrap_variance",
+        "trace_replay_wall_clock_delta_vs_full_median_bootstrap_standard_error",
+        "metric_metadata.trace_replay_wall_clock_delta_vs_full.case_cluster_count",
+        "metric_metadata.trace_replay_wall_clock_delta_vs_full.valid_bootstrap_replicate_count",
+        "trace_replay_wall_clock_delta_vs_full_planned_pair_count",
+        "trace_replay_wall_clock_delta_vs_full_eligible_pair_count",
+        "trace_replay_wall_clock_delta_vs_full_ineligible_pair_count"
+      ],
+      "formula_producer": "_reduce_exp4_pairs",
+      "metric_id": "trace_replay_wall_clock_delta_vs_full",
+      "ordinal": 124,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "pair",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "wrong_canonical_acceptance_rate",
+        "wrong_canonical_acceptance_rate_ci95_low",
+        "wrong_canonical_acceptance_rate_ci95_high",
+        "wrong_canonical_acceptance_rate_bootstrap_variance",
+        "wrong_canonical_acceptance_rate_bootstrap_standard_error",
+        "metric_metadata.wrong_canonical_acceptance_rate.case_cluster_count",
+        "metric_metadata.wrong_canonical_acceptance_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_exp4_special_metrics",
+      "metric_id": "wrong_canonical_acceptance_rate",
+      "ordinal": 125,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "cell",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "single_removal_success_loss_i",
+        "single_removal_success_loss_i_ci95_low",
+        "single_removal_success_loss_i_ci95_high",
+        "single_removal_success_loss_i_bootstrap_variance",
+        "single_removal_success_loss_i_bootstrap_standard_error",
+        "metric_metadata.single_removal_success_loss_i.case_cluster_count",
+        "metric_metadata.single_removal_success_loss_i.valid_bootstrap_replicate_count",
+        "single_removal_success_loss_i_planned_quadruple_count",
+        "single_removal_success_loss_i_eligible_quadruple_count",
+        "single_removal_success_loss_i_ineligible_quadruple_count"
+      ],
+      "formula_producer": "_reduce_exp4_interactions",
+      "metric_id": "single_removal_success_loss_i",
+      "ordinal": 126,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "interaction",
+      "table_scope": "exp4"
+    },
+    {
+      "evidence_fields": [
+        "actual_first_provider_attempt_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "actual_first_provider_attempt_count",
+      "ordinal": 127,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_without_verifier_accepted_candidate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_without_verifier_accepted_candidate_count",
+      "ordinal": 128,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_nonpass_rate",
+        "first_attempt_nonpass_rate_ci95_low",
+        "first_attempt_nonpass_rate_ci95_high",
+        "first_attempt_nonpass_rate_bootstrap_variance",
+        "first_attempt_nonpass_rate_bootstrap_standard_error",
+        "metric_metadata.first_attempt_nonpass_rate.case_cluster_count",
+        "metric_metadata.first_attempt_nonpass_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_nonpass_rate",
+      "ordinal": 129,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_provider_transport_failure_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_provider_transport_failure_count",
+      "ordinal": 130,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_parse_schema_unusable_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_parse_schema_unusable_count",
+      "ordinal": 131,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_verification_checker_rejection_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_verification_checker_rejection_count",
+      "ordinal": 132,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_checkable_candidate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_checkable_candidate_count",
+      "ordinal": 133,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_explicitly_rejected_by_verifier_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_explicitly_rejected_by_verifier_count",
+      "ordinal": 134,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_verification_rejection_rate",
+        "first_attempt_verification_rejection_rate_ci95_low",
+        "first_attempt_verification_rejection_rate_ci95_high",
+        "first_attempt_verification_rejection_rate_bootstrap_variance",
+        "first_attempt_verification_rejection_rate_bootstrap_standard_error",
+        "metric_metadata.first_attempt_verification_rejection_rate.case_cluster_count",
+        "metric_metadata.first_attempt_verification_rejection_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_verification_rejection_rate",
+      "ordinal": 135,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "planned_first_attempt_ai_unit_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "planned_first_attempt_ai_unit_count",
+      "ordinal": 136,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "actual_first_provider_attempt_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "actual_first_provider_attempt_count",
+      "ordinal": 137,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_call_coverage",
+        "first_attempt_call_coverage_ci95_low",
+        "first_attempt_call_coverage_ci95_high",
+        "first_attempt_call_coverage_bootstrap_variance",
+        "first_attempt_call_coverage_bootstrap_standard_error",
+        "metric_metadata.first_attempt_call_coverage.case_cluster_count",
+        "metric_metadata.first_attempt_call_coverage.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_call_coverage",
+      "ordinal": 138,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "actual_total_tokens"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "actual_total_tokens",
+      "ordinal": 139,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "actual_cost_estimate_cny"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "actual_cost_estimate_cny",
+      "ordinal": 140,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "repeat0_wall_clock_ms"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "repeat0_wall_clock_ms",
+      "ordinal": 141,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "model_wall_clock_median_ms"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "model_wall_clock_median_ms",
+      "ordinal": 142,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "model_wall_clock_min_ms"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "model_wall_clock_min_ms",
+      "ordinal": 143,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "model_wall_clock_max_ms"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "model_wall_clock_max_ms",
+      "ordinal": 144,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "model_wall_clock_range_ms"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "model_wall_clock_range_ms",
+      "ordinal": 145,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "completion_rate",
+        "completion_rate_ci95_low",
+        "completion_rate_ci95_high",
+        "completion_rate_bootstrap_variance",
+        "completion_rate_bootstrap_standard_error",
+        "metric_metadata.completion_rate.case_cluster_count",
+        "metric_metadata.completion_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "completion_rate",
+      "ordinal": 146,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_nonpass_rate",
+        "first_attempt_nonpass_rate_ci95_low",
+        "first_attempt_nonpass_rate_ci95_high",
+        "first_attempt_nonpass_rate_bootstrap_variance",
+        "first_attempt_nonpass_rate_bootstrap_standard_error",
+        "metric_metadata.first_attempt_nonpass_rate.case_cluster_count",
+        "metric_metadata.first_attempt_nonpass_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_nonpass_rate",
+      "ordinal": 147,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_verification_rejection_rate",
+        "first_attempt_verification_rejection_rate_ci95_low",
+        "first_attempt_verification_rejection_rate_ci95_high",
+        "first_attempt_verification_rejection_rate_bootstrap_variance",
+        "first_attempt_verification_rejection_rate_bootstrap_standard_error",
+        "metric_metadata.first_attempt_verification_rejection_rate.case_cluster_count",
+        "metric_metadata.first_attempt_verification_rejection_rate.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_verification_rejection_rate",
+      "ordinal": 148,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "first_attempt_call_coverage",
+        "first_attempt_call_coverage_ci95_low",
+        "first_attempt_call_coverage_ci95_high",
+        "first_attempt_call_coverage_bootstrap_variance",
+        "first_attempt_call_coverage_bootstrap_standard_error",
+        "metric_metadata.first_attempt_call_coverage.case_cluster_count",
+        "metric_metadata.first_attempt_call_coverage.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "first_attempt_call_coverage",
+      "ordinal": 149,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "root_actual_total_tokens",
+        "root_actual_total_tokens_median",
+        "root_actual_total_tokens_q25",
+        "root_actual_total_tokens_q75",
+        "root_actual_total_tokens_iqr",
+        "root_actual_total_tokens_sample_variance",
+        "root_actual_total_tokens_sample_stddev",
+        "root_actual_total_tokens_median_ci95_low",
+        "root_actual_total_tokens_median_ci95_high",
+        "root_actual_total_tokens_median_bootstrap_variance",
+        "root_actual_total_tokens_median_bootstrap_standard_error",
+        "metric_metadata.root_actual_total_tokens.case_cluster_count",
+        "metric_metadata.root_actual_total_tokens.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "root_actual_total_tokens",
+      "ordinal": 150,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "root_actual_cost_estimate_cny",
+        "root_actual_cost_estimate_cny_median",
+        "root_actual_cost_estimate_cny_q25",
+        "root_actual_cost_estimate_cny_q75",
+        "root_actual_cost_estimate_cny_iqr",
+        "root_actual_cost_estimate_cny_sample_variance",
+        "root_actual_cost_estimate_cny_sample_stddev",
+        "root_actual_cost_estimate_cny_median_ci95_low",
+        "root_actual_cost_estimate_cny_median_ci95_high",
+        "root_actual_cost_estimate_cny_median_bootstrap_variance",
+        "root_actual_cost_estimate_cny_median_bootstrap_standard_error",
+        "metric_metadata.root_actual_cost_estimate_cny.case_cluster_count",
+        "metric_metadata.root_actual_cost_estimate_cny.valid_bootstrap_replicate_count"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "root_actual_cost_estimate_cny",
+      "ordinal": 151,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    },
+    {
+      "evidence_fields": [
+        "repeat_wall_clock_ms"
+      ],
+      "formula_producer": "_reduce_exp5",
+      "metric_id": "repeat_wall_clock_ms",
+      "ordinal": 152,
+      "production_reason": null,
+      "production_status": "computed_or_legal_null",
+      "row_kind": "model",
+      "table_scope": "exp5"
+    }
+  ],
+  "formal_metric_unique_id_count": 129,
+  "paper_root_inventory_counts": {
+    "exp1": 435,
+    "exp2": 600,
+    "exp3": 3726,
+    "exp4": 2145,
+    "exp5": 111
+  },
+  "provider_calls_observed": {
+    "exp1": 2124,
+    "exp2": 0,
+    "exp3": 0,
+    "exp4": 0,
+    "exp5": 808
+  },
+  "quantile_method": "hyndman_fan_type_7",
+  "resource_semantics": {
+    "exp3": "simulated_trace_attributed"
+  },
+  "schema_version": "tokenshare.slim_v2.reducer_summary.v1",
+  "tables": {
+    "exp1": {
+      "csv": "tables/exp1.csv",
+      "jsonl": "tables/exp1.jsonl",
+      "row_count": 12
+    },
+    "exp2": {
+      "csv": "tables/exp2.csv",
+      "jsonl": "tables/exp2.jsonl",
+      "row_count": 88
+    },
+    "exp3": {
+      "csv": "tables/exp3.csv",
+      "jsonl": "tables/exp3.jsonl",
+      "row_count": 684
+    },
+    "exp4": {
+      "csv": "tables/exp4.csv",
+      "jsonl": "tables/exp4.jsonl",
+      "row_count": 648
+    },
+    "exp5": {
+      "csv": "tables/exp5.csv",
+      "jsonl": "tables/exp5.jsonl",
+      "row_count": 3
+    }
+  }
+}
