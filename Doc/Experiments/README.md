@@ -7,10 +7,10 @@
 - 系统本体与运行时：`src/tokenshare/core/`、`src/tokenshare/storage/`、`src/tokenshare/local_runtime/`、`src/tokenshare/protocol_engine.py`。
 - 领域插件：Factorization 插件与 Lean proof 插件。
 - 最小 executor 能力：真实 provider transport/body descriptor 所需闭包，以及普通离线测试 helper。
-- 公开实验代码入口：`src/tokenshare/experiments/`（Task F 迁入）。
+- 公开实验代码入口：`src/tokenshare/experiments/`，命令行为 `python -m tokenshare.experiments.cli`，Windows GUI launcher 为 `run_experiments.cmd`。
 - 权威 corpus 与 provider config：`benchmarks/experiments/`、`configs/experiments/`。
 - 正式发布结果：`results/experiments/`（Task G 迁入）。
-- 最小验证入口：`verification/` 中公开 extraction/corpus/results gates。
+- 最小验证入口：当前为 `verification/verify_authoritative_corpus.py`；result/extraction gates 后续迁入。
 
 ## 冻结来源身份
 
@@ -62,4 +62,4 @@ conda run -n tokenshare python verification/verify_authoritative_corpus.py
 conda run -n tokenshare python -m pytest tests/experiments/test_authoritative_corpus.py -q
 ```
 
-Task H 会在 fresh clean review worktree 中运行完整 extraction gates、compileall 与一个有界本地 Lean checker smoke；不会调用真实 provider，不会重跑 Full 或 LeanAudit。
+Task G 会迁入正式结果与 result verifier；Task H 会在 fresh clean review worktree 中运行完整 extraction gates、compileall 与一个有界本地 Lean checker smoke；不会调用真实 provider，不会重跑 Full 或 LeanAudit。

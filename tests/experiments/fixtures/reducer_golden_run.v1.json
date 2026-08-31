@@ -1,0 +1,49 @@
+{
+  "schema_version": "tokenshare.slim_v2.reducer_golden_run.v1",
+  "expected": {
+    "formal_metric_id_count": 153,
+    "exp1_easy": {
+      "preregistered_root_count": 1,
+      "actual_total_tokens": 100,
+      "actual_provider_latency_ms": 10,
+      "actual_cost_estimate_cny": 1.0
+    },
+    "exp1_no_final": {
+      "preregistered_root_count": 1,
+      "completion_rate": 0.0,
+      "no_final_failure_count": 1
+    },
+    "exp1_missing": {
+      "preregistered_root_count": 1,
+      "completion_rate": null,
+      "missing_reason": "missing_committed_root_result"
+    },
+    "exp2_worker10_pair": {
+      "trace_replay_paired_speedup": 5.0,
+      "trace_replay_parallel_efficiency": 0.5,
+      "paired_speedup_eligible_pair_count": 1,
+      "paired_trace_token_multiplier_ineligible_pair_count": 1,
+      "paired_trace_cost_multiplier_eligible_pair_count": 1
+    },
+    "exp3_fault_pair": {
+      "preregistered_root_count": 1,
+      "simulated_wall_clock_overhead_ms": 5,
+      "simulated_token_overhead": 20,
+      "simulated_trace_attributed_cost_overhead": 0.00027
+    },
+    "exp3_death_pair": {
+      "preregistered_root_count": 1,
+      "simulated_wall_clock_overhead_ms": 3,
+      "simulated_token_overhead": 10
+    },
+    "exp4_vp_interaction": {
+      "planned_quadruple_count": 1,
+      "eligible_quadruple_count": 1,
+      "pair_interaction_success_penalty_ij": 1.0,
+      "pair_interaction_completion_penalty_ij": 1.0,
+      "pair_interaction_required_slot_penalty_ij": 1.0
+    },
+    "exp4_interaction_row_count": 6,
+    "exp5_endpoint_count": 3
+  }
+}

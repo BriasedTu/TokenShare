@@ -7,26 +7,27 @@ This repository has one experiment facility: `tokenshare.experiments`. Its publi
 - the protocol system and its runtime, storage, plugin, and executor boundaries;
 - the single `experiments` package and launcher;
 - the official benchmark corpus and provider configurations;
-- the official metrics retained from the full experiment run.
+- the official metrics retained from the full experiment run after the result extraction stage.
 
-The current skeleton establishes the public package, documentation, and launcher contract. Later extraction commits will add the retained system, experiment implementation, official corpus, official metrics, and verification harness before publication.
+The current public package contains the retained protocol runtime, plugin core, minimal executor closure, official corpus/config files, current experiment implementation, focused tests, and the authoritative corpus verifier. Later extraction stages add the retained official metrics and final publication verification gates.
 
 ## Public layout by extraction stage
 
-The current skeleton contains:
+The current public extraction contains:
 
-- `src/tokenshare/`: the public package root and minimal `tokenshare.experiments` package.
-- `run_experiments.cmd`: the Windows launcher contract.
+- `src/tokenshare/`: the public system package root, including protocol runtime, storage, plugins, executor descriptors/transports, and `tokenshare.experiments`.
+- `tests/`: focused offline tests for the retained system, plugins, executors, corpus, and experiments.
+- `benchmarks/experiments/`: official benchmark corpus and proof fixtures.
+- `configs/experiments/`: official provider configurations without secrets.
+- `Doc/Experiments/`: experiment design, metrics, integration, corpus, and public package documentation.
+- `verification/`: the authoritative corpus verifier.
+- `run_experiments.cmd`: the Windows GUI launcher for `tokenshare.experiments.gui`.
 - the root documentation and repository policy files.
 
 Later extraction commits, before publication, will add:
 
-- the protocol runtime, storage, plugins, executors, and complete experiment implementation under `src/tokenshare/`;
-- `benchmarks/experiments/`: official benchmark corpus and proof fixtures.
-- `configs/experiments/`: official provider configurations without secrets.
 - `results/experiments/`: official result files and their manifest.
-- `verification/`: focused system, experiment, corpus, and result checks.
-- `Doc/Experiments/`: experiment design, metrics, integration, corpus, and code-map documentation.
+- `verification/`: result and extraction gates beyond the current corpus verifier.
 
 ## Start here
 
@@ -37,10 +38,10 @@ python -m pip install -r requirements.txt
 $env:PYTHONPATH = (Resolve-Path .\src).Path
 ```
 
-The Windows launcher sets the same repository-local `src` import path automatically. After the experiment implementation is added by its later extraction commit, launch the interface with:
+The Windows launcher sets the same repository-local `src` import path automatically. Launch the interface with:
 
 ```powershell
 .\run_experiments.cmd
 ```
 
-Routine verification must use fake or deterministic executors. Real provider calls require explicit authorization.
+Routine verification must use fake or deterministic executors. Real provider calls require explicit authorization. For repeatable local checks, start with `REPRODUCIBILITY.md`.
