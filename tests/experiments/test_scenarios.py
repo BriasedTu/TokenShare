@@ -1134,6 +1134,76 @@ def test_exp4_failed_source_before_parser_is_valid_no_final_actual_evidence(
     )
 
 
+def test_exp4_arbitrary_runtime_exception_preserves_unexpected_runtime_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case, source_store, transport = _acquire_factor_source(tmp_path, monkeypatch)
+    source_transport_count = len(transport.responses)
+    plan = ChallengePlanV1(
+        challenge_plan_id="plan-arbitrary-runtime-failure",
+        case_id=str(case["case_id"]),
+        repeat_id=1,
+        challenge_family="PARSER_REQUIRED_CANONICAL_JSON",
+        target_rule="stable_first_planned_unit",
+        attempt_rule="every_attempt",
+    )
+    inventory = _inventory(
+        experiment_id="exp4",
+        case=case,
+        domain="factorization",
+        mode="NO_VERIFICATION__NO_PARSER_POLICY",
+        challenge_plan_id=plan.challenge_plan_id,
+    )
+
+    def raise_nonmatching_error_after_merge_evidence(scenario: object) -> None:
+        observer = scenario.route_observer
+        record_merge = observer.before_merge
+
+        def fail(context: object) -> None:
+            record_merge(context)
+            raise RuntimeError("arbitrary Exp4 runtime failure")
+
+        monkeypatch.setattr(observer, "before_merge", fail)
+
+    scenario, _assembly, protocol, row = _run_factor_scenario(
+        tmp_path / "arbitrary-runtime-failure",
+        inventory=inventory,
+        case=case,
+        source_store=source_store,
+        challenge_plan=plan,
+        before_run=raise_nonmatching_error_after_merge_evidence,
+    )
+
+    assert len(transport.responses) == source_transport_count
+    assert scenario.provider_call_count == 0
+    assert scenario.mechanism_policy.parser_policy_enabled is False
+    assert scenario.mechanism_policy.verification_enabled is False
+    latest_merge = scenario.route_observer.merge_records[-1]
+    assert latest_merge["boundary"] == "normal_merge"
+    assert latest_merge["required_child_unit_ids"]
+    assert set(latest_merge["canonical_child_unit_ids"]) == set(
+        latest_merge["required_child_unit_ids"]
+    )
+    assert latest_merge["missing_required_slot_ids"] == ()
+    assert latest_merge["gate_satisfied"] is False
+    assert latest_merge["plugin_merge_attempted"] is False
+
+    assert protocol.status == "failed"
+    assert "experiments_controlled_no_final" not in protocol.summary
+    assert protocol.summary["experiments_runtime_failure"] == {
+        "failure_stage": "protocol_runtime",
+        "failure_kind": "infrastructure_invalid",
+        "error_kind": "RuntimeError",
+        "engine_root_status": "processing",
+    }
+    assert row.root_status == "failed"
+    assert row.final_result_present is False
+    assert row.verified_correct is False
+    assert row.failure_kind == "infrastructure_invalid"
+    assert row.failure_origin == "unexpected_runtime_error"
+
+
 def test_exp4_raw_passthrough_cannot_replace_missing_actual_challenge_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
