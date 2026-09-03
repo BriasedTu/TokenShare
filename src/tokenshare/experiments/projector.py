@@ -106,15 +106,18 @@ def project_root_result(
             }
             or controlled_no_final.get("failure_origin")
             != "ablation_dependency_unavailable"
-            or controlled_no_final.get("failure_stage")
-            not in {"canonical_dependency", "merge_readiness"}
-            or controlled_no_final.get("error_kind")
-            != (
-                "LeanCanonicalDependencyUnavailableError"
-                if controlled_no_final.get("failure_stage")
-                == "canonical_dependency"
-                else "RuntimeError"
+            or (
+                controlled_no_final.get("failure_stage"),
+                controlled_no_final.get("error_kind"),
             )
+            not in {
+                (
+                    "canonical_dependency",
+                    "LeanCanonicalDependencyUnavailableError",
+                ),
+                ("merge_readiness", "RuntimeError"),
+                ("merge_readiness", "IncompleteMergeInputError"),
+            }
             or controlled_no_final.get("engine_root_status") != "processing"
             or inventory.experiment_id != "exp4"
             or protocol_result.status != "processing"

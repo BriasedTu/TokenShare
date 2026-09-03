@@ -36,7 +36,7 @@ from tokenshare.plugins.factorization.runtime_adapter import (
 )
 from tokenshare.plugins.factorization.models import FactorSearchRangeInput
 from tokenshare.plugins.factorization.validator import verify_range_result
-from tokenshare.plugins.contracts import OutputContract
+from tokenshare.plugins.contracts import IncompleteMergeInputError, OutputContract
 from tokenshare.plugins.lean_proof.checker import (
     LeanCheckerMode,
     LeanCheckerRequest,
@@ -320,6 +320,18 @@ def _exp4_controlled_no_final(
     ):
         failure_stage = "canonical_dependency"
     elif (
+        type(error) is IncompleteMergeInputError
+        and str(error)
+        == "Lean merge requires checker-accepted input for every child"
+        and isinstance(assembly.plugin_runtime, LeanRuntimeAdapter)
+        and policy.verification_enabled is False
+        and _has_lean_unchecked_normal_merge_dead_end(
+            assembly=assembly,
+            events=events,
+        )
+    ):
+        failure_stage = "merge_readiness"
+    elif (
         type(error) is RuntimeError
         and str(error)
         == "protocol run stalled before the root reached a terminal state"
@@ -405,6 +417,21 @@ def _submission_documents(
             )
             if not isinstance(document, Mapping):
                 return None
+            for field_name in (
+                "submission_id",
+                "request_id",
+                "task_id",
+                "unit_id",
+                "attempt_id",
+                "lease_id",
+            ):
+                envelope_value = event.payload.get(field_name)
+                if (
+                    not isinstance(envelope_value, str)
+                    or not envelope_value
+                    or document.get(field_name) != envelope_value
+                ):
+                    return None
             documents[submission_id] = document
     except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
         return None
@@ -462,6 +489,214 @@ def _has_lean_unchecked_canonical_child(
         ):
             return True
     return False
+
+
+def _has_lean_unchecked_normal_merge_dead_end(
+    *,
+    assembly: RootAssembly,
+    events: list[Any],
+) -> bool:
+    observer = getattr(assembly.scenario, "route_observer", None)
+    merge_records = getattr(observer, "merge_records", ())
+    if not isinstance(merge_records, (list, tuple)) or not merge_records:
+        return False
+    latest = merge_records[-1]
+    if not isinstance(latest, Mapping) or latest.get("boundary") != "normal_merge":
+        return False
+    required = latest.get("required_child_unit_ids")
+    canonical_ids = latest.get("canonical_child_unit_ids")
+    if (
+        not isinstance(required, (list, tuple))
+        or not required
+        or any(not isinstance(item, str) or not item for item in required)
+        or len(required) != len(set(required))
+        or not isinstance(canonical_ids, (list, tuple))
+        or any(not isinstance(item, str) or not item for item in canonical_ids)
+        or len(canonical_ids) != len(required)
+        or set(canonical_ids) != set(required)
+        or latest.get("missing_required_slot_ids") not in ((), [])
+        or latest.get("gate_satisfied") is not True
+    ):
+        return False
+
+    reports = _synthetic_no_verification_reports(events)
+    submissions = _submission_documents(assembly=assembly, events=events)
+    canonical = _canonical_events_by_unit(events)
+    if reports is None or submissions is None or canonical is None:
+        return False
+    for unit_id in required:
+        event = canonical.get(unit_id)
+        if event is None:
+            return False
+        report_id = event.payload.get("selected_verification_report_id")
+        submission_id = event.payload.get("selected_submission_id")
+        if (
+            not isinstance(report_id, str)
+            or not report_id
+            or not isinstance(submission_id, str)
+            or not submission_id
+        ):
+            return False
+        report = reports.get(report_id)
+        submission = submissions.get(submission_id)
+        if report is None or submission is None:
+            return False
+        canonical_selection = event.payload.get("canonical_selection")
+        report_event = next(
+            (
+                candidate
+                for candidate in events
+                if candidate.event_type == EventType.VERIFICATION_RECORDED
+                and candidate.payload.get("verification_report") is report
+            ),
+            None,
+        )
+        submission_event = next(
+            (
+                candidate
+                for candidate in events
+                if candidate.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+                and candidate.payload.get("submission_id") == submission_id
+            ),
+            None,
+        )
+        if (
+            not isinstance(canonical_selection, Mapping)
+            or report_event is None
+            or submission_event is None
+        ):
+            return False
+        canonical_fields = (
+            "task_id",
+            "unit_id",
+            "selected_verification_report_id",
+            "selected_verification_event_seq",
+            "selected_submission_id",
+            "selected_submission_event_seq",
+            "selected_attempt_id",
+            "canonical_output_refs",
+        )
+        if any(
+            event.payload.get(field_name) != canonical_selection.get(field_name)
+            for field_name in canonical_fields
+        ):
+            return False
+        task_id = canonical_selection.get("task_id")
+        selected_attempt_id = canonical_selection.get("selected_attempt_id")
+        selected_submission_event_seq = canonical_selection.get(
+            "selected_submission_event_seq"
+        )
+        selected_verification_event_seq = canonical_selection.get(
+            "selected_verification_event_seq"
+        )
+        canonical_selection_id = canonical_selection.get("canonical_selection_id")
+        if (
+            not isinstance(task_id, str)
+            or not task_id
+            or not isinstance(selected_attempt_id, str)
+            or not selected_attempt_id
+            or type(selected_submission_event_seq) is not int
+            or selected_submission_event_seq <= 0
+            or type(selected_verification_event_seq) is not int
+            or selected_verification_event_seq <= 0
+            or not isinstance(canonical_selection_id, str)
+            or not canonical_selection_id
+            or event.object_type != "CanonicalSelection"
+            or event.object_id != canonical_selection_id
+            or event.task_id != task_id
+            or canonical_selection.get("unit_id") != unit_id
+            or report_event.object_type != "VerificationReport"
+            or report_event.object_id != report_id
+            or report_event.task_id != task_id
+            or report_event.event_seq != selected_verification_event_seq
+            or submission_event.object_type != "ExecutionSubmission"
+            or submission_event.object_id != submission_id
+            or submission_event.task_id != task_id
+            or submission_event.event_seq != selected_submission_event_seq
+        ):
+            return False
+        report_fields = (
+            "task_id",
+            "unit_id",
+            "attempt_id",
+            "submission_id",
+            "submission_event_seq",
+            "candidate_output_bundle_digest",
+            "validator_policy_id",
+            "status",
+            "eligible_for_canonical",
+        )
+        if any(
+            report_event.payload.get(field_name) != report.get(field_name)
+            for field_name in report_fields
+        ):
+            return False
+        if (
+            report.get("task_id") != task_id
+            or report.get("unit_id") != unit_id
+            or report.get("attempt_id") != selected_attempt_id
+            or report.get("submission_id") != submission_id
+            or report.get("submission_event_seq")
+            != selected_submission_event_seq
+            or submission_event.payload.get("task_id") != task_id
+            or submission_event.payload.get("unit_id") != unit_id
+            or submission_event.payload.get("attempt_id") != selected_attempt_id
+            or submission.get("task_id") != task_id
+            or submission.get("unit_id") != unit_id
+            or submission.get("attempt_id") != selected_attempt_id
+        ):
+            return False
+        submission_ref_body = submission_event.payload.get("submission_ref")
+        if not isinstance(submission_ref_body, Mapping):
+            return False
+        try:
+            submission_ref = ArtifactRef.from_dict(dict(submission_ref_body))
+            submission_ref_verified = assembly.artifact_store.verify(submission_ref)
+        except (KeyError, TypeError, ValueError, OSError):
+            return False
+        if (
+            submission_ref.artifact_id != submission_id
+            or submission_ref.artifact_type != "ExecutionSubmission"
+            or submission_ref.artifact_schema_id != "phase3.execution_submission"
+            or submission_ref.artifact_schema_version != "v1"
+            or submission_event.payload.get("submission_digest")
+            != submission_ref.content_hash
+            or not submission_ref_verified
+        ):
+            return False
+        route = submission.get("environment_summary")
+        route = (
+            route.get("experiments_lean_verification_route_observation")
+            if isinstance(route, Mapping)
+            else None
+        )
+        candidate_refs = submission.get("candidate_output_refs")
+        checker_count = (
+            route.get("domain_child_checker_call_count")
+            if isinstance(route, Mapping)
+            else None
+        )
+        normalize_count = (
+            route.get("normalize_proof_submission_call_count")
+            if isinstance(route, Mapping)
+            else None
+        )
+        if (
+            not isinstance(route, Mapping)
+            or type(checker_count) is not int
+            or checker_count != 0
+            or type(normalize_count) is not int
+            or normalize_count != 0
+            or not isinstance(candidate_refs, Mapping)
+            or not candidate_refs
+            or report.get("candidate_output_refs") != candidate_refs
+            or event.payload.get("canonical_output_refs") != candidate_refs
+            or report.get("unit_id") != unit_id
+            or report.get("submission_id")
+            != event.payload.get("selected_submission_id")
+        ):
+            return False
+    return True
 
 
 def _has_factor_raw_canonical_merge_dead_end(

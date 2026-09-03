@@ -210,10 +210,12 @@ def _acquire_factor_source(
 def _acquire_lean_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    case_id: str = "lean_v2_medium_lemma_dag_01",
 ) -> tuple[dict[str, object], RunStore, _PromptResponseFactory]:
     from tokenshare.experiments import provider
 
-    case = _lean_case("lean_v2_medium_lemma_dag_01")
+    case = _lean_case(case_id)
     factory = _PromptResponseFactory("deepseek-v4-pro")
     monkeypatch.setenv("EXPERIMENTS_TEST_KEY", "fake-only")
     monkeypatch.setattr(provider, "_open_response", factory)
@@ -393,6 +395,7 @@ def _run_lean_scenario(
     challenge_plan: ChallengePlanV1 | None = None,
     checker: RecordingLeanChecker | None = None,
     process_timeout_seconds: float = 30.0,
+    before_run: Callable[[object, RootAssembly], None] | None = None,
 ):
     root = tmp_path / (
         f"{inventory.experiment_id}-"
@@ -440,6 +443,8 @@ def _run_lean_scenario(
         trace_delay_policy="logical_source_latency_1x",
         scenario=scenario,
     )
+    if before_run is not None:
+        before_run(scenario, assembly)
     protocol = run_root_slice(assembly)
     row = project_root_result(
         inventory=inventory,
@@ -1617,6 +1622,495 @@ def test_exp4_mode_blind_challenges_and_all_eleven_real_policies(
         plan=plans[families[0]],
     )
     assert first_plan.target_planned_ai_unit_ids == ("range_0",)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["NO_VERIFICATION", "NO_VERIFICATION__NO_PARSER_POLICY"],
+)
+def test_exp4_lean_required_child_delay_unchecked_merge_dead_end_is_controlled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    case, source_store, _transport = _acquire_lean_source(
+        tmp_path,
+        monkeypatch,
+        case_id="lean_v2_simple_induction_direct_nat_01",
+    )
+    plan = ChallengePlanV1(
+        challenge_plan_id=f"lean-required-child-delay-{mode.lower()}",
+        case_id=str(case["case_id"]),
+        repeat_id=1,
+        challenge_family="REQUIRED_CHILD_DELAY",
+        target_rule="last_required_terminal_slot",
+        attempt_rule="ordinal_0",
+    )
+    inventory = _inventory(
+        experiment_id="exp4",
+        case=case,
+        domain="lean",
+        mode=mode,
+        challenge_plan_id=plan.challenge_plan_id,
+    )
+
+    scenario, assembly, protocol, row, checker = _run_lean_scenario(
+        tmp_path / mode,
+        inventory=inventory,
+        case=case,
+        source_store=source_store,
+        challenge_plan=plan,
+    )
+
+    assert protocol.status == "processing"
+    assert row.root_status == "processing"
+    assert protocol.summary["experiments_controlled_no_final"] == {
+        "failure_origin": "ablation_dependency_unavailable",
+        "failure_stage": "merge_readiness",
+        "error_kind": "IncompleteMergeInputError",
+        "engine_root_status": "processing",
+    }
+    assert "experiments_runtime_failure" not in protocol.summary
+    assert row.failure_kind == "no_final"
+    assert row.failure_origin == "ablation_dependency_unavailable"
+    assert row.failure_stage == "merge_readiness"
+    assert row.final_result_present is False
+    assert row.verified_correct is False
+    assert checker.requests == []
+
+    events = assembly.event_ledger.read_all()
+    assert not any(event.event_type == EventType.MERGE_RECORDED for event in events)
+    normal_merge_records = [
+        item
+        for item in scenario.route_observer.merge_records
+        if item.get("boundary") == "normal_merge"
+    ]
+    assert normal_merge_records
+    latest_merge = normal_merge_records[-1]
+    required_child_ids = tuple(latest_merge["required_child_unit_ids"])
+    canonical_child_ids = tuple(latest_merge["canonical_child_unit_ids"])
+    assert len(required_child_ids) == 1
+    assert set(canonical_child_ids) == set(required_child_ids)
+    assert latest_merge["missing_required_slot_ids"] == ()
+    assert latest_merge["gate_satisfied"] is True
+    assert latest_merge["plugin_merge_attempted"] is False
+    assert latest_merge["plugin_outcome"] == "not_attempted"
+
+    required_child_id = required_child_ids[0]
+    assert any(
+        event.event_type == EventType.TASK_UNIT_STATE_CHANGED
+        and event.payload.get("task_unit", {}).get("unit_id") == required_child_id
+        and event.payload["task_unit"].get("state") == "Completed"
+        for event in events
+    )
+    challenge = row.challenge_observations[0]
+    assert challenge.challenge_family == "REQUIRED_CHILD_DELAY"
+    assert challenge.attempt_ordinal == 0
+    assert challenge.injected is True
+    assert challenge.replacement_started is True
+    assert challenge.replacement_succeeded is True
+    original = next(
+        item
+        for item in row.attempts
+        if item.planned_ai_unit_id == challenge.target_planned_ai_unit_id
+        and item.attempt_ordinal == 0
+    )
+    assert challenge.target_planned_ai_unit_id == original.planned_ai_unit_id
+    assert original.result_kind == "no_return"
+    assert original.canonical_accepted is False
+    recovery = next(
+        item
+        for item in row.recovery_observations
+        if item.original_attempt_id == original.attempt_id
+    )
+    replacement = next(
+        item
+        for item in row.attempts
+        if item.attempt_id == recovery.replacement_attempt_id
+    )
+    assert recovery.replacement_started is True
+    assert recovery.replacement_succeeded is True
+    assert replacement.attempt_ordinal == 1
+    assert replacement.replacement_of_attempt_id == original.attempt_id
+    assert replacement.result_kind == "succeeded"
+    assert replacement.canonical_accepted is True
+
+    synthetic_reports_by_id = {
+        event.payload["verification_report"]["verification_report_id"]:
+        event.payload["verification_report"]
+        for event in events
+        if event.event_type == EventType.VERIFICATION_RECORDED
+        and event.payload["verification_report"]["validator_policy_id"]
+        == "runtime_ablation_no_verification.v1"
+    }
+    submission_by_id = {
+        event.payload["submission_id"]: json.loads(
+            assembly.artifact_store.read_bytes(
+                ArtifactRef.from_dict(event.payload["submission_ref"])
+            )
+        )
+        for event in events
+        if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+    }
+    canonical_event = next(
+        event
+        for event in events
+        if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+        and event.payload.get("unit_id") == required_child_id
+    )
+    report = synthetic_reports_by_id[
+        canonical_event.payload["selected_verification_report_id"]
+    ]
+    submission = submission_by_id[canonical_event.payload["selected_submission_id"]]
+    route = submission["environment_summary"][
+        "experiments_lean_verification_route_observation"
+    ]
+    assert report["metadata"]["synthetic_verification"] is True
+    assert report["metadata"]["domain_verifier_invoked"] is False
+    assert route["domain_child_checker_call_count"] == 0
+    assert route["normalize_proof_submission_call_count"] == 0
+    assert report["candidate_output_refs"] == submission["candidate_output_refs"]
+    assert (
+        canonical_event.payload["canonical_output_refs"]
+        == submission["candidate_output_refs"]
+    )
+    if mode == "NO_VERIFICATION":
+        assert submission["parsed_output_ref"] is not None
+        assert submission["parsed_output_ref"] != submission["raw_output_ref"]
+        assert submission["provenance_ref"] is not None
+        provenance = json.loads(
+            assembly.artifact_store.read_bytes(
+                ArtifactRef.from_dict(submission["provenance_ref"])
+            )
+        )
+        assert provenance["domain_verifier_invoked"] is False
+        assert (
+            provenance["proof_candidate_ref"]
+            == submission["candidate_output_refs"]["lean_proof_artifact"]
+        )
+    else:
+        raw_ref = submission["raw_output_ref"]
+        assert raw_ref is not None
+        assert submission["parsed_output_ref"] == raw_ref
+        assert submission["provenance_ref"] is None
+        assert submission["candidate_output_refs"] == {
+            "lean_proof_artifact": raw_ref,
+        }
+
+
+def test_exp4_lean_required_child_delay_keeps_real_path_negative_controls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case, source_store, _transport = _acquire_lean_source(
+        tmp_path,
+        monkeypatch,
+        case_id="lean_v2_simple_induction_direct_nat_01",
+    )
+
+    def run(mode: str):
+        plan = ChallengePlanV1(
+            challenge_plan_id=f"lean-required-delay-control-{mode.lower()}",
+            case_id=str(case["case_id"]),
+            repeat_id=1,
+            challenge_family="REQUIRED_CHILD_DELAY",
+            target_rule="last_required_terminal_slot",
+            attempt_rule="ordinal_0",
+        )
+        return _run_lean_scenario(
+            tmp_path / mode,
+            inventory=_inventory(
+                experiment_id="exp4",
+                case=case,
+                domain="lean",
+                mode=mode,
+                challenge_plan_id=plan.challenge_plan_id,
+            ),
+            case=case,
+            source_store=source_store,
+            challenge_plan=plan,
+        )
+
+    full = run("FULL")
+    assert full[2].status == "completed"
+    assert full[3].root_status == "completed"
+    assert full[3].final_result_present is True
+    assert full[3].verified_correct is True
+    assert any(
+        event.event_type == EventType.MERGE_RECORDED
+        for event in full[1].event_ledger.read_all()
+    )
+
+    parser_disabled = run("NO_PARSER_POLICY")
+    assert parser_disabled[2].status == "failed"
+    assert parser_disabled[3].failure_kind == "no_final"
+    assert parser_disabled[3].failure_stage == "candidate_acquisition"
+    assert "experiments_controlled_no_final" not in parser_disabled[2].summary
+
+    merge_gate_disabled = run("NO_MERGE_GATE")
+    assert merge_gate_disabled[3].failure_kind == "no_final"
+    assert merge_gate_disabled[3].failure_origin == "premature_merge_no_final"
+    assert merge_gate_disabled[3].failure_stage == "plugin_merge"
+    assert "experiments_controlled_no_final" not in merge_gate_disabled[2].summary
+
+
+def test_exp4_lean_unrelated_incomplete_merge_error_preserves_runtime_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case, source_store, _transport = _acquire_lean_source(
+        tmp_path,
+        monkeypatch,
+        case_id="lean_v2_simple_induction_direct_nat_01",
+    )
+    plan = ChallengePlanV1(
+        challenge_plan_id="lean-unrelated-incomplete-merge-error",
+        case_id=str(case["case_id"]),
+        repeat_id=1,
+        challenge_family="REQUIRED_CHILD_DELAY",
+        target_rule="last_required_terminal_slot",
+        attempt_rule="ordinal_0",
+    )
+    inventory = _inventory(
+        experiment_id="exp4",
+        case=case,
+        domain="lean",
+        mode="NO_VERIFICATION",
+        challenge_plan_id=plan.challenge_plan_id,
+    )
+
+    def inject_unrelated_error(
+        scenario: object,
+        _assembly: RootAssembly,
+    ) -> None:
+        observer = scenario.route_observer
+        original_before_merge = observer.before_merge
+
+        def fail_after_observation(context: object) -> None:
+            original_before_merge(context)
+            raise IncompleteMergeInputError("unrelated Lean merge failure")
+
+        observer.before_merge = fail_after_observation
+
+    _scenario, _assembly, protocol, row, _checker = _run_lean_scenario(
+        tmp_path,
+        inventory=inventory,
+        case=case,
+        source_store=source_store,
+        challenge_plan=plan,
+        before_run=inject_unrelated_error,
+    )
+
+    assert protocol.status == "failed"
+    assert "experiments_controlled_no_final" not in protocol.summary
+    assert protocol.summary["experiments_runtime_failure"]["error_kind"] == (
+        "IncompleteMergeInputError"
+    )
+    assert row.failure_kind == "infrastructure_invalid"
+    assert row.failure_origin == "unexpected_runtime_error"
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "canonical_list_item",
+        "canonical_dict_item",
+        "selected_report_id",
+        "selected_submission_id",
+        "checker_count_bool",
+        "normalize_count_bool",
+        "crosswired_submission",
+        "cross_unit_join",
+        "cross_attempt_join",
+        "crosswired_report_event_unit",
+        "crosswired_report_event_attempt",
+        "crosswired_report_event_submission",
+        "crosswired_submission_event_seq",
+        "crosswired_verification_event_seq",
+    ],
+)
+def test_exp4_lean_merge_classifier_malformed_evidence_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    malformation: str,
+) -> None:
+    case, source_store, _transport = _acquire_lean_source(
+        tmp_path,
+        monkeypatch,
+        case_id="lean_v2_simple_induction_direct_nat_01",
+    )
+    plan = ChallengePlanV1(
+        challenge_plan_id=f"lean-malformed-merge-evidence-{malformation}",
+        case_id=str(case["case_id"]),
+        repeat_id=1,
+        challenge_family="REQUIRED_CHILD_DELAY",
+        target_rule="last_required_terminal_slot",
+        attempt_rule="ordinal_0",
+    )
+    inventory = _inventory(
+        experiment_id="exp4",
+        case=case,
+        domain="lean",
+        mode="NO_VERIFICATION",
+        challenge_plan_id=plan.challenge_plan_id,
+    )
+
+    def install_mutation(scenario: object, assembly: RootAssembly) -> None:
+        original_read_all = assembly.event_ledger.read_all
+        applied = False
+
+        def read_all_with_malformed_evidence():
+            nonlocal applied
+            events = original_read_all()
+            merge_records = scenario.route_observer.merge_records
+            if (
+                applied
+                or not merge_records
+                or merge_records[-1].get("boundary") != "normal_merge"
+            ):
+                return events
+            applied = True
+            latest_merge = merge_records[-1]
+            required_child_id = latest_merge["required_child_unit_ids"][0]
+            if malformation == "canonical_list_item":
+                latest_merge["canonical_child_unit_ids"] = ([required_child_id],)
+                return events
+            if malformation == "canonical_dict_item":
+                latest_merge["canonical_child_unit_ids"] = (
+                    {"unit_id": required_child_id},
+                )
+                return events
+
+            canonical_event = next(
+                event
+                for event in events
+                if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+                and event.payload.get("unit_id") == required_child_id
+            )
+            if malformation == "selected_report_id":
+                canonical_event.payload["selected_verification_report_id"] = []
+                return events
+            if malformation == "selected_submission_id":
+                canonical_event.payload["selected_submission_id"] = {}
+                return events
+
+            canonical_selection = canonical_event.payload["canonical_selection"]
+            verification_event = next(
+                event
+                for event in events
+                if event.event_type == EventType.VERIFICATION_RECORDED
+                and event.payload.get("verification_report", {}).get(
+                    "verification_report_id"
+                )
+                == canonical_event.payload["selected_verification_report_id"]
+            )
+            report = verification_event.payload["verification_report"]
+            if malformation == "crosswired_report_event_unit":
+                verification_event.payload["unit_id"] = "crosswired_unit"
+                return events
+            if malformation == "crosswired_report_event_attempt":
+                verification_event.payload["attempt_id"] = "crosswired_attempt"
+                return events
+            if malformation == "crosswired_report_event_submission":
+                verification_event.payload["submission_id"] = "crosswired_submission"
+                return events
+
+            submission_event_index, submission_event = next(
+                (index, event)
+                for index, event in enumerate(events)
+                if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+                and event.payload.get("submission_id")
+                == canonical_event.payload["selected_submission_id"]
+            )
+            if malformation == "crosswired_submission_event_seq":
+                crosswired_seq = submission_event.event_seq + 1_000
+                report["submission_event_seq"] = crosswired_seq
+                verification_event.payload["submission_event_seq"] = crosswired_seq
+                canonical_event.payload["selected_submission_event_seq"] = crosswired_seq
+                canonical_selection["selected_submission_event_seq"] = crosswired_seq
+                return events
+            if malformation == "crosswired_verification_event_seq":
+                crosswired_seq = verification_event.event_seq + 1_000
+                canonical_event.payload["selected_verification_event_seq"] = crosswired_seq
+                canonical_selection["selected_verification_event_seq"] = crosswired_seq
+                return events
+
+            document = json.loads(
+                assembly.artifact_store.read_bytes(
+                    ArtifactRef.from_dict(submission_event.payload["submission_ref"])
+                )
+            )
+            mutated_submission_id = f"classifier_malformed_{malformation}"
+            document["submission_id"] = mutated_submission_id
+            submission_event.payload["submission_id"] = mutated_submission_id
+            report["submission_id"] = mutated_submission_id
+            verification_event.payload["submission_id"] = mutated_submission_id
+            canonical_event.payload["selected_submission_id"] = mutated_submission_id
+            canonical_selection["selected_submission_id"] = mutated_submission_id
+            events[submission_event_index] = replace(
+                submission_event,
+                object_id=mutated_submission_id,
+            )
+            if malformation == "crosswired_submission":
+                document["submission_id"] = (
+                    f"crosswired:{mutated_submission_id}"
+                )
+            elif malformation in {"cross_unit_join", "cross_attempt_join"}:
+                field_name = (
+                    "unit_id" if malformation == "cross_unit_join" else "attempt_id"
+                )
+                crosswired_value = (
+                    "crosswired_unit"
+                    if malformation == "cross_unit_join"
+                    else "crosswired_attempt"
+                )
+                document[field_name] = crosswired_value
+                submission_event.payload[field_name] = crosswired_value
+            else:
+                route = document["environment_summary"][
+                    "experiments_lean_verification_route_observation"
+                ]
+                route[
+                    "domain_child_checker_call_count"
+                    if malformation == "checker_count_bool"
+                    else "normalize_proof_submission_call_count"
+                ] = False
+            mutated_ref = assembly.artifact_store.save_json(
+                document,
+                artifact_id=mutated_submission_id,
+                artifact_type="ExecutionSubmission",
+                artifact_schema_id="phase3.execution_submission",
+                artifact_schema_version="v1",
+                source={"kind": "test_classifier_mutation"},
+                metadata={"malformation": malformation},
+                created_at=NOW,
+            )
+            submission_event.payload["submission_ref"] = mutated_ref.to_dict()
+            submission_event.payload["submission_digest"] = mutated_ref.content_hash
+            return events
+
+        monkeypatch.setattr(
+            assembly.event_ledger,
+            "read_all",
+            read_all_with_malformed_evidence,
+        )
+
+    _scenario, _assembly, protocol, row, _checker = _run_lean_scenario(
+        tmp_path,
+        inventory=inventory,
+        case=case,
+        source_store=source_store,
+        challenge_plan=plan,
+        before_run=install_mutation,
+    )
+
+    assert protocol.status == "failed"
+    assert "experiments_controlled_no_final" not in protocol.summary
+    assert protocol.summary["experiments_runtime_failure"]["error_kind"] == (
+        "IncompleteMergeInputError"
+    )
+    assert row.failure_kind == "infrastructure_invalid"
+    assert row.failure_origin == "unexpected_runtime_error"
 
 
 def test_exp4_lean_structural_parser_verifier_and_merge_routes(
