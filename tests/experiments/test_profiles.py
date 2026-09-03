@@ -116,23 +116,24 @@ def _expected_full_ids() -> dict[str, tuple[str, ...]]:
         for topic in TOPICS
         for case_id in lean_by_stratum[(difficulty, topic)]
     )
+    exp3_factor = tuple(
+        case_id
+        for case_id in (
+            factor_by_difficulty["easy"][:17]
+            + factor_by_difficulty["medium"][:17]
+            + factor_by_difficulty["hard"][:16]
+        )
+        if case_id != "factor_v2_easy_110"
+    )
     return {
         "exp1_factor": exp1_factor,
         "exp1_lean": exp1_lean,
         "exp2_factor": factor_by_difficulty["hard"][:50],
-        "exp3_factor": (
-            factor_by_difficulty["easy"][:17]
-            + factor_by_difficulty["medium"][:17]
-            + factor_by_difficulty["hard"][:16]
-        ),
+        "exp3_factor": exp3_factor,
         "exp3_lean": tuple(
             lean_by_stratum[("simple", topic)][0] for topic in TOPICS
         ),
-        "exp4_factor": (
-            factor_by_difficulty["easy"][:17]
-            + factor_by_difficulty["medium"][:17]
-            + factor_by_difficulty["hard"][:16]
-        ),
+        "exp4_factor": exp3_factor,
         "exp4_lean": tuple(
             case_id
             for difficulty in LEAN_DIFFICULTIES
@@ -194,9 +195,9 @@ def test_full_case_ids_match_all_authority_strata_and_counts() -> None:
         300,
         135,
         50,
-        50,
+        49,
         3,
-        50,
+        49,
         15,
         28,
         9,
@@ -254,6 +255,12 @@ def test_exp3_and_exp4_case_id_tuples_match_frozen_selection_rules_exactly() -> 
     assert profiles.EXP4_FACTORIZATION_CASE_IDS == expected["exp4_factor"]
     assert profiles.EXP4_LEAN_CASE_IDS == expected["exp4_lean"]
     assert profiles.EXP3_FACTORIZATION_CASE_IDS == profiles.EXP4_FACTORIZATION_CASE_IDS
+    assert "factor_v2_easy_110" not in profiles.EXP3_FACTORIZATION_CASE_IDS
+    assert "factor_v2_easy_110" not in profiles.EXP4_FACTORIZATION_CASE_IDS
+    assert len(profiles.EXP3_FACTORIZATION_CASE_IDS) == 49
+    assert len(profiles.EXP3_LEAN_CASE_IDS) == 3
+    assert len(profiles.EXP4_FACTORIZATION_CASE_IDS) == 49
+    assert len(profiles.EXP4_LEAN_CASE_IDS) == 15
 
 
 def test_full_trace_consumer_closure_uses_only_exp2_to_exp4_cases() -> None:
@@ -286,8 +293,8 @@ def test_full_trace_consumer_closure_uses_only_exp2_to_exp4_cases() -> None:
     assert tail_required == consumers
     assert tail_required.isdisjoint(tail_not_required)
     assert tail_required | tail_not_required == {row.case_id for row in exp1_rows}
-    assert len(tail_required) == 99
-    assert len(tail_not_required) == 336
+    assert len(tail_required) == 98
+    assert len(tail_not_required) == 337
 
 
 def test_representative_case_ids_and_strata_are_exact() -> None:
@@ -362,13 +369,13 @@ def test_full_condition_and_root_counts_match_canonical_inventory() -> None:
     assert inventory.paper_root_counts == {
         "exp1": 435,
         "exp2": 600,
-        "exp3": 3_726,
-        "exp4": 2_145,
+        "exp3": 3_654,
+        "exp4": 2_112,
         "exp5": 111,
     }
-    assert inventory.paper_root_count == 7_017
-    assert inventory.reference_root_counts == {"exp3": 106}
-    assert inventory.execution_root_count == 7_123
+    assert inventory.paper_root_count == 6_912
+    assert inventory.reference_root_counts == {"exp3": 104}
+    assert inventory.execution_root_count == 7_016
     assert inventory.condition_counts == {
         "exp1": 12,
         "exp2": 48,
@@ -474,11 +481,14 @@ def test_full_attempt_and_provider_call_hard_caps_are_derived_from_inventory() -
         for root in exp3_roots
         if conditions[root.condition_id].dead_worker_count is not None
     )
-    assert (exp3_rate_units, exp3_death_units) == (13_920, 2_808)
-    assert plan.experiments["exp3"].planned_first_attempt_ai_units == 16_728
+    assert (exp3_rate_units, exp3_death_units) == (13_800, 2_784)
+    assert plan.experiments["exp3"].paper_root_count == 3_654
+    assert plan.experiments["exp3"].reference_root_count == 104
+    assert plan.experiments["exp3"].planned_first_attempt_ai_units == 16_584
     assert plan.experiments["exp3"].protocol_execution_attempt_upper == (
         3 * exp3_rate_units + 4 * exp3_death_units
-    ) == 52_992
+    ) == 52_536
+    assert plan.experiments["exp3"].provider_call_upper == 0
 
     exp4_roots = [root for root in inventory.roots if root.experiment_id == "exp4"]
     exp4_mode_repeat_units = Counter(
@@ -486,13 +496,16 @@ def test_full_attempt_and_provider_call_hard_caps_are_derived_from_inventory() -
         for root in exp4_roots
         for _unit in range(root.planned_ai_unit_count)
     )
-    assert set(exp4_mode_repeat_units.values()) == {293}
-    assert plan.experiments["exp4"].planned_first_attempt_ai_units == 9_669
+    assert set(exp4_mode_repeat_units.values()) == {291}
+    assert plan.experiments["exp4"].paper_root_count == 2_112
+    assert plan.experiments["exp4"].planned_first_attempt_ai_units == 9_603
     assert plan.experiments["exp4"].protocol_execution_attempt_upper == (
-        7 * 3 * 293 * 2 + 4 * 3 * 293
-    ) == 15_822
+        7 * 3 * 291 * 2 + 4 * 3 * 291
+    ) == 15_714
+    assert plan.experiments["exp4"].provider_call_upper == 0
     assert plan.experiments["exp2"].protocol_execution_attempt_upper == 14_400
-    assert plan.exp3_reference_protocol_execution_attempt_upper == 1_404
+    assert plan.exp3_reference_planned_first_attempt_ai_units == 464
+    assert plan.exp3_reference_protocol_execution_attempt_upper == 1_392
     assert plan.experiments["exp5"].planned_first_attempt_ai_units == 852
     assert plan.experiments["exp5"].protocol_execution_attempt_upper == 852
     assert plan.experiments["exp5"].provider_call_upper == 852
@@ -504,8 +517,8 @@ def test_full_attempt_and_provider_call_hard_caps_are_derived_from_inventory() -
             plan.exp3_reference_protocol_execution_attempt_upper,
         )
     )
-    assert fixed_replay_attempts == 84_618
-    assert fixed_replay_attempts + plan.online_provider_call_upper == 91_380
+    assert fixed_replay_attempts == 84_042
+    assert fixed_replay_attempts + plan.online_provider_call_upper == 90_804
     assert plan.online_provider_call_upper == 6_762
     assert plan.online_provider_call_upper == sum(
         experiment.provider_call_upper for experiment in plan.experiments.values()
@@ -531,13 +544,13 @@ def test_exp3_reference_inventory_is_separate_from_paper_denominator() -> None:
     inventory = build_inventory("full")
     plan = build_plan("full")
 
-    assert len(inventory.references) == 106
+    assert len(inventory.references) == 104
     assert not {root.root_run_id for root in inventory.references} & {
         root.root_run_id for root in inventory.roots
     }
     assert all(root.is_paper_denominator is False for root in inventory.references)
-    assert plan.exp3_reference_planned_first_attempt_ai_units == 468
-    assert plan.exp3_reference_protocol_execution_attempt_upper == 1_404
+    assert plan.exp3_reference_planned_first_attempt_ai_units == 464
+    assert plan.exp3_reference_protocol_execution_attempt_upper == 1_392
 
 
 def test_exp4_full_challenge_quotas_and_mode_expansion_are_exact() -> None:
@@ -547,15 +560,15 @@ def test_exp4_full_challenge_quotas_and_mode_expansion_are_exact() -> None:
     quotas = Counter(plan.challenge_family for plan in inventory.challenges)
     exp4_roots = [root for root in inventory.roots if root.experiment_id == "exp4"]
 
-    assert len(inventory.challenges) == 195
+    assert len(inventory.challenges) == 192
     assert quotas == {
-        "INVALID_PARSED_CANDIDATE": 49,
-        "PARSER_REQUIRED_CANONICAL_JSON": 49,
+        "INVALID_PARSED_CANDIDATE": 48,
+        "PARSER_REQUIRED_CANONICAL_JSON": 48,
         "RECOVERABLE_NO_RETURN": 48,
-        "REQUIRED_CHILD_DELAY": 49,
+        "REQUIRED_CHILD_DELAY": 48,
     }
     assert len(EXP4_MODES) == 11
-    assert len(exp4_roots) == len(inventory.challenges) * len(EXP4_MODES) == 2_145
+    assert len(exp4_roots) == len(inventory.challenges) * len(EXP4_MODES) == 2_112
     assert {
         (root.case_id, root.repeat_id, root.challenge_plan_id)
         for root in exp4_roots
@@ -584,7 +597,7 @@ def test_full_required_child_delay_targets_follow_domain_and_primality() -> None
     ]
 
     assert [plan.challenge_plan_id for plan in inventory.challenges] == [
-        f"exp4-challenge-{ordinal:03d}" for ordinal in range(195)
+        f"exp4-challenge-{ordinal:03d}" for ordinal in range(192)
     ]
     expected_factor_order = sorted(
         [
@@ -610,7 +623,7 @@ def test_full_required_child_delay_targets_follow_domain_and_primality() -> None
     assert [(plan.case_id, plan.repeat_id) for plan in inventory.challenges] == (
         expected_factor_order + expected_lean_order
     )
-    assert len(factor_delay) == 37
+    assert len(factor_delay) == 36
     assert len(lean_delay) == 12
     for plan in factor_delay:
         row = factor[plan.case_id]
@@ -728,7 +741,7 @@ def test_plan_reports_exp2_and_exp3_reference_ceilings_from_frozen_units() -> No
     assert (
         full.exp3_reference_planned_first_attempt_ai_units,
         full.exp3_reference_protocol_execution_attempt_upper,
-    ) == (468, 1_404)
+    ) == (464, 1_392)
     assert (
         representative.experiments["exp2"].planned_first_attempt_ai_units,
         representative.experiments["exp2"].protocol_execution_attempt_upper,

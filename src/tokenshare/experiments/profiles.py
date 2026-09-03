@@ -507,7 +507,6 @@ EXP2_FACTORIZATION_CASE_IDS = (
 
 EXP3_FACTORIZATION_CASE_IDS = (
     "factor_v2_easy_036",
-    "factor_v2_easy_110",
     "factor_v2_easy_018",
     "factor_v2_easy_063",
     "factor_v2_easy_106",
@@ -566,7 +565,6 @@ EXP3_LEAN_CASE_IDS = (
 
 EXP4_FACTORIZATION_CASE_IDS = (
     "factor_v2_easy_036",
-    "factor_v2_easy_110",
     "factor_v2_easy_018",
     "factor_v2_easy_063",
     "factor_v2_easy_106",

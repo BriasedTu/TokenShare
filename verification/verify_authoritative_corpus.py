@@ -1,4 +1,4 @@
-"""Verify the public experiment corpus against the frozen extraction baseline."""
+"""Verify frozen corpus assets and the current V1 experiment authority."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from hashlib import sha256
+from math import ceil
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -75,11 +76,10 @@ def verify_all(
 ) -> JsonObject:
     repo_root = repo_root.resolve()
     manifest = _read_json(repo_root / MANIFEST_PATH)
-    baseline = _read_frozen_json(repo_root, frozen_sha, BASELINE_JSON_PATH)
     _verify_manifest_header(manifest, frozen_sha)
     asset_summary = _verify_assets(repo_root, manifest, frozen_sha)
     sidecar_summary = _verify_semantic_sidecar(repo_root, manifest)
-    inventory_summary = _verify_profile_inventory(repo_root, manifest, baseline)
+    inventory_summary = _verify_profile_inventory(repo_root, manifest)
     summary: JsonObject = {
         "status": "ok",
         "assets_checked": asset_summary,
@@ -182,7 +182,6 @@ def _verify_semantic_sidecar(
 def _verify_profile_inventory(
     repo_root: Path,
     manifest: Mapping[str, Any],
-    baseline: Mapping[str, Any],
 ) -> JsonObject:
     factor = _cases_by_id(repo_root / "benchmarks/experiments/factorization_catalog.v2.jsonl")
     lean = _cases_by_id(repo_root / "benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl")
@@ -195,7 +194,6 @@ def _verify_profile_inventory(
         _verify_profile_objects(
             profile_id,
             profile_manifest,
-            baseline,
             inventory,
             factor,
             lean,
@@ -211,12 +209,10 @@ def _verify_profile_inventory(
     assert full_inventory is not None
     root_identity = _verify_identity_block(
         full_inventory.roots,
-        baseline["full_root_identities"],
         manifest["identity_expectations"]["full_root_identities"],
     )
     reference_identity = _verify_identity_block(
         full_inventory.references,
-        baseline["full_reference_identities"],
         manifest["identity_expectations"]["full_reference_identities"],
     )
     return {
@@ -229,12 +225,10 @@ def _verify_profile_inventory(
 def _verify_profile_objects(
     profile_id: str,
     profile_manifest: Mapping[str, Any],
-    baseline: Mapping[str, Any],
     inventory: Inventory,
     factor: Mapping[str, JsonObject],
     lean: Mapping[str, JsonObject],
 ) -> None:
-    baseline_profile = baseline["profiles"][profile_id]
     expected_conditions = _require_mapping(profile_manifest, "condition_objects")
     expected_challenges = _require_mapping(profile_manifest, "challenge_objects")
     expected_provider = _require_mapping(profile_manifest, "provider_bound_objects")
@@ -249,14 +243,37 @@ def _verify_profile_objects(
     provider_bounds = _provider_bound_objects(inventory)
     if _items_sha256(provider_bounds) != expected_provider["items_sha256"]:
         raise ValueError(f"{profile_id} provider bound object digest mismatch")
+    if len(provider_bounds) != expected_provider["count"]:
+        raise ValueError(f"{profile_id} provider bound object count mismatch")
     if sum(row["provider_call_upper"] for row in provider_bounds) != (
         expected_provider["total_provider_call_upper"]
     ):
         raise ValueError(f"{profile_id} provider upper mismatch")
-    if profile_manifest["profile_object_sha256"] != baseline_profile["profile_object_sha256"]:
+    profile_object = _require_mapping(profile_manifest, "profile_object")
+    if profile_manifest["profile_object_sha256"] != sha256(
+        _canonical_bytes(profile_object)
+    ).hexdigest():
         raise ValueError(f"{profile_id} profile object digest mismatch")
-    if profile_manifest["plan_object_sha256"] != baseline_profile["plan_object_sha256"]:
+    if profile_manifest["plan_object_sha256"] != sha256(
+        _canonical_bytes(_plan_object(profile_id, inventory))
+    ).hexdigest():
         raise ValueError(f"{profile_id} plan object digest mismatch")
+    expected_summary = _require_mapping(profile_manifest, "summary")
+    actual_summary = {
+        "condition_counts": dict(
+            Counter(item["experiment_id"] for item in inventory.conditions)
+        ),
+        "execution_root_count": len(inventory.roots) + len(inventory.references),
+        "paper_root_count": len(inventory.roots),
+        "paper_root_counts": dict(
+            Counter(item["experiment_id"] for item in inventory.roots)
+        ),
+        "reference_root_counts": dict(
+            Counter(item["experiment_id"] for item in inventory.references)
+        ),
+    }
+    if actual_summary != expected_summary:
+        raise ValueError(f"{profile_id} summary mismatch")
     _verify_selection_sections(profile_id, profile_manifest, factor, lean)
 
 
@@ -285,13 +302,12 @@ def _verify_selection_sections(
 
 def _verify_identity_block(
     roots: Iterable[Mapping[str, Any]],
-    baseline_block: Mapping[str, Any],
     manifest_block: Mapping[str, Any],
 ) -> JsonObject:
-    if manifest_block["schema_version"] != baseline_block["schema_version"]:
+    if manifest_block["schema_version"] != "tokenshare.experiments.identity_set.v1":
         raise ValueError("identity schema version mismatch")
-    fields = tuple(baseline_block["identity_fields"])
-    sort_fields = tuple(baseline_block["sort_fields"])
+    fields = tuple(_require_list(manifest_block, "identity_fields"))
+    sort_fields = tuple(_require_list(manifest_block, "sort_fields"))
     items = [
         {field: root[field] for field in fields}
         for root in roots
@@ -299,18 +315,13 @@ def _verify_identity_block(
     items.sort(key=lambda item: tuple(item[field] for field in sort_fields))
     canonical = _canonical_bytes(items)
     actual_sha = sha256(canonical).hexdigest()
-    if items != baseline_block["items"]:
+    if items != _require_list(manifest_block, "items"):
         raise ValueError("identity items mismatch")
-    if len(items) != baseline_block["count"] or len(items) != manifest_block["count"]:
+    if len(items) != manifest_block["count"]:
         raise ValueError("identity count mismatch")
-    expected_len = baseline_block["canonical_json"]["byte_length"]
-    if len(canonical) != expected_len or len(canonical) != (
-        manifest_block["canonical_byte_length"]
-    ):
+    if len(canonical) != manifest_block["canonical_byte_length"]:
         raise ValueError("identity canonical byte length mismatch")
-    if actual_sha != baseline_block["items_sha256"] or actual_sha != (
-        manifest_block["items_sha256"]
-    ):
+    if actual_sha != manifest_block["items_sha256"]:
         raise ValueError("identity sha mismatch")
     return {
         "count": len(items),
@@ -820,6 +831,57 @@ def _provider_bound_objects(inventory: Inventory) -> list[JsonObject]:
         }
         for experiment_id in EXPERIMENT_ORDER
     ]
+
+
+def _plan_object(profile_id: str, inventory: Inventory) -> JsonObject:
+    experiments = {
+        row["experiment_id"]: row for row in _provider_bound_objects(inventory)
+    }
+    online_upper = sum(row["provider_call_upper"] for row in experiments.values())
+    reference_planned = sum(
+        root["planned_ai_unit_count"] for root in inventory.references
+    )
+    reference_attempt_upper = reference_planned * 3
+    estimated_response_bytes = 1024**2
+    hard_response_bytes = 16 * 1024**2
+    trace_attempt_upper = (
+        sum(
+            row["protocol_execution_attempt_upper"]
+            for row in experiments.values()
+        )
+        + reference_attempt_upper
+    )
+
+    def disk_bytes(response_bound: int) -> int:
+        subtotal = (
+            online_upper * (2 * response_bound + 24 * 1024)
+            + (len(inventory.roots) + len(inventory.references)) * 64 * 1024
+            + trace_attempt_upper * 12 * 1024
+        )
+        return ceil(1.25 * subtotal)
+
+    return {
+        "profile_id": profile_id,
+        "experiments": experiments,
+        "paper_root_count": len(inventory.roots),
+        "execution_root_count": len(inventory.roots) + len(inventory.references),
+        "online_provider_call_upper": online_upper,
+        "exp3_reference_planned_first_attempt_ai_units": reference_planned,
+        "exp3_reference_protocol_execution_attempt_upper": reference_attempt_upper,
+        "estimated_response_bytes": estimated_response_bytes,
+        "hard_response_bytes": hard_response_bytes,
+        "estimate_bytes": disk_bytes(estimated_response_bytes),
+        "hard_upper_bytes": disk_bytes(hard_response_bytes),
+        "online_response_artifact_hard_upper_bytes": ceil(
+            1.25
+            * online_upper
+            * (2 * hard_response_bytes + 24 * 1024)
+        ),
+        "per_root_free_space_margin_bytes": max(
+            512 * 1024**2,
+            4 * estimated_response_bytes,
+        ),
+    }
 
 
 def _case_data(

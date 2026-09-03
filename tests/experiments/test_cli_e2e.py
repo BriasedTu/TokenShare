@@ -1401,7 +1401,7 @@ def test_full_source_closure_checks_only_exp2_to_exp4_consumers_and_fails_closed
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Full 的99个来源闭包由 inventory 定义；closure 不扫描336个非来源 Exp1 root。"""
+    """Full 的98个来源闭包由 inventory 定义；closure 不扫描337个非来源 Exp1 root。"""
 
     from tokenshare.experiments import cli
     from tokenshare.experiments.profiles import (
@@ -1414,7 +1414,7 @@ def test_full_source_closure_checks_only_exp2_to_exp4_consumers_and_fails_closed
     inventory = build_inventory("full")
     projected = project_root_inventory_rows(inventory)
     consumer_case_ids = downstream_trace_consumer_case_ids("full")
-    assert len(consumer_case_ids) == 99
+    assert len(consumer_case_ids) == 98
 
     selected_targets: list[RootInventoryV1] = []
     used_case_ids: set[str] = set()

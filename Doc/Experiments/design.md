@@ -37,15 +37,18 @@ fixed-response trace 缺少当前 ordinal 时，只能确定性回退到同一 t
 
 ## Experiment 3
 
+- Full profile 使用 49 个 Factorization case 和 3 个 Lean case，共 52 个 case；展开为 3,654 个 paper fault roots，并单列 104 个 auxiliary references。
 - 使用冻结五类 rate fault：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。
 - worker death 是单独预注册实验条件，不是新增 fault type。
 - token/latency 采用冻结扰动公式，正文资源为 simulated trace-attributed。
-- 运行仍只复用 Experiment 1 trace，不调用 provider。
+- 全部运行只复用 Experiment 1 trace，provider-call upper 为 0。
 
 ## Experiment 4
 
-- 使用 FULL、四个单机制关闭、六个双机制关闭，共 11 个 modes。
+- Full profile 使用 49 个 Factorization case 和 15 个 Lean case，共 64 个 case、3 个 repeats；FULL、四个单机制关闭、六个双机制关闭共 11 个 modes，展开为 2,112 个 paper roots。
+- 全部运行只复用 Experiment 1 trace，provider-call upper 为 0。
 - challenge plan 在 mode 展开前按 `case_id × repeat_id` 固定；注入器不能读取 mode。
+- 四个 challenge families 各包含 48 个固定 plans，共 192 个 plans。
 - outcome 必须来自实际 route/event/artifact/checker 证据，不能由 mode 配置反推。
 - `{R,M}` 使用 `RECOVERY_MERGE_FIRST`：premature merge 抢先时 recovery 观察记为 preempted，不能双计 stuck。
 

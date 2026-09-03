@@ -14,17 +14,17 @@ def test_authoritative_corpus_verifier_checks_complete_identity_sets() -> None:
 
     assert summary["assets_checked"]["asset_count"] == 20
     assert summary["inventory"]["full_root_identities"] == {
-        "count": 7017,
-        "canonical_byte_length": 1448798,
+        "count": 6912,
+        "canonical_byte_length": 1427265,
         "items_sha256": (
-            "ec5ca012faffc148be5eff65d43394b2d7861c666468e59841c716c88dea7c07"
+            "600d29b146d7324ae09dd2ce2c227d64ad90ff8a0ba5eb9db0eab98eae1b352e"
         ),
     }
     assert summary["inventory"]["full_reference_identities"] == {
-        "count": 106,
-        "canonical_byte_length": 22055,
+        "count": 104,
+        "canonical_byte_length": 21647,
         "items_sha256": (
-            "b537bd614ac9c86f2f864afb0e6a7f3c1fe22e38d772784c1fc8c0c914f43cdb"
+            "0478c5eaa96a35571f1c942da84e090a58af3323dc7ed961bbd603e4a812750e"
         ),
     }
 
@@ -42,8 +42,12 @@ def test_authoritative_manifest_records_public_assets_without_sampling() -> None
         item["public_path"].startswith(("benchmarks/experiments/", "configs/experiments/"))
         for item in assets
     )
-    assert manifest["identity_expectations"]["full_root_identities"]["count"] == 7017
-    assert manifest["identity_expectations"]["full_reference_identities"]["count"] == 106
+    root_identities = manifest["identity_expectations"]["full_root_identities"]
+    reference_identities = manifest["identity_expectations"][
+        "full_reference_identities"
+    ]
+    assert root_identities["count"] == len(root_identities["items"]) == 6912
+    assert reference_identities["count"] == len(reference_identities["items"]) == 104
 
 
 def test_semantic_authority_keeps_frozen_logical_keys_with_public_physical_paths() -> None:
