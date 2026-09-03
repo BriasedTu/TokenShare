@@ -3,10 +3,49 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from verification import verify_authoritative_corpus as authoritative_corpus
 from verification.verify_authoritative_corpus import verify_all
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_inventory_build_case_ids_reject_duplicates_in_profile_verification() -> None:
+    manifest = json.loads(
+        (REPO_ROOT / "benchmarks/experiments/manifest.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    profile_manifest = manifest["profiles"]["full"]
+    exp3_factorization = profile_manifest["inventory_build_case_ids"][
+        "exp3_factorization"
+    ]
+    exp3_factorization[1] = exp3_factorization[0]
+    with pytest.raises(
+        ValueError,
+        match="full exp3_factorization inventory build duplicates",
+    ):
+        authoritative_corpus._verify_profile_inventory(REPO_ROOT, manifest)
+
+
+def test_inventory_build_case_ids_reject_missing_catalog_cases_precisely() -> None:
+    manifest = json.loads(
+        (REPO_ROOT / "benchmarks/experiments/manifest.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    profile_manifest = manifest["profiles"]["full"]
+    profile_manifest["inventory_build_case_ids"]["exp3_factorization"][0] = (
+        "factor_v2_missing_case"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="full exp3_factorization inventory build missing cases",
+    ):
+        authoritative_corpus._verify_profile_inventory(REPO_ROOT, manifest)
 
 
 def test_authoritative_corpus_verifier_checks_complete_identity_sets() -> None:

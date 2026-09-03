@@ -190,13 +190,12 @@ def _verify_profile_inventory(
     profile_summaries: dict[str, JsonObject] = {}
     for profile_id in ("full", "representative"):
         profile_manifest = _require_mapping(profiles, profile_id)
+        _verify_selection_sections(profile_id, profile_manifest, factor, lean)
         inventory = _build_inventory(profile_manifest, factor, lean)
         _verify_profile_objects(
             profile_id,
             profile_manifest,
             inventory,
-            factor,
-            lean,
         )
         profile_summaries[profile_id] = {
             "conditions": len(inventory.conditions),
@@ -226,8 +225,6 @@ def _verify_profile_objects(
     profile_id: str,
     profile_manifest: Mapping[str, Any],
     inventory: Inventory,
-    factor: Mapping[str, JsonObject],
-    lean: Mapping[str, JsonObject],
 ) -> None:
     expected_conditions = _require_mapping(profile_manifest, "condition_objects")
     expected_challenges = _require_mapping(profile_manifest, "challenge_objects")
@@ -274,7 +271,6 @@ def _verify_profile_objects(
     }
     if actual_summary != expected_summary:
         raise ValueError(f"{profile_id} summary mismatch")
-    _verify_selection_sections(profile_id, profile_manifest, factor, lean)
 
 
 def _verify_selection_sections(
@@ -284,9 +280,11 @@ def _verify_selection_sections(
     lean: Mapping[str, JsonObject],
 ) -> None:
     selections = _require_mapping(profile_manifest, "selection_case_ids")
+    selection_ids: dict[str, tuple[str, ...]] = {}
     for experiment_id in EXPERIMENT_ORDER:
         section = _require_mapping(selections, experiment_id)
         ordered = tuple(str(item) for item in _require_list(section, "ordered_case_ids"))
+        selection_ids[experiment_id] = ordered
         if len(ordered) != int(section["count"]):
             raise ValueError(f"{profile_id} {experiment_id} selection count mismatch")
         if len(ordered) != len(set(ordered)):
@@ -298,6 +296,57 @@ def _verify_selection_sections(
             )
         if _items_sha256(list(ordered)) != section["ordered_case_ids_sha256"]:
             raise ValueError(f"{profile_id} {experiment_id} selection sha mismatch")
+
+    build_sections = _require_mapping(profile_manifest, "inventory_build_case_ids")
+    build_ids: dict[str, tuple[str, ...]] = {}
+    for name, raw_ids in build_sections.items():
+        if not isinstance(raw_ids, list):
+            raise ValueError(f"{profile_id} {name} inventory build IDs must be a list")
+        ordered = tuple(str(item) for item in raw_ids)
+        build_ids[str(name)] = ordered
+        if len(ordered) != len(set(ordered)):
+            raise ValueError(f"{profile_id} {name} inventory build duplicates")
+        catalog = (
+            factor
+            if str(name).endswith("_factorization")
+            else lean
+            if str(name).endswith("_lean")
+            else factor | lean
+        )
+        missing = [case_id for case_id in ordered if case_id not in catalog]
+        if missing:
+            raise ValueError(
+                f"{profile_id} {name} inventory build missing cases: {missing[:3]}"
+            )
+
+    if profile_id == "full":
+        build_names_by_experiment = {
+            "exp1": ("exp1_factorization", "exp1_lean"),
+            "exp2": ("exp2_factorization",),
+            "exp3": ("exp3_factorization", "exp3_lean"),
+            "exp4": ("exp4_factorization", "exp4_lean"),
+            "exp5": ("exp5_factorization", "exp5_lean"),
+        }
+        build_selection_ids = {
+            experiment_id: tuple(
+                case_id
+                for name in names
+                for case_id in build_ids[name]
+            )
+            for experiment_id, names in build_names_by_experiment.items()
+        }
+    else:
+        representative = build_ids["representative"]
+        build_selection_ids = {
+            "exp1": representative,
+            "exp2": representative[:2],
+            "exp4": representative,
+        }
+    for experiment_id, ordered in build_selection_ids.items():
+        if tuple(sorted(ordered)) != selection_ids[experiment_id]:
+            raise ValueError(
+                f"{profile_id} {experiment_id} inventory build selection mismatch"
+            )
 
 
 def _verify_identity_block(
