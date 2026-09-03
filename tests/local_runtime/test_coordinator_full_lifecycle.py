@@ -24,6 +24,7 @@ from tokenshare.local_runtime import (
     project_protocol_run,
 )
 from tokenshare.local_runtime.contracts import WorkerCompletionSchedule
+from tokenshare.local_runtime.coordinator import _elapsed_utc_ms
 from tokenshare.local_runtime.logical_scheduler import (
     LOGICAL_SOURCE_LATENCY_1X,
     LogicalSourceLatencyScheduler,
@@ -58,6 +59,20 @@ from tests.retained_fixtures import (
     _proposal_body_digest,
     _split_invocation,
 )
+
+
+@pytest.mark.parametrize(
+    ("end", "expected_ms"),
+    [
+        ("2026-08-23T09:00:31Z", 299500),
+        ("2026-08-23T09:00:31.500126Z", 300000),
+    ],
+)
+def test_elapsed_utc_ms_rounds_lease_deadline_up(
+    end: str,
+    expected_ms: int,
+) -> None:
+    assert _elapsed_utc_ms("2026-08-23T08:55:31.500126Z", end) == expected_ms
 
 
 @dataclass(frozen=True)

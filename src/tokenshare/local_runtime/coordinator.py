@@ -2175,10 +2175,10 @@ def _lifecycle_delay_ms(
 def _elapsed_utc_ms(start: str, end: str) -> int:
     start_value = datetime.fromisoformat(start.replace("Z", "+00:00"))
     end_value = datetime.fromisoformat(end.replace("Z", "+00:00"))
-    elapsed_ms = int((end_value - start_value).total_seconds() * 1000)
-    if elapsed_ms < 0:
+    elapsed_us = (end_value - start_value) // timedelta(microseconds=1)
+    if elapsed_us < 0:
         raise ValueError("lease deadline precedes lease issue time")
-    return elapsed_ms
+    return (elapsed_us + 999) // 1000
 
 
 def _execution_request_identity(request) -> tuple[object, ...]:

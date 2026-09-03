@@ -8,6 +8,53 @@ from tokenshare.core.models import AttemptState, LeaseState, TaskState
 from tokenshare.core.scheduling import SchedulingDecision
 
 
+@pytest.mark.parametrize(
+    ("issued_at", "expires_at"),
+    [
+        (
+            "2026-08-23T08:55:31.000001Z",
+            "2026-08-23T09:00:31.000001Z",
+        ),
+        (
+            "2026-08-23T08:55:31.500126Z",
+            "2026-08-23T09:00:31.500126Z",
+        ),
+        (
+            "2026-08-23T08:55:31.999999Z",
+            "2026-08-23T09:00:31.999999Z",
+        ),
+    ],
+)
+def test_lease_manager_claim_preserves_timestamp_precision(
+    issued_at: str,
+    expires_at: str,
+) -> None:
+    manager = LeaseManager(protocol_config=make_config())
+    decision = SchedulingDecision(
+        decision_id="decision_precision",
+        task_id="task_demo",
+        unit_id="unit_ready",
+        client_id="client_local",
+        policy_id="fifo_ready_v1",
+        matched_capabilities=["executor"],
+        lease_kind="primary",
+        reason="ready_and_available",
+        created_at=issued_at,
+        input_summary={"ready_queue_size": 1},
+    )
+
+    claim = manager.claim(
+        decision=decision,
+        lease_id="lease_precision",
+        attempt_id="attempt_precision",
+        fencing_token="token_precision",
+        now=issued_at,
+    )
+
+    assert claim.lease.issued_at == issued_at
+    assert claim.lease.expires_at == expires_at
+
+
 def test_lease_manager_claims_heartbeats_and_expires_with_retry_recovery() -> None:
     config = make_config()
     manager = LeaseManager(protocol_config=config)
