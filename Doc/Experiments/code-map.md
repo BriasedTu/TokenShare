@@ -18,6 +18,7 @@ This map is the public reader's guide to the retained TokenShare experiment extr
 ## Experiments
 
 - `src/tokenshare/experiments/`: the only public experiment facility and CLI surface.
+- `src/tokenshare/experiments/factorization_exp1_analysis.py`: standalone read-only extractor for root-level and actual range-attempt-level Experiment 1 Factorization analysis tables; it reads an explicitly supplied local raw run and writes only to a separate ignored analysis output directory.
 - `tests/experiments/`: offline focused tests for case loading, planning, fake vertical runs, resume behavior, reducer output, terminal failure projection, and public launcher behavior.
 - `run_experiments.cmd`: Windows launcher for `tokenshare.experiments.gui`.
 

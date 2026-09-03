@@ -45,7 +45,10 @@ No facts are inferred from the paper draft or from legacy labels alone.
 ## Outputs
 
 The extractor creates four new files in an explicitly supplied output
-directory:
+directory. Under the public worktree, the formal raw run is exposed through the
+read-only `TokenShareData/sources/official-full-run` junction, so generated
+analysis files go to a separate ignored
+`TokenShareData/outputs/experiments/<analysis-run-id>/` directory:
 
 - `factorization_exp1_root_analysis.csv`
 - `factorization_exp1_attempt_analysis.csv`
@@ -122,10 +125,12 @@ There is no authoritative attempt-level `is_required_for_final` or independent
 
 ## Validation and failure behavior
 
-Extraction fails without replacing or deleting outputs when identities,
-schemas, catalog formulas, partition geometry, attempt joins, or published
-cell totals disagree. This is ordinary input validation inside the extractor,
-not a repository publication gate.
+Unrecoverable structural contradictions in identities, schemas, catalog
+formulas, partition geometry, or attempt joins stop extraction because a row
+cannot be constructed reliably. Published-cell differences are written to the
+validation report and metadata without changing either the source facts or the
+published reducer table. This is analysis validation, not a repository
+publication gate.
 
 The validation report covers:
 
