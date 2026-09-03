@@ -263,6 +263,20 @@ def _project_started_runtime_failure(
         artifact_store=assembly.artifact_store,
         runtime_observation=observation,
     )
+    controlled_no_final = _exp4_controlled_no_final(
+        assembly=assembly,
+        error=error,
+        events=events,
+        projected=projected,
+    )
+    if controlled_no_final is not None:
+        return replace(
+            projected,
+            summary={
+                **projected.summary,
+                "experiments_controlled_no_final": controlled_no_final,
+            },
+        )
     return replace(
         projected,
         status="failed",
@@ -276,6 +290,243 @@ def _project_started_runtime_failure(
             },
         },
     )
+
+
+def _exp4_controlled_no_final(
+    *,
+    assembly: RootAssembly,
+    error: Exception,
+    events: list[Any],
+    projected: ProtocolRunResult,
+) -> dict[str, str] | None:
+    scenario = assembly.scenario
+    inventory = assembly.inventory or getattr(scenario, "inventory", None)
+    policy = assembly.mechanism_policy
+    if (
+        getattr(inventory, "experiment_id", None) != "exp4"
+        or projected.status != "processing"
+        or policy is None
+        or any(event.event_type == EventType.MERGE_RECORDED for event in events)
+    ):
+        return None
+
+    if (
+        type(error) is LeanCanonicalDependencyUnavailableError
+        and policy.verification_enabled is False
+        and _has_lean_unchecked_canonical_child(
+            assembly=assembly,
+            events=events,
+        )
+    ):
+        failure_stage = "canonical_dependency"
+    elif (
+        type(error) is RuntimeError
+        and str(error)
+        == "protocol run stalled before the root reached a terminal state"
+        and policy.parser_policy_enabled is False
+        and policy.verification_enabled is False
+        and _has_factor_raw_canonical_merge_dead_end(
+            assembly=assembly,
+            events=events,
+        )
+    ):
+        failure_stage = "merge_readiness"
+    else:
+        return None
+
+    return {
+        "failure_origin": "ablation_dependency_unavailable",
+        "failure_stage": failure_stage,
+        "error_kind": type(error).__name__,
+        "engine_root_status": projected.status,
+    }
+
+
+def _synthetic_no_verification_reports(
+    events: list[Any],
+) -> dict[str, Mapping[str, Any]] | None:
+    reports: dict[str, Mapping[str, Any]] = {}
+    for event in events:
+        if event.event_type != EventType.VERIFICATION_RECORDED:
+            continue
+        report = event.payload.get("verification_report")
+        if not isinstance(report, Mapping):
+            continue
+        metadata = report.get("metadata")
+        environment = report.get("verification_environment")
+        verifier = report.get("verifier")
+        if (
+            report.get("validator_policy_id")
+            != "runtime_ablation_no_verification.v1"
+            or report.get("status") != "passed"
+            or event.payload.get("eligible_for_canonical") is not True
+            or not isinstance(metadata, Mapping)
+            or metadata.get("synthetic_verification") is not True
+            or metadata.get("domain_verifier_invoked") is not False
+            or not isinstance(environment, Mapping)
+            or environment.get("synthetic_verification") is not True
+            or verifier
+            != {
+                "verifier_id": "runtime_ablation_no_verification",
+                "verifier_version": "v1",
+            }
+        ):
+            continue
+        report_id = report.get("verification_report_id")
+        if not isinstance(report_id, str) or not report_id or report_id in reports:
+            return None
+        reports[report_id] = report
+    return reports
+
+
+def _submission_documents(
+    *,
+    assembly: RootAssembly,
+    events: list[Any],
+) -> dict[str, Mapping[str, Any]] | None:
+    documents: dict[str, Mapping[str, Any]] = {}
+    try:
+        for event in events:
+            if event.event_type != EventType.EXECUTION_SUBMISSION_RECORDED:
+                continue
+            submission_id = event.payload.get("submission_id")
+            ref_body = event.payload.get("submission_ref")
+            if (
+                not isinstance(submission_id, str)
+                or not submission_id
+                or submission_id in documents
+                or not isinstance(ref_body, Mapping)
+            ):
+                return None
+            document = json.loads(
+                assembly.artifact_store.read_bytes(
+                    ArtifactRef.from_dict(dict(ref_body))
+                )
+            )
+            if not isinstance(document, Mapping):
+                return None
+            documents[submission_id] = document
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
+        return None
+    return documents
+
+
+def _canonical_events_by_unit(
+    events: list[Any],
+) -> dict[str, Any] | None:
+    canonical: dict[str, Any] = {}
+    for event in events:
+        if event.event_type != EventType.CANONICAL_OUTPUTS_BOUND:
+            continue
+        unit_id = event.payload.get("unit_id")
+        if not isinstance(unit_id, str) or not unit_id or unit_id in canonical:
+            return None
+        canonical[unit_id] = event
+    return canonical
+
+
+def _has_lean_unchecked_canonical_child(
+    *,
+    assembly: RootAssembly,
+    events: list[Any],
+) -> bool:
+    reports = _synthetic_no_verification_reports(events)
+    submissions = _submission_documents(assembly=assembly, events=events)
+    canonical = _canonical_events_by_unit(events)
+    if reports is None or submissions is None or canonical is None:
+        return False
+    for unit_id, event in canonical.items():
+        report = reports.get(event.payload.get("selected_verification_report_id"))
+        submission = submissions.get(event.payload.get("selected_submission_id"))
+        if report is None or submission is None:
+            continue
+        route = submission.get("environment_summary")
+        route = (
+            route.get("experiments_lean_verification_route_observation")
+            if isinstance(route, Mapping)
+            else None
+        )
+        candidate_refs = submission.get("candidate_output_refs")
+        canonical_refs = event.payload.get("canonical_output_refs")
+        if (
+            isinstance(route, Mapping)
+            and route.get("domain_child_checker_call_count") == 0
+            and route.get("normalize_proof_submission_call_count") == 0
+            and isinstance(candidate_refs, Mapping)
+            and bool(candidate_refs)
+            and canonical_refs == candidate_refs
+            and report.get("candidate_output_refs") == candidate_refs
+            and report.get("unit_id") == unit_id
+            and report.get("submission_id")
+            == event.payload.get("selected_submission_id")
+        ):
+            return True
+    return False
+
+
+def _has_factor_raw_canonical_merge_dead_end(
+    *,
+    assembly: RootAssembly,
+    events: list[Any],
+) -> bool:
+    observer = getattr(assembly.scenario, "route_observer", None)
+    merge_records = getattr(observer, "merge_records", ())
+    normal_records = [
+        item
+        for item in merge_records
+        if isinstance(item, Mapping) and item.get("boundary") == "normal_merge"
+    ]
+    if not normal_records:
+        return False
+    latest = normal_records[-1]
+    required = latest.get("required_child_unit_ids")
+    canonical_ids = latest.get("canonical_child_unit_ids")
+    missing = latest.get("missing_required_slot_ids")
+    if (
+        not isinstance(required, (list, tuple))
+        or not required
+        or any(not isinstance(item, str) or not item for item in required)
+        or len(required) != len(set(required))
+        or not isinstance(canonical_ids, (list, tuple))
+        or len(canonical_ids) != len(required)
+        or set(canonical_ids) != set(required)
+        or missing not in ((), [])
+        or latest.get("gate_satisfied") is not False
+        or latest.get("plugin_merge_attempted") is not False
+        or latest.get("plugin_outcome") != "not_attempted"
+    ):
+        return False
+
+    reports = _synthetic_no_verification_reports(events)
+    submissions = _submission_documents(assembly=assembly, events=events)
+    canonical = _canonical_events_by_unit(events)
+    if reports is None or submissions is None or canonical is None:
+        return False
+    for unit_id in required:
+        event = canonical.get(unit_id)
+        if event is None:
+            return False
+        report = reports.get(event.payload.get("selected_verification_report_id"))
+        submission = submissions.get(event.payload.get("selected_submission_id"))
+        if report is None or submission is None:
+            return False
+        raw_ref = submission.get("raw_output_ref")
+        candidate_refs = submission.get("candidate_output_refs")
+        if (
+            not isinstance(raw_ref, Mapping)
+            or raw_ref.get("artifact_type") != "RawModelOutput"
+            or submission.get("parsed_output_ref") != raw_ref
+            or not isinstance(candidate_refs, Mapping)
+            or not candidate_refs
+            or any(ref != raw_ref for ref in candidate_refs.values())
+            or event.payload.get("canonical_output_refs") != candidate_refs
+            or report.get("candidate_output_refs") != candidate_refs
+            or report.get("unit_id") != unit_id
+            or report.get("submission_id")
+            != event.payload.get("selected_submission_id")
+        ):
+            return False
+    return True
 
 
 def materialize_protocol_traces(

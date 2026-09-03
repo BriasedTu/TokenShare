@@ -324,6 +324,7 @@ def _run_factor_scenario(
     inventory: RootInventoryV1,
     case: dict[str, object],
     source_store: RunStore,
+    clock_microsecond: int = 0,
     challenge_plan: ChallengePlanV1 | None = None,
     process_timeout_seconds: float = 30.0,
     before_run: Callable[[object], None] | None = None,
@@ -336,7 +337,7 @@ def _run_factor_scenario(
     runtime = FactorizationRuntimeAdapter(
         provider_family="deepseek", seed=7, protocol_config=config, created_at=NOW
     )
-    clock = _Clock()
+    clock = _Clock(microsecond=clock_microsecond)
     scenario = build_scenario(
         inventory=inventory,
         root_input=case,
@@ -690,6 +691,34 @@ def test_exp3_rate_faults_are_ordinal_zero_once_and_replacements_are_unmodified(
                     item["attempt_id"] == replacement.attempt_id
                     for item in records
                 )
+
+
+def test_exp3_no_return_recovers_from_subsecond_clock_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case, source_store, _transport = _acquire_factor_source(tmp_path, monkeypatch)
+    inventory = _inventory(
+        experiment_id="exp3",
+        case=case,
+        domain="factorization",
+        fault_type="no_return",
+        fault_rate=0.34,
+    )
+
+    _scenario, _assembly, _protocol, row = _run_factor_scenario(
+        tmp_path,
+        inventory=inventory,
+        case=case,
+        source_store=source_store,
+        clock_microsecond=500_126,
+    )
+
+    assert row.protocol_started is True
+    assert row.preflight_status == "passed"
+    assert row.failure_origin != "unexpected_runtime_error"
+    assert row.attempts
+    assert row.recovery_observations
 
 
 @pytest.mark.parametrize("fault_type", ["false_positive", "false_negative"])
@@ -1176,6 +1205,7 @@ def test_exp4_mode_blind_challenges_and_all_eleven_real_policies(
     rows = []
     rows_by_key = {}
     scenarios_by_key = {}
+    assemblies_by_key = {}
     protocols_by_key = {}
     expected_semantics = {
         "INVALID_PARSED_CANDIDATE": False,
@@ -1198,11 +1228,13 @@ def test_exp4_mode_blind_challenges_and_all_eleven_real_policies(
                 inventory=inventory,
                 case=case,
                 source_store=source_store,
+                clock_microsecond=500_126,
                 challenge_plan=plan,
             )
             rows.append(row)
             rows_by_key[(family, mode)] = row
             scenarios_by_key[(family, mode)] = scenario
+            assemblies_by_key[(family, mode)] = _assembly
             protocols_by_key[(family, mode)] = _protocol
             resolved[family].append(scenario.challenge_plan)
             assert not hasattr(scenario.challenge_controller, "mode")
@@ -1259,12 +1291,125 @@ def test_exp4_mode_blind_challenges_and_all_eleven_real_policies(
     assert len(transport.responses) == source_transport_count
     assert set(item.challenge_family for item in rows) == set(families)
     assert all(item.protocol_started for item in rows)
+    assert all(item.preflight_status == "passed" for item in rows)
+    assert all(item.attempts for item in rows)
     assert all(item.challenge_observations for item in rows)
     assert all(item.provider_call_made is False for row in rows for item in row.attempts)
     assert all(
         rows_by_key[(family, "FULL")].ablation_observations == []
         for family in families
     )
+    for family in families:
+        full_protocol = protocols_by_key[(family, "FULL")]
+        full_row = rows_by_key[(family, "FULL")]
+        assert full_protocol.status == "completed"
+        assert full_row.root_status == "completed"
+        assert full_row.final_result_present is True
+        assert full_row.verified_correct is True
+
+        parser_only_protocol = protocols_by_key[(family, "NO_PARSER_POLICY")]
+        parser_only_row = rows_by_key[(family, "NO_PARSER_POLICY")]
+        assert parser_only_protocol.status == "failed"
+        assert parser_only_row.root_status == "failed"
+        assert parser_only_row.failure_kind == "no_final"
+        assert parser_only_row.failure_origin != "unexpected_runtime_error"
+
+        controlled_mode = "NO_VERIFICATION__NO_PARSER_POLICY"
+        controlled_scenario = scenarios_by_key[(family, controlled_mode)]
+        controlled_assembly = assemblies_by_key[(family, controlled_mode)]
+        controlled_protocol = protocols_by_key[(family, controlled_mode)]
+        controlled_row = rows_by_key[(family, controlled_mode)]
+        assert controlled_protocol.summary["experiments_controlled_no_final"] == {
+            "failure_origin": "ablation_dependency_unavailable",
+            "failure_stage": "merge_readiness",
+            "error_kind": "RuntimeError",
+            "engine_root_status": "processing",
+        }
+        assert "experiments_runtime_failure" not in controlled_protocol.summary
+        assert controlled_protocol.status == "processing"
+        assert controlled_row.root_status == "processing"
+        assert controlled_row.failure_kind == "no_final"
+        assert (
+            controlled_row.failure_origin
+            == "ablation_dependency_unavailable"
+        )
+        assert controlled_row.failure_stage == "merge_readiness"
+        assert controlled_row.final_result_present is False
+        assert controlled_row.verified_correct is False
+
+        normal_merge_records = [
+            item
+            for item in controlled_scenario.route_observer.merge_records
+            if item.get("boundary") == "normal_merge"
+        ]
+        assert normal_merge_records
+        latest_merge = normal_merge_records[-1]
+        required_child_ids = tuple(latest_merge["required_child_unit_ids"])
+        canonical_child_ids = tuple(latest_merge["canonical_child_unit_ids"])
+        assert required_child_ids
+        assert len(canonical_child_ids) == len(required_child_ids)
+        assert set(canonical_child_ids) == set(required_child_ids)
+        assert latest_merge["missing_required_slot_ids"] == ()
+        assert latest_merge["gate_satisfied"] is False
+        assert latest_merge["plugin_merge_attempted"] is False
+        assert latest_merge["plugin_outcome"] == "not_attempted"
+
+        controlled_events = controlled_assembly.event_ledger.read_all()
+        assert not any(
+            event.event_type == EventType.MERGE_RECORDED
+            for event in controlled_events
+        )
+        submission_by_id = {
+            event.payload["submission_id"]: json.loads(
+                controlled_assembly.artifact_store.read_bytes(
+                    ArtifactRef.from_dict(event.payload["submission_ref"])
+                )
+            )
+            for event in controlled_events
+            if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+        }
+        canonical_by_unit = {
+            event.payload["unit_id"]: event
+            for event in controlled_events
+            if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+        }
+        for unit_id in required_child_ids:
+            canonical_event = canonical_by_unit[unit_id]
+            submission = submission_by_id[
+                canonical_event.payload["selected_submission_id"]
+            ]
+            raw_ref = submission["raw_output_ref"]
+            assert raw_ref is not None
+            assert submission["parsed_output_ref"] == raw_ref
+            assert submission["candidate_output_refs"]
+            assert all(
+                candidate_ref == raw_ref
+                for candidate_ref in submission["candidate_output_refs"].values()
+            )
+            assert (
+                canonical_event.payload["canonical_output_refs"]
+                == submission["candidate_output_refs"]
+            )
+
+        controlled_by_mechanism = {
+            item.disabled_mechanism: item
+            for item in controlled_row.ablation_observations
+        }
+        assert (
+            controlled_by_mechanism["parser_policy"].domain_parser_call_count
+            == 0
+        )
+        assert (
+            controlled_by_mechanism[
+                "verification"
+            ].plugin_verify_submission_call_count
+            == 0
+        )
+
+    parser_required_control = rows_by_key[
+        ("PARSER_REQUIRED_CANONICAL_JSON", "NO_PARSER_POLICY")
+    ]
+    assert parser_required_control.failure_origin == "model_verification_exhausted"
     parser_modes = [
         mode
         for mode, disabled in EXP4_MODE_DISABLED_MECHANISMS.items()
@@ -1525,6 +1670,117 @@ def test_exp4_lean_structural_parser_verifier_and_merge_routes(
         and item["provenance_ref"] is None
         for item in raw_passthrough
     )
+
+    verification_disabled_runs = {
+        "NO_VERIFICATION": verifier,
+        "NO_VERIFICATION__NO_PARSER_POLICY": combined,
+        "NO_VERIFICATION__NO_REQUEUE": run(
+            "INVALID_PARSED_CANDIDATE",
+            "NO_VERIFICATION__NO_REQUEUE",
+            "stable_first_planned_unit",
+        ),
+        "NO_VERIFICATION__NO_MERGE_GATE": run(
+            "INVALID_PARSED_CANDIDATE",
+            "NO_VERIFICATION__NO_MERGE_GATE",
+            "stable_first_planned_unit",
+        ),
+    }
+    for mode, result in verification_disabled_runs.items():
+        scenario, assembly, protocol, row, checker = result
+        assert scenario.mechanism_policy.verification_enabled is False
+        assert protocol.summary["experiments_controlled_no_final"] == {
+            "failure_origin": "ablation_dependency_unavailable",
+            "failure_stage": "canonical_dependency",
+            "error_kind": "LeanCanonicalDependencyUnavailableError",
+            "engine_root_status": "processing",
+        }
+        assert "experiments_runtime_failure" not in protocol.summary
+        assert protocol.status == "processing", mode
+        assert row.root_status == "processing"
+        assert row.failure_kind == "no_final"
+        assert row.failure_origin == "ablation_dependency_unavailable"
+        assert row.failure_stage == "canonical_dependency"
+        assert row.final_result_present is False
+        assert row.verified_correct is False
+        assert checker.requests == []
+
+        events = assembly.event_ledger.read_all()
+        assert not any(
+            event.event_type == EventType.MERGE_RECORDED for event in events
+        )
+        synthetic_reports_by_id = {
+            event.payload["verification_report"]["verification_report_id"]:
+            event.payload["verification_report"]
+            for event in events
+            if event.event_type == EventType.VERIFICATION_RECORDED
+            and event.payload["verification_report"]["validator_policy_id"]
+            == "runtime_ablation_no_verification.v1"
+        }
+        assert synthetic_reports_by_id
+        submissions_by_id = {
+            event.payload["submission_id"]: json.loads(
+                assembly.artifact_store.read_bytes(
+                    ArtifactRef.from_dict(event.payload["submission_ref"])
+                )
+            )
+            for event in events
+            if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+        }
+        checker_free_canonical_children = []
+        for event in events:
+            if event.event_type != EventType.CANONICAL_OUTPUTS_BOUND:
+                continue
+            report = synthetic_reports_by_id.get(
+                event.payload["selected_verification_report_id"]
+            )
+            if report is None:
+                continue
+            assert report["metadata"]["synthetic_verification"] is True
+            assert report["metadata"]["domain_verifier_invoked"] is False
+            submission = submissions_by_id[event.payload["selected_submission_id"]]
+            route = submission["environment_summary"].get(
+                "experiments_lean_verification_route_observation"
+            )
+            if (
+                route is not None
+                and route["domain_child_checker_call_count"] == 0
+                and route["normalize_proof_submission_call_count"] == 0
+            ):
+                checker_free_canonical_children.append(event.payload["unit_id"])
+        assert checker_free_canonical_children
+
+        verification_observation = next(
+            item
+            for item in row.ablation_observations
+            if item.disabled_mechanism == "verification"
+        )
+        assert verification_observation.domain_child_checker_call_count == 0
+        assert verification_observation.plugin_verify_submission_call_count == 0
+
+    conflicting_protocol = replace(
+        verifier[2],
+        summary={
+            **verifier[2].summary,
+            "experiments_runtime_failure": {
+                "failure_stage": "protocol_runtime",
+                "failure_kind": "infrastructure_invalid",
+                "error_kind": "RuntimeError",
+                "engine_root_status": "processing",
+            },
+        },
+    )
+    with pytest.raises(RootProjectionError, match="mutually exclusive"):
+        project_root_result(
+            inventory=verifier[0].inventory,
+            assembly=verifier[1],
+            protocol_result=conflicting_protocol,
+            provider_family="deepseek",
+            requested_model="deepseek-v4-pro",
+            resolved_model="deepseek-v4-pro",
+            reasoning_mode="thinking",
+            attempts=verifier[0].submission_adapter.attempts,
+            scenario=verifier[0],
+        )
 
     merge = run(
         "REQUIRED_CHILD_DELAY",

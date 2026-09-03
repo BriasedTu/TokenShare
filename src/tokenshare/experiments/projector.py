@@ -69,6 +69,9 @@ def project_root_result(
         raise RootProjectionError("runtime observation run_id does not match assembly")
     condition_failure = protocol_result.summary.get("experiments_condition_failure")
     runtime_failure = protocol_result.summary.get("experiments_runtime_failure")
+    controlled_no_final = protocol_result.summary.get(
+        "experiments_controlled_no_final"
+    )
     terminal_failure = protocol_result.summary.get("terminal_failure")
     if condition_failure is not None:
         if not isinstance(condition_failure, Mapping):
@@ -91,6 +94,41 @@ def project_root_result(
             or not isinstance(runtime_failure.get("engine_root_status"), str)
         ):
             raise RootProjectionError("experiment runtime failure identity is invalid")
+    if controlled_no_final is not None:
+        if (
+            not isinstance(controlled_no_final, Mapping)
+            or set(controlled_no_final)
+            != {
+                "failure_origin",
+                "failure_stage",
+                "error_kind",
+                "engine_root_status",
+            }
+            or controlled_no_final.get("failure_origin")
+            != "ablation_dependency_unavailable"
+            or controlled_no_final.get("failure_stage")
+            not in {"canonical_dependency", "merge_readiness"}
+            or controlled_no_final.get("error_kind")
+            != (
+                "LeanCanonicalDependencyUnavailableError"
+                if controlled_no_final.get("failure_stage")
+                == "canonical_dependency"
+                else "RuntimeError"
+            )
+            or controlled_no_final.get("engine_root_status") != "processing"
+            or inventory.experiment_id != "exp4"
+            or protocol_result.status != "processing"
+        ):
+            raise RootProjectionError(
+                "experiment controlled no-final identity is invalid"
+            )
+        if any(
+            item is not None
+            for item in (condition_failure, runtime_failure, terminal_failure)
+        ):
+            raise RootProjectionError(
+                "controlled no-final and failure markers are mutually exclusive"
+            )
     if terminal_failure is not None:
         if (
             not isinstance(terminal_failure, Mapping)
@@ -136,6 +174,8 @@ def project_root_result(
         event for event in events if event.event_type == EventType.MERGE_RECORDED
     )
     if merge_events:
+        if controlled_no_final is not None:
+            raise RootProjectionError("controlled no-final cannot carry a merged root")
         if terminal_failure is not None:
             raise RootProjectionError("terminal failure cannot carry a merged root")
         canonical_events, merge_event, final_canonical_event = _merge_ledger_facts(
@@ -184,6 +224,10 @@ def project_root_result(
             failure_stage = str(runtime_failure["failure_stage"])
             failure_kind = "infrastructure_invalid"
             failure_origin = "unexpected_runtime_error"
+        elif controlled_no_final is not None:
+            failure_stage = str(controlled_no_final["failure_stage"])
+            failure_kind = "no_final"
+            failure_origin = "ablation_dependency_unavailable"
         elif terminal_failure is not None:
             if protocol_result.status != "failed":
                 raise RootProjectionError("terminal failure requires a failed protocol root")

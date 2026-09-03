@@ -107,7 +107,7 @@ class _BootstrapRetryExecutor:
         )
 
 
-def _runtime(tmp_path, *, max_retries: int = 2):
+def _runtime(tmp_path, *, max_retries: int = 2, clock_microsecond: int = 0):
     store = ArtifactStore(tmp_path)
     ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
     config = replace(
@@ -120,6 +120,7 @@ def _runtime(tmp_path, *, max_retries: int = 2):
         lease_ttl_seconds=2,
     )
     clock = _Clock()
+    clock._value = clock._value.replace(microsecond=clock_microsecond)
     coordinator = ProtocolRunCoordinator(
         engine=ProtocolEngine(
             event_ledger=ledger,
@@ -212,7 +213,10 @@ def test_thread_capacity_is_applied_to_units_of_one_runtime_root(tmp_path) -> No
 
 
 def test_process_worker_death_uses_engine_lease_expiry_and_replacement(tmp_path) -> None:
-    store, ledger, plugin, clock, coordinator = _runtime(tmp_path)
+    store, ledger, plugin, clock, coordinator = _runtime(
+        tmp_path,
+        clock_microsecond=500_126,
+    )
     coordinator_pid = os.getpid()
     scheduler = LogicalSourceLatencyScheduler(start_ms=0)
     attempts_by_unit_id: dict[str, int] = {}
@@ -316,7 +320,7 @@ def test_process_worker_death_uses_engine_lease_expiry_and_replacement(tmp_path)
         2000,
         2100,
     ]
-    assert recovery.occurred_at == "2026-07-22T00:00:02Z"
+    assert recovery.occurred_at == "2026-07-22T00:00:02.500126Z"
     assert replacement_leases[1]["issued_at"] == recovery.occurred_at
 
 

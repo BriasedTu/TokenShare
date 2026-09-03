@@ -49,8 +49,8 @@ LEAN_CATALOG_PATH = Path("benchmarks/experiments/lean_lemma_graph_catalog.v1.jso
 
 
 class _Clock:
-    def __init__(self) -> None:
-        self._value = datetime(2026, 8, 21, tzinfo=UTC)
+    def __init__(self, microsecond: int = 0) -> None:
+        self._value = datetime(2026, 8, 21, microsecond=microsecond, tzinfo=UTC)
 
     def __call__(self) -> str:
         value = self._value
