@@ -190,8 +190,24 @@ def _verify_profile_inventory(
     profile_summaries: dict[str, JsonObject] = {}
     for profile_id in ("full", "representative"):
         profile_manifest = _require_mapping(profiles, profile_id)
-        _verify_selection_sections(profile_id, profile_manifest, factor, lean)
+        selection_ids = _verify_selection_sections(
+            profile_id, profile_manifest, factor, lean
+        )
         inventory = _build_inventory(profile_manifest, factor, lean)
+        for experiment_id in EXPERIMENT_ORDER:
+            inventory_case_ids = tuple(
+                sorted(
+                    {
+                        str(root["case_id"])
+                        for root in inventory.roots
+                        if root["experiment_id"] == experiment_id
+                    }
+                )
+            )
+            if inventory_case_ids != selection_ids[experiment_id]:
+                raise ValueError(
+                    f"{profile_id} {experiment_id} inventory case IDs mismatch"
+                )
         _verify_profile_objects(
             profile_id,
             profile_manifest,
@@ -278,7 +294,7 @@ def _verify_selection_sections(
     profile_manifest: Mapping[str, Any],
     factor: Mapping[str, JsonObject],
     lean: Mapping[str, JsonObject],
-) -> None:
+) -> dict[str, tuple[str, ...]]:
     selections = _require_mapping(profile_manifest, "selection_case_ids")
     selection_ids: dict[str, tuple[str, ...]] = {}
     for experiment_id in EXPERIMENT_ORDER:
@@ -347,6 +363,7 @@ def _verify_selection_sections(
             raise ValueError(
                 f"{profile_id} {experiment_id} inventory build selection mismatch"
             )
+    return selection_ids
 
 
 def _verify_identity_block(

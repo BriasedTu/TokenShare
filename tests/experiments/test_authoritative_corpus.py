@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,72 @@ from verification.verify_authoritative_corpus import verify_all
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _refresh_selection_sha(section: dict[str, object]) -> None:
+    encoded = json.dumps(
+        section["ordered_case_ids"],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    section["ordered_case_ids_sha256"] = sha256(encoded).hexdigest()
+
+
+def test_public_verifier_rejects_representative_exp3_selection_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = json.loads(
+        (REPO_ROOT / "benchmarks/experiments/manifest.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    selection = manifest["profiles"]["representative"]["selection_case_ids"][
+        "exp3"
+    ]
+    selection["ordered_case_ids"][0] = "factor_v2_hard_138"
+    _refresh_selection_sha(selection)
+    manifest_path = tmp_path / "manifest.v1.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(authoritative_corpus, "MANIFEST_PATH", str(manifest_path))
+
+    with pytest.raises(
+        ValueError,
+        match="representative exp3 inventory case IDs mismatch",
+    ):
+        authoritative_corpus.verify_all(REPO_ROOT)
+
+
+def test_public_verifier_rejects_representative_exp5_selection_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = json.loads(
+        (REPO_ROOT / "benchmarks/experiments/manifest.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    selection = manifest["profiles"]["representative"]["selection_case_ids"][
+        "exp5"
+    ]
+    selection["ordered_case_ids"][0] = "factor_v2_hard_138"
+    _refresh_selection_sha(selection)
+    manifest_path = tmp_path / "manifest.v1.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(authoritative_corpus, "MANIFEST_PATH", str(manifest_path))
+
+    with pytest.raises(
+        ValueError,
+        match="representative exp5 inventory case IDs mismatch",
+    ):
+        authoritative_corpus.verify_all(REPO_ROOT)
 
 
 def test_inventory_build_case_ids_reject_duplicates_in_profile_verification() -> None:
