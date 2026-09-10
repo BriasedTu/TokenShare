@@ -19,6 +19,12 @@ RUN_CONFIG_SCHEMA_VERSION = "tokenshare.slim_v2.run_config.v1"
 ROOT_INVENTORY_SCHEMA_VERSION = "tokenshare.slim_v2.root_inventory.v1"
 UNIT_TRACE_SCHEMA_VERSION = "tokenshare.slim_v2.unit_trace.v1"
 ROOT_RESULT_SCHEMA_VERSION = "tokenshare.slim_v2.root_result.v2"
+CHALLENGE_INJECTION_BOUNDARIES = {
+    "PARSER_REQUIRED_CANONICAL_JSON": "before_plugin_parser",
+    "INVALID_PARSED_CANDIDATE": "after_parser_before_verification",
+    "RECOVERABLE_NO_RETURN": "after_source_usage",
+    "REQUIRED_CHILD_DELAY": "after_source_usage",
+}
 # 前向 Experiment 1 与 Experiment 5 使用不同且不可变的价格版本。
 PRICING_VERSION = "slim_v2.pricing.2026-08-23"
 LEGACY_PRICING_VERSION = "slim_v2.pricing.2026-08-20"
@@ -42,14 +48,14 @@ PRE_FLASH_CONFIGURED_MODEL = "deepseek-v4-pro"
 _OPERATIONAL = "operational"
 _CALL_STATES = frozenset({"not_started", "in_flight", "terminal"})
 _TRACE_ORIGINS = frozenset({"protocol", "coverage_tail"})
-_PROFILES = frozenset({"representative", "full"})
+_PROFILES = frozenset({"representative", "full", "minif2f"})
 _EXPERIMENT_ORDER = ("exp1", "exp2", "exp3", "exp4", "exp5")
 _EXPERIMENTS = frozenset(_EXPERIMENT_ORDER)
 _EXP1_PROVIDER_CONFIG_PATH = (
     "configs/experiments/exp1_baseline_provider_config.v3.json"
 )
 _EXP5_PROVIDER_CONFIG_PATH = (
-    "configs/experiments/exp5_siliconflow_provider_config.v3.json"
+    "configs/experiments/exp5_siliconflow_provider_config.v4.json"
 )
 _LOCAL_SECRET_CONFIG_PATH = "local/ai_api_smoke.local.json"
 _RESPONSE_MAX_BYTES = 16 * 1024 * 1024
@@ -485,6 +491,10 @@ class ChallengeObservationV1(SchemaRecordV1):
                 self.candidate_independent_label,
                 "challenge observation candidate_independent_label",
             )
+        if self.injected and not self.opportunity:
+            raise SchemaValidationError("challenge injection requires an opportunity")
+        if self.injection_boundary != CHALLENGE_INJECTION_BOUNDARIES.get(self.challenge_family):
+            raise SchemaValidationError("challenge injection boundary differs from family")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1023,6 +1033,8 @@ class ExperimentRunConfigV1(SchemaRecordV1):
         _require_nonempty_text(self.run_id, "run_id")
         if self.profile_id not in _PROFILES:
             raise SchemaValidationError(f"invalid profile_id {self.profile_id!r}")
+        if self.profile_id == "minif2f" and self.experiment_ids != ["exp1"]:
+            raise SchemaValidationError("miniF2F supplement supports only Experiment 1")
         if not self.experiment_ids or any(item not in _EXPERIMENTS for item in self.experiment_ids):
             raise SchemaValidationError("experiment_ids must be a non-empty Exp1-5 subsequence")
         positions = [_EXPERIMENT_ORDER.index(item) for item in self.experiment_ids]
@@ -1195,6 +1207,8 @@ class ProviderEntryViewV1(SchemaRecordV1):
     configured_model: str | None = _required()
     request_overrides: dict[str, Any] = _required_factory(dict)
     supports_json_mode: bool | None = _required()
+    timeout_seconds: float | None = _required()
+    max_tokens: int | None = _required()
 
     def validate(self) -> None:
         for name in (
@@ -1208,6 +1222,17 @@ class ProviderEntryViewV1(SchemaRecordV1):
             _require_nonempty_text(getattr(self, name), name)
         if not isinstance(self.supports_json_mode, bool):
             raise SchemaValidationError("supports_json_mode must be boolean")
+        if isinstance(self.timeout_seconds, bool) or not isinstance(
+            self.timeout_seconds,
+            (int, float),
+        ) or self.timeout_seconds <= 0:
+            raise SchemaValidationError("timeout_seconds must be positive")
+        if (
+            isinstance(self.max_tokens, bool)
+            or not isinstance(self.max_tokens, int)
+            or self.max_tokens <= 0
+        ):
+            raise SchemaValidationError("max_tokens must be a positive integer")
 
 
 @dataclass(slots=True)
@@ -1578,6 +1603,10 @@ class RootResultV2(SchemaRecordV1):
                 raise SchemaValidationError(
                     "Exp4 challenge target IDs must be non-empty"
                 )
+            if self.challenge_attempt_ordinal_rule not in {"ordinal_0", "every_attempt"}:
+                raise SchemaValidationError("Exp4 challenge attempt rule is invalid")
+            if self.challenge_family not in CHALLENGE_INJECTION_BOUNDARIES:
+                raise SchemaValidationError("Exp4 challenge family is invalid")
             if len(self.challenge_target_planned_ai_unit_ids) != len(
                 set(self.challenge_target_planned_ai_unit_ids)
             ):
@@ -1679,8 +1708,19 @@ class RootResultV2(SchemaRecordV1):
             observation.validate()
         for observation in self.worker_death_observations:
             observation.validate()
+        challenge_identities: set[tuple[str, int]] = set()
         for observation in self.challenge_observations:
             observation.validate()
+            identity = (observation.target_planned_ai_unit_id, observation.attempt_ordinal)
+            if (
+                observation.challenge_plan_id != self.challenge_plan_id
+                or observation.challenge_family != self.challenge_family
+                or observation.target_planned_ai_unit_id not in (self.challenge_target_planned_ai_unit_ids or [])
+                or (self.challenge_attempt_ordinal_rule == "ordinal_0" and observation.attempt_ordinal != 0)
+                or identity in challenge_identities
+            ):
+                raise SchemaValidationError("challenge observation differs from root plan or is duplicated")
+            challenge_identities.add(identity)
         for observation in self.ablation_observations:
             observation.validate()
         for attempt in self.attempts:

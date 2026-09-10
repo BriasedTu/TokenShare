@@ -1,0 +1,10 @@
+{
+  "case_id": "minif2f_valid_algebra_amgm_prod1toneq1_sum1tongeqn",
+  "node_proof_sources": {
+    "logarithmic_conservation": "by\n  rw [← Real.log_prod (Finset.range n) (fun i => (a i : ℝ)) (fun i hi => (node_positive_factors i hi).ne')]\n  have hp : (∏ i ∈ Finset.range n, (a i : ℝ)) = 1 := by exact_mod_cast h₀\n  rw [hp, Real.log_one]",
+    "positive_factors": "by\n  have hp : Finset.prod (Finset.range n) a ≠ 0 := by rw [h₀]; norm_num\n  intro i hi\n  have ha : a i ≠ 0 := (Finset.prod_ne_zero_iff.mp hp) i hi\n  exact_mod_cast (pos_iff_ne_zero.mpr ha : 0 < a i)",
+    "root": "by\n  have hs : (n : ℝ) ≤ ∑ i ∈ Finset.range n, (a i : ℝ) := by linarith\n  exact_mod_cast hs",
+    "summed_tangent_bound": "by\n  calc\n    (∑ i ∈ Finset.range n, Real.log (a i : ℝ)) ≤ ∑ i ∈ Finset.range n, ((a i : ℝ) - 1) :=\n      Finset.sum_le_sum (fun i hi => Real.log_le_sub_one_of_pos (node_positive_factors i hi))\n    _ = (∑ i ∈ Finset.range n, (a i : ℝ)) - n := by simp [Finset.sum_sub_distrib]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

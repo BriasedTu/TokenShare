@@ -23,8 +23,10 @@ SYSTEM_SELECTORS = (
     "tests/storage",
     "tests/local_runtime",
     "tests/plugins/factorization",
+    "tests/plugins/lean_proof",
     "tests/plugins/test_plugin_registry.py",
     "tests/executors",
+    "tests/verification",
 )
 EXPERIMENT_SELECTORS = ("tests/experiments",)
 
@@ -38,19 +40,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--raw-root", type=Path)
     parser.add_argument("--require-raw", action="store_true")
+    parser.add_argument(
+        "--run-lean-integration", action="store_true",
+        help="Explicitly enable real Lean compilation tests; requires a prepared local cache.",
+    )
     args = parser.parse_args(argv)
+    if args.run_lean_integration and args.focused not in {"fast", "system", "experiments"}:
+        parser.error("--run-lean-integration requires a pytest-focused verification mode")
 
     _prepare_imports()
     _verify_python_runtime()
     _compile_python()
     if args.focused == "fast":
-        _run_pytest(_manifest_entries(FAST_TEST_MANIFEST))
+        _run_pytest(_manifest_entries(FAST_TEST_MANIFEST), run_lean_integration=args.run_lean_integration)
     elif args.focused == "system":
-        _run_pytest(SYSTEM_SELECTORS)
+        _run_pytest(SYSTEM_SELECTORS, run_lean_integration=args.run_lean_integration)
     elif args.focused == "experiments":
         _run_corpus()
         _run_plan()
-        _run_pytest(EXPERIMENT_SELECTORS)
+        _run_pytest(EXPERIMENT_SELECTORS, run_lean_integration=args.run_lean_integration)
     elif args.focused == "corpus":
         _run_corpus()
     elif args.focused == "results":
@@ -59,7 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _run_extraction()
     print(
         json.dumps(
-            {"status": "ok", "focused": args.focused},
+            {"status": "ok", "focused": args.focused, "run_lean_integration": args.run_lean_integration},
             ensure_ascii=False,
             sort_keys=True,
         ),
@@ -111,7 +119,7 @@ def _manifest_entries(path: Path) -> tuple[str, ...]:
     return entries
 
 
-def _run_pytest(selectors: Sequence[str]) -> None:
+def _run_pytest(selectors: Sequence[str], *, run_lean_integration: bool = False) -> None:
     _run(
         [
             sys.executable,
@@ -121,6 +129,7 @@ def _run_pytest(selectors: Sequence[str]) -> None:
             "verification.pytest_network_tripwire",
             *selectors,
             "-q",
+            *(["--run-lean-integration"] if run_lean_integration else []),
         ],
         "pytest",
     )

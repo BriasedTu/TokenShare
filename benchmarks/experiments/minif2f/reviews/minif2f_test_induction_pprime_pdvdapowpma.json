@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_induction_pprime_pdvdapowpma",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.778926+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/6492f4913bb46285/result.json",
+    "result_sha256": "sha256:71831b0a707fc754ace12e380d127bce082a2b8d2a4141a385cb5d74481ca447"
+  },
+  "mathematical_review": "Transfer prime-characteristic Frobenius to a successor congruence, then induct on the natural input and convert the congruence to natural subtraction divisibility.",
+  "node_proofs_digest": "sha256:5a270a164b7a37c4832f20ce03fa07827ed30605d0635d31a7fa3e728d9427a6",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Transfer the prime-characteristic Frobenius identity back to a natural-number congruence for the successor step.",
+      "node_id": "frobenius_successor_step"
+    },
+    {
+      "dependencies": [
+        "frobenius_successor_step"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:35f5c60367d4ba1249cff64691814065d5c3d2ab7293b8639ff52f86e8ceed1a",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.778926+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

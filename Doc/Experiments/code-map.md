@@ -1,6 +1,6 @@
 # Public Experiment Code Map
 
-This map is the public reader's guide to the retained TokenShare experiment extraction. It intentionally names only the clean public paths.
+This map connects the protocol implementation, experiment entry points, research assets, and verification tools.
 
 ## Runtime
 
@@ -18,6 +18,7 @@ This map is the public reader's guide to the retained TokenShare experiment extr
 ## Experiments
 
 - `src/tokenshare/experiments/`: the only public experiment facility and CLI surface.
+- `src/tokenshare/experiments/minif2f.py`: fixed mathematical DAG catalog loading, admission evidence validation, and pinned miniF2F environment support.
 - `src/tokenshare/experiments/factorization_exp1_analysis.py`: standalone read-only extractor for root-level and actual range-attempt-level Experiment 1 Factorization analysis tables; it reads an explicitly supplied local raw run and writes only to a separate ignored analysis output directory.
 - `tests/experiments/`: offline focused tests for case loading, planning, fake vertical runs, resume behavior, reducer output, terminal failure projection, and public launcher behavior.
 - `run_experiments.cmd`: Windows launcher for `tokenshare.experiments.gui`.
@@ -35,3 +36,4 @@ This map is the public reader's guide to the retained TokenShare experiment extr
 - `verification/verify_extraction.py`: release boundary verifier for freeze tag identity, public paths, corpus, results, and forbidden retained symbols.
 - `verification/run_verification.py`: focused entry point for system, experiments, corpus, results, extraction, and fast offline checks.
 - `verification/pytest_network_tripwire.py` and `verification/sitecustomize.py`: offline verification guard against accidental production provider calls.
+- `verification/pytest_lean_integration.py` and `verification/lean_integration_guard.py`: opt-in Lean integration tests and process guards for default offline verification.

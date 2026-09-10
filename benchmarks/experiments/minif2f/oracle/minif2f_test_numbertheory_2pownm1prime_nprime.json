@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_numbertheory_2pownm1prime_nprime",
+  "node_proof_sources": {
+    "exponent_divisibility": "by\n  intro m hm\n  obtain ⟨k, hk⟩ := hm\n  rw [hk, pow_mul]\n  simpa using Nat.sub_dvd_pow_sub_pow (2 ^ m) 1 k",
+    "proper_divisor_bounds": "by\n  intro m hm hmn\n  have lo : 2 ^ 2 ≤ 2 ^ m := Nat.pow_le_pow_right (by decide) hm\n  have hi : 2 ^ m < 2 ^ n := Nat.pow_lt_pow_right (by decide) hmn\n  norm_num at lo\n  omega",
+    "root": "by\n  have hn : 2 ≤ n := by\n    by_contra h\n    have : n = 1 := by omega\n    norm_num [this] at h₁\n  by_contra hp\n  obtain ⟨m, hmd, hm, hmn⟩ := Nat.exists_dvd_of_not_prime2 hn hp\n  have bounds := node_proper_divisor_bounds m hm hmn\n  have factors := h₁.eq_one_or_self_of_dvd (2 ^ m - 1) (node_exponent_divisibility m hmd)\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

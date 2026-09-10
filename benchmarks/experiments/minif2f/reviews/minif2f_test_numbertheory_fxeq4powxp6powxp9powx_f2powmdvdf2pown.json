@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_numbertheory_fxeq4powxp6powxp9powx_f2powmdvdf2pown",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:28.205667+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/71e1788f19c431e2/result.json",
+    "result_sha256": "sha256:a0fc52853a01244cb947e8be0f52b90174cd0745af8d7584ee99618af64876f7"
+  },
+  "mathematical_review": "Factor the doubled-exponent sum with a justified natural subtraction witness, then iterate divisibility along powers of two.",
+  "node_proofs_digest": "sha256:ceaea048351bfc54e7b37d4ae475bb09b071398493972b656f25b5cefcdcf9d8",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Factor the doubled-exponent sum and justify natural subtraction in the quotient witness by a power comparison.",
+      "node_id": "doubling_factorization"
+    },
+    {
+      "dependencies": [
+        "doubling_factorization"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:5790e46ce5a37632c2a8dd11a509d857bfa89ab84a0c95204dac493027bb7832",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:28.205667+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

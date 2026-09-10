@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_mathd_numbertheory_618",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.898607+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/e0bb2bf8fcead800/result.json",
+    "result_sha256": "sha256:848258c8f30b5a38387c062e96c8060c7df341392e0d4b9531897f421e50d988"
+  },
+  "mathematical_review": "The polynomial first difference gives a Euclidean gcd reduction, which makes the finite small-index exclusion tractable.",
+  "node_proofs_digest": "sha256:2771579c222c869438218145eb9068066b0557d357b9479621597b7957876fa6",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Compute the first difference of the natural-valued polynomial and apply the Euclidean gcd invariant.",
+      "node_id": "euclidean_reduction"
+    },
+    {
+      "dependencies": [
+        "euclidean_reduction"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:1c32564ed1b6f096716b247b279033a6fe70cab9a9f990aaf7f0ffb29c492c8d",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.898607+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

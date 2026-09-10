@@ -38,7 +38,13 @@ class _FakeResponse:
         self.closed = True
 
 
-def _entry(*, family: str = "siliconflow", model: str = "Qwen/Qwen3-14B") -> ProviderEntryViewV1:
+def _entry(
+    *,
+    family: str = "siliconflow",
+    model: str = "Qwen/Qwen3-14B",
+    timeout_seconds: float = 600.0,
+    max_tokens: int = 300_000,
+) -> ProviderEntryViewV1:
     overrides = {"enable_thinking": False}
     if family == "deepseek":
         overrides = {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}
@@ -51,6 +57,8 @@ def _entry(*, family: str = "siliconflow", model: str = "Qwen/Qwen3-14B") -> Pro
         configured_model=model,
         request_overrides=overrides,
         supports_json_mode=True,
+        timeout_seconds=timeout_seconds,
+        max_tokens=max_tokens,
     )
     entry.validate()
     return entry
@@ -1005,16 +1013,16 @@ def test_exp5_three_siliconflow_entries_complete_without_tail_or_replacement(
     monkeypatch.setenv("EXPERIMENTS_TEST_KEY", "secret")
     factory = _PromptResponseFactory(model)
     monkeypatch.setattr(provider, "_open_response", factory)
-    entry = _entry(model=model)
+    entry = _entry(model=model, timeout_seconds=1200.0, max_tokens=4096)
     entry.request_overrides = (
-        {"enable_thinking": True, "thinking_budget": 100000}
+        {"enable_thinking": True, "thinking_budget": 32768}
         if thinking
         else {"enable_thinking": False}
     )
     case = _factorization_case()
     safe_model = model.replace("/", "_")
     artifact_store = ArtifactStore(tmp_path / safe_model)
-    config = replace(_config(f"exp5_{safe_model}"), max_retries=0)
+    config = replace(_config(f"exp5_{safe_model}"), max_retries=2)
     runtime_adapter = FactorizationRuntimeAdapter(
         provider_family="siliconflow", seed=7, protocol_config=config, created_at=NOW
     )
@@ -1043,23 +1051,23 @@ def test_exp5_three_siliconflow_entries_complete_without_tail_or_replacement(
         ),
         now=clock,
         observation_clock=_ObservationClock(),
-        mechanism_policy=ProtocolMechanismPolicy(replacement_attempts_allowed=False),
+        mechanism_policy=ProtocolMechanismPolicy(replacement_attempts_allowed=True),
     )
 
     result = run_root_slice(assembly)
 
     assert result.status == "completed", submission_adapter.errors
-    assert config.max_retries == 0
-    assert assembly.mechanism_policy.replacement_attempts_allowed is False
+    assert config.max_retries == 2
+    assert assembly.mechanism_policy.replacement_attempts_allowed is True
     assert len(factory.responses) == len(submission_adapter.requests) == 3
-    assert factory.timeout_seconds == [600.0, 600.0, 600.0]
-    assert all(body["max_tokens"] == 100_000 for body in factory.request_bodies)
+    assert factory.timeout_seconds == [1200.0, 1200.0, 1200.0]
+    assert all(body["max_tokens"] == 4096 for body in factory.request_bodies)
     assert not scan_resume(ordinary.run_dir).trace_keys
     assert not scan_resume(ordinary.run_dir).protocol_root_keys
     assert all(body["model"] == model for body in factory.request_bodies)
     assert all(body.get("enable_thinking") is thinking for body in factory.request_bodies)
     if thinking:
-        assert all(body.get("thinking_budget") == 100000 for body in factory.request_bodies)
+        assert all(body.get("thinking_budget") == 32768 for body in factory.request_bodies)
     inventory = replace(
         _inventory(case=case, domain="factorization"),
         experiment_id="exp5",

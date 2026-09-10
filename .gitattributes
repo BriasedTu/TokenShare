@@ -1,5 +1,11 @@
 # Frozen experiment assets are byte-verified by dedicated harnesses.
 # Keep exact bytes and suppress textual diff whitespace checks for CRLF snapshots.
+# miniF2F admission evidence is also bound to exact file hashes.
+benchmarks/experiments/minif2f/** -text -diff
+benchmarks/experiments/minif2f_catalog.v1.jsonl -text -diff
+benchmarks/experiments/fixtures/minif2f_project/** -text -diff
+configs/experiments/exp1_minif2f.v1.json -text -diff
+configs/experiments/exp5_siliconflow_provider_config.v4.json -text -diff
 benchmarks/experiments/factorization_catalog.v2.jsonl -text -diff
 benchmarks/experiments/lean_catalog.v1.jsonl -text -diff
 benchmarks/experiments/lean_checker_preflight.v1.json -text -diff

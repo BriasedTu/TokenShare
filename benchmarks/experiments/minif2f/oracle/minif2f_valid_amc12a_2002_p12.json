@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_amc12a_2002_p12",
+  "node_proof_sources": {
+    "parity_forces_prime_pair": "by\n  have ha := h₃.1.eq_two_or_odd\n  have hb := h₃.2.eq_two_or_odd\n  omega",
+    "prime_root_sum": "by\n  have hp := h₀ a\n  have hq := h₀ b\n  have hn : (a : ℝ) ≠ b := by exact_mod_cast h₂\n  have hz : ((a : ℝ) - b) * ((a : ℝ) + b - 63) = 0 := by nlinarith [h₁.1, h₁.2]\n  have hs := (mul_eq_zero.mp hz).resolve_left (sub_ne_zero.mpr hn)\n  have hs' : (a : ℝ) + b = 63 := by linarith\n  exact_mod_cast hs' ",
+    "root": "by\n  have hp := h₀ a\n  have hf := h₁.1\n  rcases node_parity_forces_prime_pair with ⟨ha, hb⟩ | ⟨ha, hb⟩\n  all_goals\n    rw [ha] at hp hf\n    norm_num at hp hf\n    linarith"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

@@ -21,6 +21,7 @@ from tokenshare.plugins.lean_proof.environment import (
     build_lean_environment_ref,
 )
 from tokenshare.plugins.lean_proof.models import (
+    LEAN_LEMMA_GRAPH_CHECKED_BODIES_SHAPE,
     LEAN_LEMMA_GRAPH_STRUCTURED_BLOCKED_SHAPE,
     LeanLemmaGraphCertificate,
     LeanSplitCertificate,
@@ -696,7 +697,15 @@ def _lemma_graph_merge_proof_source(
     lines = ["by"]
     for node_id in _lemma_graph_topological_order(certificate):
         incoming_node_ids = tuple(incoming_by_target.get(node_id, ()))
-        if incoming_node_ids:
+        if certificate.proof_assembly_shape == LEAN_LEMMA_GRAPH_CHECKED_BODIES_SHAPE:
+            # Each body was checked with precisely these declared dependencies.
+            # Keep its layout: nested tactics depend on relative indentation.
+            proof_lines = node_proof_sources[node_id].strip().splitlines()
+            lines.append(
+                f"  have {local_names[node_id]} : {node_statements[node_id]} := {proof_lines[0]}"
+            )
+            lines.extend(f"  {line}" for line in proof_lines[1:])
+        elif incoming_node_ids:
             lines.extend(
                 _have_from_lemma_graph_dependencies(
                     local_name=local_names[node_id],

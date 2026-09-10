@@ -1,8 +1,25 @@
 /TokenShareData/
+# Local manuscript workspaces and development notes.
+/paper/
+/benchmarks/paper/
+/docs/superpowers/
+
+# Credentials and machine-local settings.
+.env
+.env.*
+!.env.example
 /local/*.local.json
 /local/*.secret
 /local/*.secret.*
 /local/cache/
+/benchmarks/experiments/fixtures/*/.lake/
+
+# Python packaging and generated reports.
+/build/
+/dist/
+*.egg-info/
+/coverage.xml
+/junit.xml
 
 __pycache__/
 *.py[cod]

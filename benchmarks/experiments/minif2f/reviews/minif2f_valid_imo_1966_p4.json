@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_imo_1966_p4",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:28.354507+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/562432e44f5605fe/result.json",
+    "result_sha256": "sha256:77708011b263fddf0be0ad2c275f6730b8a81ac0c3fafea21dec82b29e9c0c91"
+  },
+  "mathematical_review": "The doubled-angle reciprocal-sine identity gives a cotangent difference, including zero-denominator conventions; induction telescopes the finite interval sum.",
+  "node_proofs_digest": "sha256:3988fe32ed93262db85cd65ae0a5a191e6f4fe9461d7328e0e6b31f1001184e0",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Convert the reciprocal sine of a doubled angle into a difference of cotangents, including the zero-denominator cases.",
+      "node_id": "cotangent_doubling_difference"
+    },
+    {
+      "dependencies": [
+        "cotangent_doubling_difference"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:81bc1f614c4dfebbc7a4cd0d5b2b2fad537f4153de52c40990dad34562d071ad",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:28.354507+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

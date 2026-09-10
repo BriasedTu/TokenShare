@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12_2001_p21",
+  "node_proof_sources": {
+    "candidate_middle_values": "by\n  have hb : b ≤ 20 := by have := Nat.le_of_dvd (by norm_num : 0 < 21) node_common_divisor; omega\n  interval_cases b <;> norm_num at *\n  have hc : c=48 := by omega\n  rw [hc] at h₃\n  omega",
+    "common_divisor": "by\n  have h1 : (a+1)*(b+1)=525 := by nlinarith\n  have h2 : (b+1)*(c+1)=147 := by nlinarith\n  have d1 : b+1 ∣ 525 := ⟨a+1, by nlinarith [h1]⟩\n  have d2 : b+1 ∣ 147 := ⟨c+1, h2.symm⟩\n  have hd := Nat.dvd_gcd d1 d2\n  norm_num at hd\n  exact hd",
+    "root": "by\n  rcases node_candidate_middle_values with hb | hb\n  · rw [hb] at h₀ h₁ h₂\n    have ha : a=74 := by omega\n    have hc : c=20 := by omega\n    rw [hc] at h₃\n    have hd : d=4 := by omega\n    norm_num [ha, hc, hd] at h₀\n  · rw [hb] at h₁ h₂\n    have ha : a=24 := by omega\n    have hc : c=6 := by omega\n    rw [hc] at h₃\n    have hd : d=14 := by omega\n    norm_num [ha, hd]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

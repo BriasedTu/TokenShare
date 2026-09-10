@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.lean_checker import RecordingLeanChecker
 from tokenshare.plugins.lean_proof.checker import (
     LeanCheckerMode,
     LeanCheckerRequest,
@@ -51,6 +52,7 @@ class LemmaGraphBundle:
     node_inputs: list[dict]
 
 
+@pytest.mark.lean_integration
 def test_accepted_pure_logic_node_proofs_assemble_into_root_recheck(
     lemma_graph_bundle_factory,
 ) -> None:
@@ -101,6 +103,7 @@ def test_accepted_pure_logic_node_proofs_assemble_into_root_recheck(
     )
 
 
+@pytest.mark.lean_integration
 @pytest.mark.parametrize(
     "case_id, dependency_snippet, forbidden_root_oracle",
     [
@@ -386,15 +389,18 @@ def test_structured_blocked_no_oracle_frontier_cannot_merge_success(
         )
 
 
-@pytest.fixture(scope="module")
-def lemma_graph_bundle_factory(tmp_path_factory):
+@pytest.fixture
+def lemma_graph_bundle_factory(tmp_path_factory, request):
     cache: dict[tuple[str, bool], LemmaGraphBundle] = {}
+    real_lean = request.node.get_closest_marker("lean_integration") is not None
 
     def factory(case_id: str, *, check_nodes: bool = True) -> LemmaGraphBundle:
         key = (case_id, check_nodes)
         if key not in cache:
             tmp_path = tmp_path_factory.mktemp(_safe_id(case_id))
-            cache[key] = _build_bundle(tmp_path, _catalog_row(case_id), check_nodes=check_nodes)
+            cache[key] = _build_bundle(
+                tmp_path, _catalog_row(case_id), check_nodes=check_nodes, real_lean=real_lean,
+            )
         return cache[key]
 
     return factory
@@ -428,9 +434,11 @@ def _proof_inputs(merge_policy, bundle: LemmaGraphBundle):
     ]
 
 
-def _build_bundle(tmp_path: Path, row: dict, *, check_nodes: bool) -> LemmaGraphBundle:
+def _build_bundle(
+    tmp_path: Path, row: dict, *, check_nodes: bool, real_lean: bool,
+) -> LemmaGraphBundle:
     store = ArtifactStore(tmp_path)
-    manifest = _environment_manifest(tmp_path)
+    manifest = _environment_manifest(tmp_path, real_lean=real_lean)
     parent_payload = _payload_from_catalog(
         row["root_theorem_payload"],
         case_id=row["case_id"],
@@ -491,7 +499,10 @@ def _build_bundle(tmp_path: Path, row: dict, *, check_nodes: bool) -> LemmaGraph
         created_at=CREATED_AT,
     )
     node_inputs = (
-        _accepted_node_inputs(row, certificate, split_plan, store, manifest)
+        _accepted_node_inputs(
+            row, certificate, split_plan, store, manifest,
+            checker=check_lean_proof if real_lean else RecordingLeanChecker(),
+        )
         if check_nodes
         else []
     )
@@ -512,6 +523,8 @@ def _accepted_node_inputs(
     split_plan,
     store: ArtifactStore,
     manifest: LeanEnvironmentManifest,
+    *,
+    checker,
 ) -> list[dict]:
     proof_sources = row["oracle_proof_package_ref"]["node_proof_sources"]
     result = []
@@ -527,7 +540,7 @@ def _accepted_node_inputs(
             payload=node_payload,
             proof_source=proof_sources[node_id],
         )
-        checker_report = check_lean_proof(
+        checker_report = checker(
             LeanCheckerRequest(
                 request_id=f"lean_node_checker:{row['case_id']}:{node_id}",
                 theorem_payload_ref=node_payload_ref,
@@ -701,10 +714,13 @@ def _catalog_row(case_id: str) -> dict:
     raise AssertionError(f"missing catalog case: {case_id}")
 
 
-def _environment_manifest(tmp_path: Path) -> LeanEnvironmentManifest:
+def _environment_manifest(tmp_path: Path, *, real_lean: bool) -> LeanEnvironmentManifest:
     tools_root = Path.home() / "AppData" / "Local" / "TokenShare" / "LeanToolchain"
     elan_home = tools_root / "elan-home"
-    project_root = _prepared_lean_project(tmp_path, lake_executable=elan_home / "bin" / "lake.exe")
+    project_root = (
+        _prepared_lean_project(tmp_path, lake_executable=elan_home / "bin" / "lake.exe")
+        if real_lean else default_lean_fixture_project_path()
+    )
     return LeanEnvironmentManifest.from_project(
         project_root=project_root,
         lean_executable=elan_home / "bin" / "lean.exe",

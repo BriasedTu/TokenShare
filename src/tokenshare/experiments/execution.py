@@ -91,17 +91,11 @@ class ProviderSubmissionAdapter:
         prompt_text = prompt.get("prompt_text")
         if not isinstance(prompt_text, str):
             raise ValueError("prompt package lacks prompt_text")
-        controls = {
-            "exp1": (600.0, 300_000),
-            "exp5": (600.0, 100_000),
-        }
-        try:
-            timeout_seconds, max_tokens = controls[self.root_key[0]]
-        except KeyError as exc:
-            raise ValueError("provider submissions are only valid for Exp1/Exp5") from exc
+        if self.root_key[0] not in {"exp1", "exp5"}:
+            raise ValueError("provider submissions are only valid for Exp1/Exp5")
         control = ProviderRequestControlV1(
-            timeout_seconds=timeout_seconds,
-            max_tokens=max_tokens,
+            timeout_seconds=self.entry.timeout_seconds,
+            max_tokens=self.entry.max_tokens,
             require_json_mode=bool(prompt.get("constraints", {}).get("requires_json_mode", True)),
         )
         context = ProviderCallContextV1(
@@ -314,19 +308,17 @@ class FixedTraceSubmissionAdapter:
         _check_semantics(self.artifact_store, request, trace)
         selected = select_trace_attempt(trace, request.attempt_ordinal)
         source = selected.attempt
+        transform_content = getattr(self.scenario_controller, "transform_content", None)
         if not source.raw_response_relative_path:
             outcome = _failed_source_outcome(trace, source)
+            if callable(transform_content):
+                transform_content(request, None)
         else:
             document = self.source_store.read_relative_response(source.raw_response_relative_path)
             body = document.get("body")
             content = _response_content(body)
-            transform_content = getattr(
-                self.scenario_controller,
-                "transform_content",
-                None,
-            )
-            if isinstance(content, str) and callable(transform_content):
-                content = transform_content(request, content)
+            if callable(transform_content):
+                content = transform_content(request, content if isinstance(content, str) else None)
             outcome = ProviderCallResultV1(
                 ok=isinstance(content, str),
                 content_text=content if isinstance(content, str) else None,

@@ -1,0 +1,1 @@
+'amc12b_2020_p13' depends on axioms: [propext, Classical.choice, Quot.sound]

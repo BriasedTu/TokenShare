@@ -1,0 +1,96 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_algebra_apbon2pownleqapownpbpowon2",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:50:09.001743+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "authoring_sha256": "sha256:a0fb4a7a789753126e74556c5478945825f6a33e842b130b70695e5dd1dfc103",
+      "case_id": "test/algebra_apbon2pownleqapownpbpowon2",
+      "checked_segments": [
+        {
+          "end_line": 18,
+          "node_id": "power_difference_sign",
+          "payload_digest": "sha256:021136d1e19cf9f9dd84fc53d50084134c1794be67b01dffb8c81d1870872079",
+          "proof_sha256": "sha256:3eee0b2812d9910682f5fbd9081f49cb82dfcde784db0abb244af9a707f34138",
+          "segment_sha256": "sha256:bd0de9e48b963b137549f78553d045c1a6116b2487be291066b22134afab1801",
+          "standalone_source_sha256": "sha256:ad2a222a2b299922a5543685e8439af6aed444f562920c95942a20f84927aee9",
+          "start_line": 4
+        },
+        {
+          "end_line": 42,
+          "node_id": "root",
+          "payload_digest": "sha256:0b3fb1b2e742b09369f852813a1c93ad01cca366fc48a35779633a3c77e9bf39",
+          "proof_sha256": "sha256:5525d6964dd7da5392caa95fe4b442438e2626d9043c96a8b61d0b397bd4d1b0",
+          "segment_sha256": "sha256:6d51c5f393e600e67806741474d5439f6dbc46e33b5e90577bdbd94d10ff3b7d",
+          "standalone_source_sha256": "sha256:8a74132f8c61339cd4647452076f9ddeadfcf5f3bd5675789e06cb30e753c118",
+          "start_line": 20
+        },
+        {
+          "end_line": 73,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:17cb6812816725f188433709419410a5cffab12d6806bf54a585780cc39fa292",
+          "proof_sha256": "sha256:3c27e1013aa494041b64788382b32dc8fd8fe3a1cbeff3669e6ba6441a35e88d",
+          "segment_sha256": "sha256:8353bb69d06728053320771672d30db2ab7e212010a20141182c58cfdf971ab4",
+          "standalone_source_sha256": "sha256:6e631027ba4c76be89c2203aff434748359e0fdc63430bf6555674c5130dbe9b",
+          "start_line": 44
+        }
+      ],
+      "current_plan_digest": "sha256:f0ba1711b7bebb4879133868ba70919fc145dcf762b9a7b5cdbb973647bdc1b5",
+      "dependency_review": "The root directly uses power_difference_sign k inside the induction step. The equivalent intermediate node is removed, with its calculation local to the root.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\473a1eec\\a3\\result.json",
+      "formal_result_sha256": "sha256:7a7cb679d57c33c8e97649cc760a1da7786220a4fb2b08d11e590912b1638663",
+      "graph_digest": "sha256:3ae09ec59386a4e12074c3ea100a048ee8705fe96d35516faae9f2e9158da1fa",
+      "lean_source_sha256": "sha256:d9171960bd88992ab1ba8220a07c673adf9466b4cb7d6f9a5d5e6e7279a98314",
+      "mathematical_review": "The sign of a power difference is a substantive monotonicity certificate, and the root proves the power-mean estimate by induction. The initially separate mixed_moment_bound was exactly the polynomial expansion 2(a^(k+1)+b^(k+1))-(a^k+b^k)(a+b)=(a-b)(a^k-b^k). The author folded this equivalent rewrite into the root after independent review. The current two-node graph counts only the sign certificate and the inductive root, and its new necessary compilation evidence matches.",
+      "node_count": 2,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:9bbe66f57d0e675ac2d2bde40ec8e1877a542e48650dcff32c28293fc35de0eb",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:f0ba1711b7bebb4879133868ba70919fc145dcf762b9a7b5cdbb973647bdc1b5",
+      "review_scope": "Final authoring, unchanged upstream source, current isolated segments and assembled theorem, preserved compiler stdout/stderr/result hashes; no repeated Lean run.",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:85050f4adcbfb738c7ef9a2640ee969a50bfc4dd467cb29c3e8d2c05dbb2512e",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:1adfc8c8a6fcf7b667d8b8fd00b594118f9306975c2aa7367a77a061d3cb0cc0"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498.json",
+    "source_report_sha256": "sha256:b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/473a1eec72faa13c/result.json",
+    "result_sha256": "sha256:7a7cb679d57c33c8e97649cc760a1da7786220a4fb2b08d11e590912b1638663"
+  },
+  "mathematical_review": "The sign of a power difference is a substantive monotonicity certificate, and the root proves the power-mean estimate by induction. The initially separate mixed_moment_bound was exactly the polynomial expansion 2(a^(k+1)+b^(k+1))-(a^k+b^k)(a+b)=(a-b)(a^k-b^k). The author folded this equivalent rewrite into the root after independent review. The current two-node graph counts only the sign certificate and the inductive root, and its new necessary compilation evidence matches.",
+  "node_proofs_digest": "sha256:9bbe66f57d0e675ac2d2bde40ec8e1877a542e48650dcff32c28293fc35de0eb",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "The power difference has the same sign as the base difference.",
+      "node_id": "power_difference_sign"
+    },
+    {
+      "dependencies": [
+        "power_difference_sign"
+      ],
+      "mathematical_role": "Inductively propagate the moment inequality to the requested exponent.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:f0ba1711b7bebb4879133868ba70919fc145dcf762b9a7b5cdbb973647bdc1b5",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:50:09.001743+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

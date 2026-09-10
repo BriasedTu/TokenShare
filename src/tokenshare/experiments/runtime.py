@@ -1141,9 +1141,14 @@ def _plugin_runtime(
     if context.inventory.domain == "factorization":
         return FactorizationRuntimeAdapter(**common)
     if context.inventory.domain == "lean":
+        if getattr(context, "profile_id", None) == "minif2f":
+            from .minif2f import load_environment
+            environment = load_environment(_REPO_ROOT)
+        else:
+            environment = _lean_environment()
         return LeanRuntimeAdapter(
             **common,
-            environment_manifest=_lean_environment(),
+            environment_manifest=environment,
         )
     raise ValueError(f"unsupported experiments domain: {context.inventory.domain}")
 
@@ -1911,6 +1916,8 @@ def resume_exp1_root_context(
                 configured_model=str(base.configured_model),
                 request_overrides={},
                 supports_json_mode=True,
+                timeout_seconds=1.0,
+                max_tokens=1,
             )
         artifact_store = ArtifactStore(
             context.run_store.system_root_directory(*key)

@@ -1,0 +1,43 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12_2000_p12",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.242561+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/466cc83bdcee092d/result.json",
+    "result_sha256": "sha256:26570070cc00d5125a346a7062ee79839d6401302eb2725376b1015d92161d1f"
+  },
+  "mathematical_review": "An independent two-variable square bound and a sharp cubic square certificate control the shifted product; the root subtracts the known linear sum.",
+  "node_proofs_digest": "sha256:a627ee0303ac49d3483160dd4cc9c743328a3e858b7c42c446377cb4c043b2b1",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Bound the product of the first two shifted variables by their squared sum.",
+      "node_id": "pair_bound"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Prove the sharp one-variable cubic bound with the (c−4)²(19−c) certificate.",
+      "node_id": "cubic_bound"
+    },
+    {
+      "dependencies": [
+        "pair_bound",
+        "cubic_bound"
+      ],
+      "mathematical_role": "Combine the two bounds and remove the known linear sum from the shifted product.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:c17f5c64cb01db0e0fe14646b7dc0ed19bf844ce82ce483e8dd0c5e5c65dc699",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.242561+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

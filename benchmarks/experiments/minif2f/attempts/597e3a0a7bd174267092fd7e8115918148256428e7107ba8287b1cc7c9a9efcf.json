@@ -1,0 +1,32 @@
+{
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "command": [
+    "L:\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\4458335800\\bridges.lean"
+  ],
+  "cwd": "L:\\project",
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\4458335800\\bridges.lean",
+  "source_sha256": "26fb44f35703baa2cdce2d5682e6b1a8376fd7b237d1d48286241d5def785fd1",
+  "duration_seconds": 30.963557481765747,
+  "segments": [
+    {
+      "node_id": "sine_elimination",
+      "start_line": 8,
+      "end_line": 21,
+      "proof_sha256": "e60fc9728569410f46dcb215a21248452c0e70a358ffa05f94d1d89618a89790",
+      "segment_sha256": "3b94c4886ba44ac8d737dd540fde4d9bd35858f05ca9b05383686dd0eac785d8"
+    },
+    {
+      "node_id": "same_sine_recovers_same_cosine",
+      "start_line": 22,
+      "end_line": 36,
+      "proof_sha256": "a2c206fe43ba66ce872306deba932a018284fc0e53f667743f7622c344611cf3",
+      "segment_sha256": "e366167d1c9643c0d1bd0bcb58303d1a35be289c442077b6f03fa5dba9dc25a2"
+    }
+  ],
+  "root_proved": false,
+  "provider_calls": 0
+}

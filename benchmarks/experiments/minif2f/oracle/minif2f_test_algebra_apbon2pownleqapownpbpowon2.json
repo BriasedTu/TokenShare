@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_test_algebra_apbon2pownleqapownpbpowon2",
+  "node_proof_sources": {
+    "power_difference_sign": "by\n  intro k\n  rcases le_total b a with h | h\n  · exact mul_nonneg (sub_nonneg.mpr h) (sub_nonneg.mpr (pow_le_pow_left₀ h₀.2.le h k))\n  · exact mul_nonneg_of_nonpos_of_nonpos (sub_nonpos.mpr h) (sub_nonpos.mpr (pow_le_pow_left₀ h₀.1.le h k))",
+    "root": "by\n  have hi : ∀ k : ℕ, ((a+b)/2)^k ≤ (a^k+b^k)/2 := by\n    intro k\n    induction k with\n    | zero => norm_num\n    | succ k ih =>\n      have hp := mul_le_mul_of_nonneg_right ih (by linarith [h₀.1, h₀.2] : 0 ≤ (a+b)/2)\n      rw [pow_succ]\n      have hm : (a^k+b^k)*(a+b) ≤ 2*(a^(k+1)+b^(k+1)) := by\n        rw [pow_succ, pow_succ]\n        nlinarith only [node_power_difference_sign k]\n      nlinarith only [hp, hm]\n  exact hi n"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

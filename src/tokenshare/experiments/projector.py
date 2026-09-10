@@ -22,7 +22,7 @@ from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
 from tokenshare.plugins.lean_proof.schemas import PROOF_ARTIFACT_OUTPUT_NAME
 from tokenshare.storage.events import EventType
 
-from .runtime import RootAssembly, TailSummaryV1, coverage_tail_blocked
+from .runtime import RootAssembly, TailSummaryV1, coverage_tail_blocked, _planned_from_unit_snapshot
 from .schema import (
     AblationObservationV1,
     AttemptResultV1,
@@ -428,7 +428,7 @@ def project_root_result(
         worker_facts=observation.get("worker_execution_facts"),
         recoveries=recovery_observations,
     )
-    challenge_observations = _challenge_projection(
+    challenge_observations, challenge_missing_reasons = _challenge_projection(
         scenario=scenario,
         assembly=assembly,
         events=events,
@@ -436,6 +436,9 @@ def project_root_result(
         canonical_attempt_ids=canonical_attempt_ids,
         recoveries=recovery_observations,
         verified_correct=verified_correct,
+        domain=str(inventory.domain),
+        planned_ai_unit_ids=inventory.planned_ai_unit_ids,
+        attempts=projected_attempts,
     )
     ablation_observations, ablation_missing_reasons = _ablation_projection(
         inventory=inventory,
@@ -524,6 +527,7 @@ def project_root_result(
                 else {}
             ),
             **ablation_missing_reasons,
+            **challenge_missing_reasons,
         },
         "not_applicable_reason": {},
     }
@@ -1216,6 +1220,23 @@ def _worker_death_projection(
     return observations
 
 
+def _challenge_artifact_document(
+    assembly: RootAssembly, value: object, *, name: str,
+) -> Mapping[str, Any]:
+    try:
+        if not isinstance(value, Mapping):
+            raise ValueError("missing artifact reference")
+        ref = ArtifactRef.from_dict(dict(value))
+        if not assembly.artifact_store.verify(ref):
+            raise ValueError("artifact size or hash mismatch")
+        document = json.loads(assembly.artifact_store.read_bytes(ref).decode("utf-8"))
+        if not isinstance(document, Mapping):
+            raise ValueError("artifact must contain an object")
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise RootProjectionError(f"challenge {name} evidence is unreadable") from exc
+    return document
+
+
 def _challenge_projection(
     *,
     scenario: object | None,
@@ -1225,28 +1246,102 @@ def _challenge_projection(
     canonical_attempt_ids: set[str],
     recoveries: Sequence[RecoveryObservationV1],
     verified_correct: bool,
-) -> list[ChallengeObservationV1]:
+    domain: str,
+    planned_ai_unit_ids: Sequence[str],
+    attempts: Sequence[AttemptResultV1],
+) -> tuple[list[ChallengeObservationV1], dict[str, str]]:
     plan = getattr(scenario, "challenge_plan", None)
     if plan is None:
-        return []
+        return [], {}
+    targets = set(plan.target_planned_ai_unit_ids)
+    if not targets or not targets <= set(planned_ai_unit_ids):
+        raise RootProjectionError("challenge targets differ from planned inventory")
+    units: dict[str, str | None] = {}
+    for event in events:
+        if event.event_type == EventType.TASK_UNIT_CREATED:
+            snapshot = event.payload.get("task_unit")
+            if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("unit_id"), str):
+                raise RootProjectionError("challenge task unit identity is malformed")
+            units[snapshot["unit_id"]] = _planned_from_unit_snapshot(snapshot, domain=domain)
+
+    # Preparing a request does not prove that the batch ran or reached its
+    # injection boundary. Only actual records, completed attempts and persisted
+    # submissions can establish that later stage.
+    requests: dict[str, Mapping[str, Any]] = {}
+    applicable: dict[str, tuple[str, int]] = {}
+    identities: set[tuple[str, int]] = set()
+    for event in events:
+        if event.event_type != EventType.EXECUTION_REQUEST_RECORDED:
+            continue
+        request = _challenge_artifact_document(
+            assembly, event.payload.get("request_ref"), name="request",
+        )
+        attempt_id = request.get("attempt_id")
+        unit_id = request.get("unit_id")
+        if (
+            any(not isinstance(request.get(key), str) or not request[key]
+                or request[key] != event.payload.get(key)
+                for key in ("request_id", "attempt_id", "unit_id"))
+            or request.get("task_id") != event.task_id
+            or unit_id not in units
+            or attempt_id in requests
+        ):
+            raise RootProjectionError("challenge request identity is inconsistent")
+        requests[attempt_id] = request
+        planned = units[unit_id]
+        if planned is None:
+            continue
+        hints = request.get("soft_hints")
+        ordinal = request.get("attempt_ordinal")
+        if (
+            planned not in planned_ai_unit_ids
+            or not isinstance(hints, Mapping)
+            or hints.get("planned_ai_unit_id") != planned
+            or isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 0
+            or (planned, ordinal) in identities
+        ):
+            raise RootProjectionError("challenge request planned attempt is inconsistent")
+        identities.add((planned, ordinal))
+        if planned in targets and (plan.attempt_rule == "every_attempt" or ordinal == 0):
+            applicable[attempt_id] = (planned, ordinal)
+
     controller = getattr(scenario, "challenge_controller", None)
-    records = list(getattr(controller, "injection_records", ()))
+    memory_records = getattr(controller, "injection_records", ())
+    if not isinstance(memory_records, (list, tuple)):
+        raise RootProjectionError("challenge controller observations are malformed")
+    records = list(memory_records)
+    completed: set[str] = set()
+    for attempt in attempts:
+        request = requests.get(attempt.attempt_id)
+        if (
+            request is None or request["unit_id"] != attempt.unit_id
+            or units[attempt.unit_id] != attempt.planned_ai_unit_id
+            or request.get("attempt_ordinal") != attempt.attempt_ordinal
+            or attempt.attempt_id in completed
+        ):
+            raise RootProjectionError("challenge completed attempt identity is inconsistent")
+        completed.add(attempt.attempt_id)
+    submitted: set[str] = set()
     for event in events:
         if event.event_type != EventType.EXECUTION_SUBMISSION_RECORDED:
             continue
-        submission_ref = event.payload.get("submission_ref")
-        if not isinstance(submission_ref, Mapping):
-            continue
-        try:
-            submission = json.loads(
-                assembly.artifact_store.read_bytes(
-                    ArtifactRef.from_dict(dict(submission_ref))
-                ).decode("utf-8")
-            )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise RootProjectionError(
-                "challenge submission evidence is unreadable"
-            ) from exc
+        submission = _challenge_artifact_document(
+            assembly, event.payload.get("submission_ref"), name="submission",
+        )
+        attempt_id = submission.get("attempt_id")
+        request = requests.get(attempt_id)
+        if (
+            request is None or attempt_id in submitted
+            or any(submission.get(key) != request.get(key)
+                   for key in ("request_id", "task_id", "unit_id", "attempt_id"))
+            or event.task_id != request["task_id"]
+            or event.payload.get("attempt_id") != attempt_id
+            or event.payload.get("unit_id") != request["unit_id"]
+            or event.payload.get("result_kind") != submission.get("result_kind")
+        ):
+            raise RootProjectionError("challenge submission identity is inconsistent")
+        submitted.add(attempt_id)
+        completed.add(attempt_id)
         summary = submission.get("environment_summary")
         actual_records = (
             summary.get("experiments_challenge_observations", ())
@@ -1257,28 +1352,24 @@ def _challenge_projection(
             actual_records, (str, bytes, bytearray)
         ):
             raise RootProjectionError("challenge submission observations are malformed")
+        if attempt_id in applicable and not actual_records:
+            raise RootProjectionError(
+                "Exp4 challenge route lacks persisted actual injection evidence: "
+                f"submission for {attempt_id}"
+            )
         for record in actual_records:
-            if record not in records:
-                records.append(record)
-    if not records:
-        raise RootProjectionError(
-            "Exp4 challenge route lacks persisted actual injection evidence"
-        )
+            if not isinstance(record, Mapping) or record.get("attempt_id") != attempt_id:
+                raise RootProjectionError("challenge record differs from enclosing submission")
+            records.append(record)
     replacement_by_original = {
         str(item.original_attempt_id): item for item in recoveries
     }
     observations: list[ChallengeObservationV1] = []
+    actual: dict[str, Mapping[str, Any]] = {}
     for record in records:
         if not isinstance(record, Mapping):
             raise RootProjectionError("scenario injection record must be an object")
         family = record.get("kind")
-        if family not in {
-            "INVALID_PARSED_CANDIDATE",
-            "PARSER_REQUIRED_CANONICAL_JSON",
-            "RECOVERABLE_NO_RETURN",
-            "REQUIRED_CHILD_DELAY",
-        }:
-            continue
         attempt_id = record.get("attempt_id")
         planned = record.get("planned_ai_unit_id")
         ordinal = record.get("attempt_ordinal")
@@ -1289,8 +1380,24 @@ def _challenge_projection(
             or isinstance(ordinal, bool)
             or not isinstance(ordinal, int)
             or not isinstance(boundary, str)
+            or family != plan.challenge_family
+            or boundary != plan.injection_boundary
+            or applicable.get(attempt_id) != (planned, ordinal)
         ):
-            raise RootProjectionError("challenge injection identity is incomplete")
+            raise RootProjectionError("challenge injection identity is inconsistent with plan/request")
+        for key in ("opportunity", "injected"):
+            if not isinstance(record.get(key), bool):
+                raise RootProjectionError(f"challenge injection {key} must be bool")
+        for key in ("independently_wrong", "source_semantics_preserved"):
+            if record.get(key) is not None and not isinstance(record[key], bool):
+                raise RootProjectionError(f"challenge injection {key} must be bool or null")
+        if record["injected"] and not record["opportunity"]:
+            raise RootProjectionError("challenge injection requires an opportunity")
+        if attempt_id in actual:
+            if actual[attempt_id] != record:
+                raise RootProjectionError("conflicting challenge injection records")
+            continue
+        actual[attempt_id] = record
         status = verification_status.get(attempt_id)
         recovery = replacement_by_original.get(attempt_id)
         independently_wrong = record.get("independently_wrong")
@@ -1327,7 +1434,24 @@ def _challenge_projection(
                 valid_final_after_challenge=verified_correct,
             )
         )
-    return observations
+    missing_reasons: dict[str, str] = {}
+    for attempt_id, (planned, ordinal) in applicable.items():
+        if attempt_id in actual:
+            continue
+        if attempt_id in completed:
+            raise RootProjectionError(
+                "Exp4 challenge route lacks persisted actual injection evidence: "
+                f"{planned} attempt {ordinal}"
+            )
+        missing_reasons[f"challenge_attempts.{attempt_id}"] = "challenge_boundary_not_observed"
+    requested_targets = {planned for planned, _ordinal in applicable.values()}
+    for planned in sorted(targets - requested_targets):
+        missing_reasons[f"challenge_targets.{planned}"] = "challenge_target_not_dispatched"
+    if not observations:
+        missing_reasons["challenge_observations"] = (
+            "challenge_boundary_not_observed" if applicable else "challenge_target_not_dispatched"
+        )
+    return observations, missing_reasons
 
 
 def _ablation_projection(

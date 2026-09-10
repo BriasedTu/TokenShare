@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_imo_1966_p5",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:28.492825+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/0fc1a1bf499ee90e/result.json",
+    "result_sha256": "sha256:789afd1cb28bb361a0e117e138199373b63f814c0bd7d2f01161c5534fa3eaf5"
+  },
+  "mathematical_review": "Subtract adjacent distance-matrix equations and cancel nonzero coefficient gaps; solve the coefficient-free constraints and use an original row for normalization.",
+  "node_proofs_digest": "sha256:88c6266f10e62ec032e0a370a4e1a6dfb3fff9612aa4a6575c0911e886918498",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Subtract adjacent distance-matrix equations and cancel strictly nonzero gaps, revealing coefficient-free constraints on the unknowns.",
+      "node_id": "successive_row_differences"
+    },
+    {
+      "dependencies": [
+        "successive_row_differences"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:b8b0dc90de89f9ca419598ce4ebcf92ec15b0bc83a789ecf9445da6edb309b19",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:28.492825+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

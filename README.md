@@ -1,44 +1,79 @@
 # TokenShare
 
-TokenShare is a local research prototype for a protocol system that recursively decomposes, assigns, verifies, merges, settles, and replays large tasks.
+**A research prototype for decomposing, verifying, and replaying collaborative AI tasks.**
 
-This repository has one experiment facility: `tokenshare.experiments`. Its public research assets are organized around four parts:
+TokenShare turns a large task into verifiable units, assigns them to workers, checks candidate results, and merges accepted outputs. Its local protocol runtime records task state, leases, artifacts, and settlement decisions so that execution can be inspected and replayed.
 
-- the protocol system and its runtime, storage, plugin, and executor boundaries;
-- the single `experiments` package and launcher;
-- the official benchmark corpus and provider configurations;
-- the official metrics retained from the full experiment run after the result extraction stage.
+The repository contains the implementation and research assets for integer factorization and Lean theorem proving: one shared runtime, domain plugins, five experiments, a miniF2F supplement, and published experiment metrics.
 
-The current public package contains the retained protocol runtime, plugin core, minimal executor closure, official corpus/config files, current experiment implementation, retained official metrics, focused tests, and final publication verification gates.
+[Quick start](#quick-start) · [Reproducibility](REPRODUCIBILITY.md) · [Results](RESULTS.md) · [Experiment guide](Doc/Experiments/README.md)
 
-## Public layout by extraction stage
+## How it works
 
-The current public extraction contains:
+```text
+Task → Decomposition → Worker execution → Verification → Merge → Settlement
+          └──────────── persisted events and artifacts ─────────────┘
+                                  ↓
+                           Inspection & replay
+```
 
-- `src/tokenshare/`: the public system package root, including protocol runtime, storage, plugins, executor descriptors/transports, and `tokenshare.experiments`.
-- `tests/`: focused offline tests for the retained system, plugins, executors, corpus, and experiments.
-- `benchmarks/experiments/`: official benchmark corpus and proof fixtures.
-- `configs/experiments/`: official provider configurations without secrets.
-- `Doc/Experiments/`: experiment design, metrics, integration, corpus, and public package documentation.
-- `verification/`: focused corpus, result, extraction, and offline test verification gates.
-- `run_experiments.cmd`: the Windows GUI launcher for `tokenshare.experiments.gui`.
-- the root documentation and repository policy files.
+- **Shared protocol:** task decomposition, scheduling, leases, retries, acceptance, and settlement use the same protocol objects across experiments.
+- **Domain verification:** factorization candidates are checked deterministically; Lean proof candidates and assembled proofs are checked by a pinned Lean environment.
+- **Trace replay:** persisted execution traces support concurrency, recovery, and mechanism comparisons without new provider calls.
+- **Auditable research assets:** manifests bind benchmark identities, proof evidence, configurations, and published metrics to file hashes.
 
-- `results/experiments/`: official result files and their manifest.
+TokenShare is a local research system. Settlement is modeled within the protocol; blockchain deployment, real token payments, and production Byzantine fault tolerance are outside its scope.
 
-## Start here
+## Quick start
 
-Install the Python dependencies:
+Use **Python 3.12** (the validated version). Runtime dependencies are from the Python standard library; `requirements.txt` pins pytest for verification.
+
+From the repository root, in PowerShell:
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements.txt
 $env:PYTHONPATH = (Resolve-Path .\src).Path
+
+# Inspect the full experiment plan without contacting a provider.
+.\.venv\Scripts\python -m tokenshare.experiments.cli plan --profile full --run-id quickstart
+
+# Run the fast offline verification suite.
+.\.venv\Scripts\python verification/run_verification.py --focused fast
 ```
 
-The Windows launcher sets the same repository-local `src` import path automatically. Launch the interface with:
+On macOS/Linux, use `.venv/bin/python` and `export PYTHONPATH="$PWD/src"` for the corresponding commands. The commands above inspect plans and run offline checks; they do not execute paid experiments or compile Lean proofs.
 
-```powershell
-.\run_experiments.cmd
-```
+For the optional desktop interface, run `python -m tokenshare.experiments.gui` with `src` on `PYTHONPATH` and Tkinter installed. The Windows shortcut `run_experiments.cmd` uses an existing Conda environment named `tokenshare`.
 
-Routine verification must use fake or deterministic executors. Real provider calls require explicit authorization. For repeatable local checks, start with `REPRODUCIBILITY.md`.
+## Experiments
+
+| Experiment | Research question | Execution |
+| --- | --- | --- |
+| 1 · Baseline | How do factorization and Lean tasks perform under the protocol? | Provider-backed execution |
+| 2 · Concurrency | How does worker count affect execution? | Replay of Experiment 1 traces |
+| 3 · Recovery | How does the protocol respond to injected faults? | Replay with fault scenarios |
+| 4 · Mechanisms | What changes when individual mechanisms are disabled? | Replay across 11 mechanism modes |
+| 5 · Providers | How do three configured provider endpoints compare? | Provider-backed execution |
+
+The [miniF2F supplement](Doc/Experiments/minif2f-supplement.md) adds an explicit Experiment 1 profile with **81 admitted theorem roots and 223 proof units**. It preserves original theorem statements, fixed dependency graphs, proof packages, and admission evidence.
+
+[Published results](RESULTS.md) describe the retained tables and the limits of the public archive. Replaying Experiments 2–4 requires the original Experiment 1 traces, which are maintained separately from the public metrics. Provider configurations contain environment-variable names for credentials, never API keys.
+
+## Repository map
+
+| Path | Contents |
+| --- | --- |
+| [`src/tokenshare/`](src/tokenshare/) | Protocol, local runtime, storage, plugins, executors, and the `experiments` package |
+| [`benchmarks/experiments/`](benchmarks/experiments/) | Benchmark catalogs, Lean fixtures, miniF2F proofs, and corpus manifest |
+| [`configs/experiments/`](configs/experiments/) | Experiment and provider configurations |
+| [`results/experiments/`](results/experiments/) | Published run metadata, metrics, and integrity manifest |
+| [`Doc/Experiments/`](Doc/Experiments/) | Experiment design, metric definitions, and implementation references |
+| [`tests/`](tests/) | Offline regression tests and explicitly enabled Lean integration tests |
+| [`verification/`](verification/) | Focused checks for behavior, corpus identities, results, and release boundaries |
+
+Generated runs, credentials, caches, and manuscript workspaces are excluded from Git. Local raw data belongs under `TokenShareData/`; new analyses must use a separate output directory and preserve their source runs.
+
+## License
+
+TokenShare is released under the [MIT License](LICENSE). The miniF2F fixture retains its [upstream license](benchmarks/experiments/fixtures/minif2f_project/upstream/LICENSE).

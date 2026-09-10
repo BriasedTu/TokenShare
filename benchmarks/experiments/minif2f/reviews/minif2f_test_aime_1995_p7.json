@@ -1,0 +1,121 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_aime_1995_p7",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T16:00:33.249319+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "author_disposition": {
+        "authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__aime_1995_p7\\authoring.json",
+        "batch": "batch09",
+        "case_id": "test/aime_1995_p7",
+        "formal_preflight_result": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\13c343c9\\a2\\result.json",
+        "reason": "Official offline checker accepted isolated nodes and the unchanged root, with printed axioms and no sorryAx.",
+        "source_sha256": "0baef49e6acd6965036cfb9dce9316422b6b184bcc2be8bdc5bad91cf1fe0faa",
+        "status": "lean_passed_pending_independent_review",
+        "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__aime_1995_p7\\validation-2.json"
+      },
+      "authoring_sha256": "sha256:2b8da16225213daf2af1487b99bb3b6933d929b34ca43fe5d778c69446899266",
+      "case_id": "test/aime_1995_p7",
+      "checked_segments": [
+        {
+          "end_line": 22,
+          "node_id": "trigonometric_radical_value",
+          "payload_digest": "sha256:00e95e51ddba883a95121ffafa3d966535939499ca0ceed8559e70042777b11f",
+          "proof_sha256": "sha256:45704ec41f80470bf454cd2bc54d4d5856500c484423cb882fb0cfc57bae16a2",
+          "segment_sha256": "sha256:b35af50fde7d3a5dc4e024d74d077a706129c88f2268e9c32b2ce19f800d547d",
+          "standalone_source_sha256": "sha256:9f2ebf7de5d084b935cba08810399bc82db61d3b2c33f8c8d0626db5f8b39d10",
+          "start_line": 4
+        },
+        {
+          "end_line": 56,
+          "node_id": "rational_and_radical_identification",
+          "payload_digest": "sha256:85eeca8c38bea1bf00a0a2e158bd089c28aa86620fc0b7c256c3bd88480054a7",
+          "proof_sha256": "sha256:05399e2e8c8adb2f3d625a1191b83becb02f395ed33d7c1f8e1ed082e14aa5f7",
+          "segment_sha256": "sha256:557ea454e5480d5be5d5f884dc426201001cb9f78609e8d4e26961d1bdeede1c",
+          "standalone_source_sha256": "sha256:f0a1543027fe50405069104a806084b90313f6adc89c1d48aa457b5dbf3c6e62",
+          "start_line": 24
+        },
+        {
+          "end_line": 77,
+          "node_id": "root",
+          "payload_digest": "sha256:886e3c743e4e7e8f62ad2cf4bd44b987133ede66d24d3222f7c3c75b370a7b9f",
+          "proof_sha256": "sha256:f7d6340f61a37b64fbada2ef17a6941a60825b012e133b2af53c0fc29c4bb56d",
+          "segment_sha256": "sha256:2253beae7eed9c5304b390f86e80bd4c3ab5f2405262afd3486fa1a9bb1a9133",
+          "standalone_source_sha256": "sha256:17f23960608633749b8aa2789d1cac7d6b9ed7d45f9b2133f77a1b380d01cc87",
+          "start_line": 58
+        },
+        {
+          "end_line": 128,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:4ed657e324fb1636e265f9873c2093469f97a1aad3dd955c90765ebfcc13f403",
+          "proof_sha256": "sha256:00e5c7119134d5ad4acdb67d86f6d4a0e3267d0e6a8f9ab85ab9768082be4429",
+          "segment_sha256": "sha256:54c39412b763308296e7aead6ba80a75758057101787428b28aad274a4f34881",
+          "standalone_source_sha256": "sha256:9f384bacc5ce08bce94c1ce1e80041fade10cf4781c94e6a21644eca5eab0b18",
+          "start_line": 79
+        }
+      ],
+      "current_plan_digest": "sha256:77721df803f95a871364905bd3a40b645ddcae9d362b0f0c862934bc71260271",
+      "dependency_review": "The radical value is consumed by rational/radical identification, and that identification supplies the reduced-fraction arithmetic. No node simply states the requested total.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\13c343c9\\a2\\result.json",
+      "formal_result_sha256": "sha256:c7c04670950716527c37a6f94fcb75711e5a4cf50c21123735902bd2f18ca72b",
+      "graph_digest": "sha256:b527061b4026a27f3eb2df159d0a3e84fd4dea3d573b334aa69bce730ecd936c",
+      "lean_source_sha256": "sha256:7a7f1e6c10559a2c341e8cda0f4d66210154ff6ef545c9bc259dd65e7301f92c",
+      "mathematical_review": "The first branch uses the unit circle and the given product to isolate a signed radical expression. Irrationality of square root ten then separates the rational part and the integer radicand. The root uses the original coprimality to recover the reduced numerator and denominator, rather than assuming them from a numerical approximation.",
+      "node_count": 3,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:67ad87626be3905c1c739164803de2910f98cb141ecc1ec9d4ae1d090212febe",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:77721df803f95a871364905bd3a40b645ddcae9d362b0f0c862934bc71260271",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:0baef49e6acd6965036cfb9dce9316422b6b184bcc2be8bdc5bad91cf1fe0faa",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:90fcc4a88758738bd76253fc3cdd72b21a4d8d87841f4d554e78cabd9878c5c3"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/4765a0d9dfab621ea7704e21806fa90222184e5a06ee35bf1c0a9f226d70d9b8.json",
+    "source_report_sha256": "sha256:4765a0d9dfab621ea7704e21806fa90222184e5a06ee35bf1c0a9f226d70d9b8"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/13c343c99a52b4ca/result.json",
+    "result_sha256": "sha256:c7c04670950716527c37a6f94fcb75711e5a4cf50c21123735902bd2f18ca72b"
+  },
+  "mathematical_review": "The first branch uses the unit circle and the given product to isolate a signed radical expression. Irrationality of square root ten then separates the rational part and the integer radicand. The root uses the original coprimality to recover the reduced numerator and denominator, rather than assuming them from a numerical approximation.",
+  "node_proofs_digest": "sha256:67ad87626be3905c1c739164803de2910f98cb141ecc1ec9d4ae1d090212febe",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Eliminate sine-cosine product with the unit circle and choose the nonnegative radical branch.",
+      "node_id": "trigonometric_radical_value"
+    },
+    {
+      "dependencies": [
+        "trigonometric_radical_value"
+      ],
+      "mathematical_role": "Use irrationality of square root ten to separate the rational shift from the integer radical.",
+      "node_id": "rational_and_radical_identification"
+    },
+    {
+      "dependencies": [
+        "rational_and_radical_identification"
+      ],
+      "mathematical_role": "Exploit coprimality to bound the reduced denominator, then recover the unique numerator and radical.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:77721df803f95a871364905bd3a40b645ddcae9d362b0f0c862934bc71260271",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T16:00:33.249319+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

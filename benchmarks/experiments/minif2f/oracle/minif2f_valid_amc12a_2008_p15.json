@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_amc12a_2008_p15",
+  "node_proof_sources": {
+    "exponent_congruences": "by\n  have hp4 : 2 ^ 2008 % 4 = 0 := by\n    rw [show 2008 = 2 * 1004 by decide, pow_mul, Nat.pow_mod]\n    norm_num\n  have hp10 : 2 ^ 2008 % 10 = 6 := by simpa only [Nat.reduceMul, Nat.reduceAdd] using node_power_cycle 501\n  rw [h₀]\n  refine ⟨?_, ?_, by positivity⟩\n  · rw [Nat.add_mod, hp4]\n    norm_num\n  · rw [Nat.add_mod, hp10]\n    norm_num",
+    "power_cycle": "by\n  intro m\n  induction m with\n  | zero => norm_num\n  | succ m ih =>\n      rw [show 4 * (m + 1) + 4 = (4 * m + 4) + 4 by omega, pow_add, Nat.mul_mod, ih]\n      norm_num",
+    "root": "by\n  have hk := node_exponent_congruences\n  have he : k = 4 * (k / 4 - 1) + 4 := by omega\n  have hp := node_power_cycle (k / 4 - 1)\n  rw [← he] at hp\n  have hs : k ^ 2 % 10 = 0 := by simp [Nat.pow_mod, hk.2.1]\n  rw [Nat.add_mod, hs, hp]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

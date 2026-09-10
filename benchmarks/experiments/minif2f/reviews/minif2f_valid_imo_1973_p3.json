@@ -1,0 +1,38 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_imo_1973_p3",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/a63171e893727f6a/result.json",
+    "result_sha256": "sha256:b548e69998c0dc146d27943c4f6bdf3c3001910feeb927f46e1a03f3bbb96470"
+  },
+  "mathematical_review": "Reciprocal substitution reduces the quartic to a quadratic with a domain bound; a separate coefficient Cauchy estimate yields the required lower bound.",
+  "node_proofs_digest": "sha256:00e20eeb25159b7434bf587e13ed523653837ad9cbda1b7d9d82d6aa16dd7867",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Reduce the reciprocal quartic to a quadratic in x + 1/x and establish its forbidden central interval.",
+      "node_id": "reciprocal_reduction"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Apply the two-dimensional Cauchy inequality to the coefficient vector at a reduced root.",
+      "node_id": "coefficient_cauchy"
+    },
+    {
+      "dependencies": [
+        "reciprocal_reduction",
+        "coefficient_cauchy"
+      ],
+      "mathematical_role": "Assemble the mathematical prerequisites into the unchanged upstream conclusion.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:e692829e7cf90914fb51403e6e323017ce03a72909a74222bdc6e9429d2b009e",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:10:01.761744+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

@@ -1,0 +1,39 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_valid_amc12a_2002_p12",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/bb60a1f0b592e467/result.json",
+    "result_sha256": "sha256:218b9a57dba289757f3012340b50ef10f44ce972e773639e71d0d972f808af7e"
+  },
+  "mathematical_review": "Distinct-root elimination gives an odd prime sum; primality parity forces the pair before recovering the coefficient.",
+  "node_proofs_digest": "sha256:1ce0bd20ea1a18f2be526dc5f70ed29fb15371d5a25359b24f6e0446416043d3",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Cancel the difference of distinct roots to obtain their natural-number sum.",
+      "node_id": "prime_root_sum"
+    },
+    {
+      "dependencies": [
+        "prime_root_sum"
+      ],
+      "mathematical_role": "An odd sum of two primes forces one prime to be two; the sum then determines the other.",
+      "node_id": "parity_forces_prime_pair"
+    },
+    {
+      "dependencies": [
+        "parity_forces_prime_pair"
+      ],
+      "mathematical_role": "Use either prime pair in the original root equation to determine the coefficient.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:2dcfe55784286e65821b5dbe295329a2ca155a76aebe2355ec5e0ac079ad9223",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:01:39.685951+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

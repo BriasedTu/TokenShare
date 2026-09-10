@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_imo_1973_p3",
+  "node_proof_sources": {
+    "coefficient_cauchy": "by\n  intro y hy\n  have e : y ^ 2 - 2 = -(a * y + b) := by linarith\n  rw [e]\n  nlinarith [sq_nonneg (a - b * y)]",
+    "reciprocal_reduction": "by\n  obtain ⟨x, hx⟩ := h₀\n  have hne : x ≠ 0 := by intro hz; norm_num [hz] at hx\n  refine ⟨(x ^ 2 + 1) / x, ?_, ?_⟩\n  · field_simp [hne]\n    nlinarith\n  · have hsq : 0 < x ^ 2 := sq_pos_of_ne_zero hne\n    rw [div_pow]\n    apply (le_div_iff₀ hsq).2\n    nlinarith [sq_nonneg (x ^ 2 - 1)]",
+    "root": "by\n  obtain ⟨y, hy, hb⟩ := node_reciprocal_reduction\n  have hc := node_coefficient_cauchy y hy\n  have hp : 0 ≤ (y ^ 2 - 4) * (5 * y ^ 2 - 4) := mul_nonneg (by linarith) (by linarith)\n  by_contra hn\n  have hp' : 0 < (4 - 5 * (a ^ 2 + b ^ 2)) * (y ^ 2 + 1) := mul_pos (by linarith) (by positivity)\n  nlinarith"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

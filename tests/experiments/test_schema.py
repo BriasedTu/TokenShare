@@ -184,7 +184,7 @@ def _valid_root(
         dead_worker_count=None,
         kill_progress_target_ratio=None,
         challenge_plan_id="challenge-0" if is_exp4 else None,
-        challenge_family="invalid_candidate" if is_exp4 else None,
+        challenge_family="INVALID_PARSED_CANDIDATE" if is_exp4 else None,
         challenge_target_planned_ai_unit_ids=["range_0"] if is_exp4 else None,
         challenge_attempt_ordinal_rule="ordinal_0" if is_exp4 else None,
         provider_family="deepseek",

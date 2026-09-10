@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_test_amc12b_2020_p13",
+  "node_proof_sources": {
+    "reciprocal_radical_product": "by\n  have h2 : 0 < Real.log 2 := Real.log_pos (by norm_num)\n  have h3 : 0 < Real.log 3 := Real.log_pos (by norm_num)\n  rw [← Real.sqrt_mul (div_nonneg h3.le h2.le)]\n  have he : Real.log 3 / Real.log 2 * (Real.log 2 / Real.log 3)=1 := by field_simp\n  rw [he]\n  norm_num",
+    "root": "by\n  have h2 : 0 < Real.log 2 := Real.log_pos (by norm_num)\n  have h3 : 0 < Real.log 3 := Real.log_pos (by norm_num)\n  have h6 : Real.log 6=Real.log 2+Real.log 3 := by rw [show (6:ℝ)=2*3 by norm_num, Real.log_mul (by norm_num) (by norm_num)]\n  have hs2 := Real.sq_sqrt (div_nonneg h3.le h2.le)\n  have hs3 := Real.sq_sqrt (div_nonneg h2.le h3.le)\n  have he : Real.log 6 / Real.log 2 + Real.log 6 / Real.log 3=Real.log 3/Real.log 2+Real.log 2/Real.log 3+2 := by rw [h6]; field_simp; ring\n  apply (Real.sqrt_eq_iff_eq_sq (by rw [he]; positivity) (by positivity)).2\n  rw [he]\n  nlinarith only [hs2, hs3, node_reciprocal_radical_product]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

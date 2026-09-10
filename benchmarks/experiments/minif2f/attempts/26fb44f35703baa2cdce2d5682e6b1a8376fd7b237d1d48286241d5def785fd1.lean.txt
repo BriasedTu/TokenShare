@@ -1,0 +1,36 @@
+import Mathlib
+set_option autoImplicit false
+set_option maxHeartbeats 0
+set_option maxRecDepth 2048
+set_option linter.unusedVariables false
+open BigOperators Real Nat Topology Rat
+
+example (S : Finset ℝ)
+  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 < x ∧ x ≤ 2 * Real.pi ∧ 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0)
+ :
+∀ x : ℝ, 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0 → (5 * Real.cos x * (1 - 4 * (Real.sin x) ^ 2) = 3 * Real.sin x - 1) ∧ (200 * (Real.sin x) ^ 6 - 300 * (Real.sin x) ^ 4 + 117 * (Real.sin x) ^ 2 - 3 * Real.sin x - 12 = 0) := by
+  intro x hx
+  have hn := Real.sin_sq_add_cos_sq x
+  have h3 := Real.cos_three_mul x
+  have hf : 5 * Real.cos x * (1 - 4 * (Real.sin x) ^ 2) = 3 * Real.sin x - 1 := by
+    nlinarith [congrArg (fun t : ℝ => t * Real.cos x) hn]
+  refine ⟨hf, ?_⟩
+  have hs := congrArg (fun t : ℝ => t ^ 2) hf
+  have hp := congrArg (fun t : ℝ => t * (1 - 4 * (Real.sin x) ^ 2) ^ 2) hn
+  nlinarith
+
+example (S : Finset ℝ)
+  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 < x ∧ x ≤ 2 * Real.pi ∧ 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0)
+(node_sine_elimination : ∀ x : ℝ, 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0 → (5 * Real.cos x * (1 - 4 * (Real.sin x) ^ 2) = 3 * Real.sin x - 1) ∧ (200 * (Real.sin x) ^ 6 - 300 * (Real.sin x) ^ 4 + 117 * (Real.sin x) ^ 2 - 3 * Real.sin x - 12 = 0)) :
+∀ u v : ℝ, 1 - 3 * Real.sin u + 5 * Real.cos (3 * u) = 0 → 1 - 3 * Real.sin v + 5 * Real.cos (3 * v) = 0 → Real.sin u = Real.sin v → Real.cos u = Real.cos v := by
+  intro u v hu hv hs
+  have huf := (node_sine_elimination u hu).1
+  have hvf := (node_sine_elimination v hv).1
+  rw [← hs] at hvf
+  have hn : 1 - 4 * (Real.sin u) ^ 2 ≠ 0 := by
+    intro he
+    rw [he, mul_zero] at huf
+    nlinarith
+  apply mul_right_cancel₀ hn
+  nlinarith
+

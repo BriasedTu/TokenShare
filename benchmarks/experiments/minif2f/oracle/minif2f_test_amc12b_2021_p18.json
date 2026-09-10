@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12b_2021_p18",
+  "node_proof_sources": {
+    "norm_square": "by\n  have he := h₀\n  norm_num [Complex.normSq_apply, pow_two] at he\n  have hs : (z.re ^ 2 + z.im ^ 2 - 6) ^ 2 = 0 := by\n    nlinarith [sq_nonneg (z.re + 1), sq_nonneg (z.re ^ 2 + z.im ^ 2 - 6)]\n  have hz := sq_eq_zero_iff.mp hs\n  simpa [Complex.normSq_apply, pow_two] using (show z.re ^ 2 + z.im ^ 2 = 6 by linarith)",
+    "real_part": "by\n  have he := h₀\n  norm_num [Complex.normSq_apply, pow_two] at he\n  have hs : (z.re + 1) ^ 2 = 0 := by\n    nlinarith [sq_nonneg (z.re ^ 2 + z.im ^ 2 - 6), sq_nonneg (z.re + 1)]\n  have hz := sq_eq_zero_iff.mp hs\n  linarith",
+    "root": "by\n  have hz : z ≠ 0 := by\n    intro hz\n    rw [hz] at node_norm_square\n    norm_num [Complex.normSq_apply] at node_norm_square\n  have hs : z.re ^ 2 + z.im ^ 2 = 6 := by\n    simpa [Complex.normSq_apply, pow_two] using node_norm_square\n  rw [node_real_part] at hs\n  norm_num at hs\n  field_simp [hz]\n  apply Complex.ext <;> simp [pow_two, Complex.mul_re, Complex.mul_im, node_real_part] <;> nlinarith"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

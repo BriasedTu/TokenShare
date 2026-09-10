@@ -1,0 +1,53 @@
+{
+  "case_id": "test/amc12a_2020_p9",
+  "original_declaration": "theorem amc12a_2020_p9\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 ≤ x ∧ x ≤ 2 * Real.pi ∧ Real.tan (2 * x) = Real.cos (x / 2)) :\n  S.card = 5",
+  "parameters_source": "(S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 ≤ x ∧ x ≤ 2 * Real.pi ∧ Real.tan (2 * x) = Real.cos (x / 2))",
+  "statement_source": "S.card = 5",
+  "source_path": "upstream/MiniF2F/Test/amc12a_2020_p9.lean",
+  "source_sha256": "a87a548c90eee7acc12841f7d3b3f49e341b9fd79319c0e1cbf90cb141f6594b",
+  "nodes": [
+    {
+      "node_id": "solutions_avoid_tangent_poles",
+      "statement_source": "∀ x : ℝ, Real.tan (2 * x) = Real.cos (x / 2) → Real.cos (2 * x) ≠ 0",
+      "dependencies": [],
+      "proof_source": "by\n  intro x hx hc\n  have hh : Real.cos (x / 2) = 0 := by\n    rw [Real.tan_eq_sin_div_cos, hc, div_zero] at hx\n    exact hx.symm\n  have hd := Real.cos_two_mul (x / 2)\n  have he : 2 * (x / 2) = x := by ring\n  rw [he, hh] at hd\n  have hd2 := Real.cos_two_mul x\n  rw [hc] at hd2\n  nlinarith",
+      "mathematical_role": "Exclude poles using the double-angle formula twice, accounting for Lean's totalized tangent at a zero cosine."
+    },
+    {
+      "node_id": "distinct_solutions_reverse_tangent_order",
+      "statement_source": "∀ u v : ℝ, 0 ≤ u → u < v → v ≤ 2 * Real.pi → Real.tan (2 * u) = Real.cos (u / 2) → Real.tan (2 * v) = Real.cos (v / 2) → ¬ Real.tan (2 * u) ≤ Real.tan (2 * v)",
+      "dependencies": [],
+      "proof_source": "by\n  intro u v hu huv hv heu hev\n  have hc := Real.strictAntiOn_cos (show u / 2 ∈ Set.Icc 0 Real.pi from ⟨by linarith, by linarith⟩) (show v / 2 ∈ Set.Icc 0 Real.pi from ⟨by linarith, by linarith⟩) (by linarith : u / 2 < v / 2)\n  rw [← heu, ← hev] at hc\n  exact not_le_of_gt hc",
+      "mathematical_role": "Distinct solutions are incompatible with tangent being increasing on a single continuity branch."
+    }
+  ],
+  "analysis": "The four tangent poles at pi/4,3pi/4,5pi/4,7pi/4 split [0,2pi] into five continuity branches. tan(2x) is strictly increasing on each branch and cos(x/2) is strictly decreasing. The two checked bridges address uniqueness and remove totalized-pole artifacts. Endpoint/one-sided-limit signs give exactly one root per branch; x=pi is the middle root.",
+  "unclosed_root_obligations": [
+    "Need establish strict monotonicity of tan(2x) separately on the five shifted branches with verified interval bounds.",
+    "Need IVT existence from endpoint signs or finite interior points near each pole, then identify S with the five roots and prove its cardinality."
+  ],
+  "authoring_owner": "author_algebra",
+  "assistant": "author_numbertheory",
+  "root_proved": false,
+  "provider_calls": 0,
+  "partial_validation": {
+    "all_bridges_passed": true,
+    "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\59f0b441\\0622018800\\compiler.json",
+    "compiler_log_sha256": "a1193a9a7daec65c6dd850a7654ecc845fd7961a0b850807d91ebf10cb58b1de",
+    "checked_node_ids": [
+      "solutions_avoid_tangent_poles",
+      "distinct_solutions_reverse_tangent_order"
+    ]
+  },
+  "local_mathlib_api_investigation": [
+    {
+      "path": "L:\\project\\.lake\\packages\\mathlib\\Mathlib\\Analysis\\SpecialFunctions\\Trigonometric\\Basic.lean",
+      "file_sha256": "81a3377d08c48ad1fdabdbfe495428f81de0ff91c685a9fa47bb3579449d4933",
+      "symbols": "Real.strictAntiOn_cos:563, Real.strictMonoOn_tan:899, Real.tan_add_int_mul_pi:947, Real.tendsto_tan_pi_div_two:973, Real.tendsto_tan_neg_pi_div_two:989"
+    }
+  ],
+  "disposition_recommendation": "partial_verified_original_root_unclosed",
+  "original_root_compilation_attempted": false,
+  "not_a_theorem_false_claim": true,
+  "integration_note": "Canonical author_algebra owns final authoring and disposition. Verified bridge source can be reused; no full-root success or full-root Lean failure is claimed."
+}

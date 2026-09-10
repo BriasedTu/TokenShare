@@ -1,0 +1,45 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12a_2008_p25",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:17:59.434608+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/0594161ac1761512/result.json",
+    "result_sha256": "sha256:f3ef2d24982128776dc92299dd331f902f92ec5c021f6d69a8c0d0297f255541"
+  },
+  "mathematical_review": "Three coupled steps give a scaled quarter-turn; induction gives arbitrary six-step scaling; both transport the known large-index data to index one.",
+  "node_proofs_digest": "sha256:057afe7640529ee2b6fa3ff6780b2e5951914617bf7769b72794bf2e15842a1d",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Compose three coupled recurrence steps to reveal a quarter-turn with scale eight.",
+      "node_id": "three_step_rotation"
+    },
+    {
+      "dependencies": [
+        "three_step_rotation"
+      ],
+      "mathematical_role": "Compose two quarter-turns, then prove by induction the exact scaling over any multiple of six indices.",
+      "node_id": "iterated_six_step_scaling"
+    },
+    {
+      "dependencies": [
+        "three_step_rotation",
+        "iterated_six_step_scaling"
+      ],
+      "mathematical_role": "Transport the supplied index-100 values back to index four, then invert the three-step rotation to index one.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:171efc16f1358daa2d9c6675b7f4a600fc0057e76692fe38b86851906a4cf624",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:17:59.434608+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

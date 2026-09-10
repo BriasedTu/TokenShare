@@ -36,7 +36,9 @@ from tokenshare.storage.artifacts import ArtifactStore
 
 from .execution import FixedTraceSubmissionAdapter, ExperimentLeanExecutionBridge
 from .profiles import ChallengePlanV1
-from .schema import AttemptResultV1, PrematureMergeObservationV2, RootInventoryV1
+from .schema import (
+    CHALLENGE_INJECTION_BOUNDARIES, AttemptResultV1, PrematureMergeObservationV2, RootInventoryV1,
+)
 from .storage import RunStore
 
 
@@ -688,44 +690,43 @@ class ModeBlindChallengeController:
     ) -> None:
         planned, ordinal = self._identity(request)
         identity = (request.attempt_id, boundary)
-        if any(
-            (item["attempt_id"], item["boundary"]) == identity
-            for item in self.injection_records
-        ):
-            return
-        self.injection_records.append(
-            {
-                "attempt_id": request.attempt_id,
-                "planned_ai_unit_id": planned,
-                "attempt_ordinal": ordinal,
-                "kind": self._challenge_plan.challenge_family,
-                "boundary": boundary,
-                "independently_wrong": independently_wrong,
-                "source_semantics_preserved": source_semantics_preserved,
-                "candidate_content_before": (
-                    dict(candidate_content_before)
-                    if candidate_content_before is not None
-                    else None
-                ),
-                "candidate_content_after": (
-                    dict(candidate_content_after)
-                    if candidate_content_after is not None
-                    else None
-                ),
-                "candidate_output_refs_before": (
-                    dict(candidate_output_refs_before)
-                    if candidate_output_refs_before is not None
-                    else None
-                ),
-                "candidate_output_refs_after": (
-                    dict(candidate_output_refs_after)
-                    if candidate_output_refs_after is not None
-                    else None
-                ),
-                "opportunity": opportunity,
-                "injected": injected,
-            }
-        )
+        record = {
+            "attempt_id": request.attempt_id,
+            "planned_ai_unit_id": planned,
+            "attempt_ordinal": ordinal,
+            "kind": self._challenge_plan.challenge_family,
+            "boundary": boundary,
+            "independently_wrong": independently_wrong,
+            "source_semantics_preserved": source_semantics_preserved,
+            "candidate_content_before": (
+                dict(candidate_content_before)
+                if candidate_content_before is not None
+                else None
+            ),
+            "candidate_content_after": (
+                dict(candidate_content_after)
+                if candidate_content_after is not None
+                else None
+            ),
+            "candidate_output_refs_before": (
+                dict(candidate_output_refs_before)
+                if candidate_output_refs_before is not None
+                else None
+            ),
+            "candidate_output_refs_after": (
+                dict(candidate_output_refs_after)
+                if candidate_output_refs_after is not None
+                else None
+            ),
+            "opportunity": opportunity,
+            "injected": injected,
+        }
+        for existing in self.injection_records:
+            if (existing["attempt_id"], existing["boundary"]) == identity:
+                if existing != record:
+                    raise ValueError("conflicting challenge injection records")
+                return
+        self.injection_records.append(record)
 
     def _attach_actual_record(
         self,
@@ -747,12 +748,18 @@ class ModeBlindChallengeController:
             },
         )
 
-    def transform_content(self, request: ExecutionRequest, content: str) -> str:
+    def transform_content(self, request: ExecutionRequest, content: str | None) -> str | None:
         if (
             self._challenge_plan.challenge_family
             != "PARSER_REQUIRED_CANONICAL_JSON"
             or not self._applies(request)
         ):
+            return content
+        if content is None:
+            self._record(
+                request=request, boundary="before_plugin_parser",
+                opportunity=False, injected=False,
+            )
             return content
         try:
             canonical = json.dumps(
@@ -761,8 +768,12 @@ class ModeBlindChallengeController:
                 sort_keys=True,
                 separators=(",", ":"),
             )
-        except json.JSONDecodeError as exc:
-            raise ValueError("parser-required challenge source is not valid JSON") from exc
+        except json.JSONDecodeError:
+            self._record(
+                request=request, boundary="before_plugin_parser",
+                opportunity=False, injected=False,
+            )
+            return content
         self._record(
             request=request,
             boundary="before_plugin_parser",
@@ -1167,12 +1178,7 @@ def build_challenge_plan(
         targets = tuple(selected) or planned[-1:]
     else:
         raise ValueError(f"unsupported challenge target rule {plan.target_rule!r}")
-    boundary = {
-        "PARSER_REQUIRED_CANONICAL_JSON": "before_plugin_parser",
-        "INVALID_PARSED_CANDIDATE": "after_parser_before_verification",
-        "RECOVERABLE_NO_RETURN": "after_source_usage",
-        "REQUIRED_CHILD_DELAY": "after_source_usage",
-    }[plan.challenge_family]
+    boundary = CHALLENGE_INJECTION_BOUNDARIES[plan.challenge_family]
     return ResolvedChallengePlanV1(
         challenge_plan_id=plan.challenge_plan_id,
         case_id=plan.case_id,

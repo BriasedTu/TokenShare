@@ -1,0 +1,1 @@
+'numbertheory_2pownm1prime_nprime' depends on axioms: [propext, Classical.choice, Quot.sound]

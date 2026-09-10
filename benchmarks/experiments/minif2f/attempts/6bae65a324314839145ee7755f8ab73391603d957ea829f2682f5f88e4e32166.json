@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/mathd_numbertheory_709",
+  "original_declaration": "theorem mathd_numbertheory_709 (n : ℕ) (h₀ : 0 < n) (h₁ : Finset.card (Nat.divisors (2 * n)) = 28)\n  (h₂ : Finset.card (Nat.divisors (3 * n)) = 30) : Finset.card (Nat.divisors (6 * n)) = 35",
+  "source_file": "upstream/MiniF2F/Valid/mathd_numbertheory_709.lean",
+  "source_sha256": "d4c154bf855341308fc4c0a21c9bb54d50bf3fb6bdc4d8d74dc73be4ba131ba3",
+  "partial_statement": "∀ a b c : ℕ, 0 < c → (a + 2) * (b + 1) * c = 28 → (a + 1) * (b + 2) * c = 30 → a = 5 ∧ b = 3 ∧ c = 1",
+  "partial_proof": "by\n  intro a b c hc h28 h30\n  have hd : c * a = c * b + 2 := by nlinarith\n  have hab : b + 1 ≤ a := by\n    by_contra hn\n    have hh := Nat.mul_le_mul_left c (show a ≤ b by omega)\n    nlinarith\n  have hc2 : c ≤ 2 := by\n    have hh := Nat.mul_le_mul_left c hab\n    nlinarith\n  have hb : b ≤ 13 := by\n    have hh := Nat.mul_le_mul_left ((a + 2) * (b + 1)) (show 1 ≤ c by omega)\n    nlinarith [Nat.zero_le (a * b)]\n  interval_cases c <;> interval_cases b <;> norm_num at * <;> omega",
+  "mathematical_route": "Write n=2^a*3^b*r with r coprime to 6 and c=τ(r). The checked positive integer system is the pair of divisor-count equations; its solution predicts τ(6n)=(a+2)(b+2)c=35.",
+  "unresolved_full_proof_obligation": "Need derive the two divisor-count equations and the output count from the prime factorization of arbitrary n, using multiplicativity and primary exponents. The arithmetic classification is conditional and cannot replace that missing connection to Nat.divisors.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(n : ℕ) (h₀ : 0 < n) (h₁ : Finset.card (Nat.divisors (2 * n)) = 28)\n  (h₂ : Finset.card (Nat.divisors (3 * n)) = 30)",
+  "partial_start_line": 24,
+  "partial_block_sha256": "db148e237a10baa70e9817b14c2bf4c16ab7adac0ecebfd3b04cdba68801f29e",
+  "partial_end_line": 40,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json",
+  "compiler_log_sha256": "8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: rewrite divisor counts through ArithmeticFunction.sigma 0 or directly through factorization products. Both need a generic coprime primary decomposition of n before the checked exponent system applies.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ a b c : ℕ, 0 < c → (a + 2) * (b + 1) * c = 28 → (a + 1) * (b + 2) * c = 30 → a = 5 ∧ b = 3 ∧ c = 1",
+      "source_sha256": "db148e237a10baa70e9817b14c2bf4c16ab7adac0ecebfd3b04cdba68801f29e",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json"
+    }
+  ]
+}

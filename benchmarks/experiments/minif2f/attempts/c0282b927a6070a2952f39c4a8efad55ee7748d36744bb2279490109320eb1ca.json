@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/imo_1988_p6",
+  "original_declaration": "theorem imo_1988_p6 (a b : ℕ) (h₀ : 0 < a ∧ 0 < b) (h₁ : a * b + 1 ∣ a ^ 2 + b ^ 2) :\n  ∃ x : ℕ, (x ^ 2 : ℝ) = (a ^ 2 + b ^ 2) / (a * b + 1)",
+  "source_file": "upstream/MiniF2F/Valid/imo_1988_p6.lean",
+  "source_sha256": "557ec42d3f6cba44762554eb0f28e687c6ed8e056ce981dbb610bf69e089187b",
+  "partial_statement": "∀ k : ℤ, (a : ℤ) ^ 2 + (b : ℤ) ^ 2 = k * ((a : ℤ) * b + 1) → ((k * a - b) ^ 2 + (a : ℤ) ^ 2 = k * ((a : ℤ) * (k * a - b) + 1)) ∧ ((b : ℤ) * (k * a - b) = (a : ℤ) ^ 2 - k)",
+  "partial_proof": "by\n  intro k hk\n  constructor <;> nlinarith",
+  "mathematical_route": "The checked Vieta transform replaces b by k*a-b, preserves the quadratic quotient equation and gives the product of the conjugate roots.",
+  "unresolved_full_proof_obligation": "Need a well-founded descent showing that for a non-square quotient the conjugate is a positive integer strictly smaller than the larger original variable, including boundary cases. The algebraic transform alone cannot justify minimal-counterexample descent.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(a b : ℕ) (h₀ : 0 < a ∧ 0 < b) (h₁ : a * b + 1 ∣ a ^ 2 + b ^ 2)",
+  "partial_start_line": 30,
+  "partial_block_sha256": "edcbfd5efb705c1edbfa27541f1f66bc05b7eb473f16b54f00bf23e9f6349f65",
+  "partial_end_line": 34,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+  "compiler_log_sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: strong induction on a+b versus choosing a least counterexample. Both need the same missing positivity and strict-decrease inequalities for the conjugate root.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ k : ℤ, (a : ℤ) ^ 2 + (b : ℤ) ^ 2 = k * ((a : ℤ) * b + 1) → ((k * a - b) ^ 2 + (a : ℤ) ^ 2 = k * ((a : ℤ) * (k * a - b) + 1)) ∧ ((b : ℤ) * (k * a - b) = (a : ℤ) ^ 2 - k)",
+      "source_sha256": "edcbfd5efb705c1edbfa27541f1f66bc05b7eb473f16b54f00bf23e9f6349f65",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_algebra_absapbon1pabsapbleqsumabsaon1pabsa",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:17:59.303005+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/d86ae7ad480fb90d/result.json",
+    "result_sha256": "sha256:d687d1418b41f5bd8f1bbae52f372ebbfe44dba01c9722037ea4cf498b282fdd"
+  },
+  "mathematical_review": "Triangle monotonicity and independent positive-denominator comparisons give two genuine estimates, composed at the original root.",
+  "node_proofs_digest": "sha256:ee534bd72cee8e48019ab51b93f2b0917466fc160b49be5010feafb4c4a10500",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Combine the triangle inequality with monotonicity of t/(1+t) on nonnegative numbers.",
+      "node_id": "triangle_majorant"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Split the common numerator and compare the common denominator to the two smaller positive denominators.",
+      "node_id": "separate_denominators"
+    },
+    {
+      "dependencies": [
+        "triangle_majorant",
+        "separate_denominators"
+      ],
+      "mathematical_role": "Compose the independent triangle majorization and rational denominator bounds.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:da2ceb4da2a79c8f146cdeb7f8db17ac9e26f95c712c933e751c592014af4f72",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:17:59.303005+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

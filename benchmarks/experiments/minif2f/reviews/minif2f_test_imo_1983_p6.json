@@ -1,0 +1,32 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_imo_1983_p6",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/a1bb0ab1d0da358e/result.json",
+    "result_sha256": "sha256:ca684df7ec84a869a6e2410e2fd8962f3e17363295b27580ca22a240eb3b1bc4"
+  },
+  "mathematical_review": "The weighted sum-of-squares polynomial identity exposes the mathematical certificate; triangle excess nonnegativity proves the original inequality.",
+  "node_proofs_digest": "sha256:7dcd32b188af8901cae35eddc76b4a4663c76462de89a795f6290a7810621d4a",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Expose a weighted sum-of-squares certificate in the three triangle excesses; this identity is the substantive inequality transformation.",
+      "node_id": "triangle_square_certificate"
+    },
+    {
+      "dependencies": [
+        "triangle_square_certificate"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:a750a88a503c7d8c86b55cfe8db4f8c526abbb979d57d5cb3648f463f96be18f",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:06:32.224729+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

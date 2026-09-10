@@ -1,0 +1,32 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_numbertheory_sumkmulnckeqnmul2pownm1",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/87aff18f7f297cdd/result.json",
+    "result_sha256": "sha256:8cada06aa60f1358e358d9ace538d78517ce23a2b31ede7e2a83d4a4a143f2a9"
+  },
+  "mathematical_review": "The marked-member counting identity removes the factor k and lowers the binomial row; the root supplies the actual interval-to-range bijection and evaluates the complete row. The separate library-row restatement was removed.",
+  "node_proofs_digest": "sha256:2f40535848117ed99814b62e9e9ecc56ed3ec75a238a39f1debcc340277bb6b0",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Count subsets with one marked member to remove the weight k and lower the binomial row.",
+      "node_id": "marked_element_identity"
+    },
+    {
+      "dependencies": [
+        "marked_element_identity"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:0e0a390e67c21e2a8470dfe5fc7b8dc908b944a8ae575b7321d2815169b526f2",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:11:12.215912+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

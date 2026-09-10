@@ -1,0 +1,39 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_valid_aime_1991_p1",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/0b81154a37119118/result.json",
+    "result_sha256": "sha256:a1873c63caf76b0776be7b2b4f69c6879f95637613b9a66be463a6fa5f1aa7a9"
+  },
+  "mathematical_review": "Positive integer bounds eliminate the extraneous quadratic root for the sum; determine sum and product before evaluating the square sum.",
+  "node_proofs_digest": "sha256:76516ce1187f993be2daba18d7fa36e16fa8b3be4d205b578656e15b633f951d",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Use positivity of both integers to bound their sum via the nonnegative product (x−1)(y−1).",
+      "node_id": "sum_bound"
+    },
+    {
+      "dependencies": [
+        "sum_bound"
+      ],
+      "mathematical_role": "Eliminate the product to obtain a quadratic for the sum, then reject its large root using the independent positivity bound.",
+      "node_id": "sum_and_product"
+    },
+    {
+      "dependencies": [
+        "sum_and_product"
+      ],
+      "mathematical_role": "Recover the sum of squares from the determined sum and product.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:2d6ccc41d2630fcb62e0f49767fb57adaeded056ce5d35ab07c3e89e688f225e",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:00:36.356623+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

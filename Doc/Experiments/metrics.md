@@ -60,11 +60,11 @@ Experiment 2、3、4 已退出在线 provider 检查，只复用 Experiment 1 �
 
 ## Identity expectations
 
-Task E corpus verifier 从公开 catalog/config 重新计算完整 identity 集合：
+Corpus verifier 从公开 catalog/config 重新计算完整 identity 集合：
 
 | 集合 | count | canonical byte length | SHA-256 |
 |---|---:|---:|---|
-| full root identities | 7,017 | 1,448,798 | `ec5ca012faffc148be5eff65d43394b2d7861c666468e59841c716c88dea7c07` |
-| full Experiment 3 references | 106 | 22,055 | `b537bd614ac9c86f2f864afb0e6a7f3c1fe22e38d772784c1fc8c0c914f43cdb` |
+| full root identities | 6,912 | 1,427,265 | `600d29b146d7324ae09dd2ce2c227d64ad90ff8a0ba5eb9db0eab98eae1b352e` |
+| full Experiment 3 references | 104 | 21,647 | `0478c5eaa96a35571f1c942da84e090a58af3323dc7ed961bbd603e4a812750e` |
 
 这些 identity 集合是公开 corpus/config 的静态核验结果，不需要 provider 调用。

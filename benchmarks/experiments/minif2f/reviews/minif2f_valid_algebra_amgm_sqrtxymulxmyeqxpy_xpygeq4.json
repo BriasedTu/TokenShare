@@ -1,0 +1,44 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:17:59.610241+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/1a46f50061cca025/result.json",
+    "result_sha256": "sha256:ae2bab0118e2c42b0f1405b5f2df048219982f07b7688dbfe39da9fb1449086a"
+  },
+  "mathematical_review": "Square the positive radical constraint, derive a genuine quartic lower bound using a square difference, and exclude the zero/small branches by positivity.",
+  "node_proofs_digest": "sha256:f6103e664d5b85bb60a873c1bf2ef3697dcb47a59d056209f8202fdab5a9c1ef",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Square the radical equation using positivity of xy.",
+      "node_id": "squared_constraint"
+    },
+    {
+      "dependencies": [
+        "squared_constraint"
+      ],
+      "mathematical_role": "Apply nonnegativity of the squared difference between the two terms in the sum-of-squares identity.",
+      "node_id": "quartic_lower_bound"
+    },
+    {
+      "dependencies": [
+        "quartic_lower_bound"
+      ],
+      "mathematical_role": "Use strict positivity to discard the zero branch of the quartic bound.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:f674021ddc588b1c4141f4d7cf1a51d210f42ab3a64f3aa42a90d95a941fd0aa",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:17:59.609237+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

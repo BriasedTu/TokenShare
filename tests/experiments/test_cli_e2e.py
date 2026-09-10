@@ -1551,7 +1551,7 @@ def test_representative_cap_secret_disk_and_price_are_run_safety_only(
     assert (plan.paper_root_count, plan.execution_root_count, plan.online_provider_call_upper) == (
         71,
         73,
-        81,
+        129,
     )
 
     calls: list[tuple[str, str, Path | None]] = []
@@ -1606,6 +1606,10 @@ def test_representative_cap_secret_disk_and_price_are_run_safety_only(
         json.dumps(
             {
                 "provider_family": "deepseek",
+                "defaults": {
+                    "timeout_seconds": 600,
+                    "max_tokens": 300_000,
+                },
                 "entries": [
                     {
                         "entry_id": "deepseek_v4_flash_exp1_baseline",
@@ -1652,6 +1656,53 @@ def test_representative_cap_secret_disk_and_price_are_run_safety_only(
         "deepseek-v4-flash"
     )
     assert os.environ["TASK6_MISSING_KEY"] == "task6-local-secret"
+
+
+def test_exp5_v4_provider_defaults_reach_the_entry_view(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments import cli
+
+    config_dir = tmp_path / "configs" / "experiments"
+    config_dir.mkdir(parents=True)
+    (config_dir / "exp5_siliconflow_provider_config.v4.json").write_text(
+        json.dumps(
+            {
+                "provider_family": "siliconflow",
+                "defaults": {
+                    "timeout_seconds": 1200,
+                    "max_tokens": 4096,
+                },
+                "entries": [
+                    {
+                        "entry_id": "glm_5_2_exp5_v4",
+                        "enabled": True,
+                        "base_url": "https://example.invalid",
+                        "endpoint": "/chat/completions",
+                        "api_key_env": "EXP5_V4_TEST_KEY",
+                        "model": "zai-org/GLM-5.2",
+                        "request_overrides": {
+                            "enable_thinking": True,
+                            "thinking_budget": 32768,
+                        },
+                        "supports_json_mode": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EXP5_V4_TEST_KEY", "offline-test-secret")
+
+    entries = cli._preflight_provider_entries(
+        ("exp5",), tuple(), repo_root=tmp_path
+    )
+
+    entry = entries["glm_5_2_exp5_v4"]
+    assert entry.timeout_seconds == 1200
+    assert entry.max_tokens == 4096
+    assert entry.request_overrides["thinking_budget"] == 32768
 
 
 def test_offline_factorization_and_lean_use_the_real_protocol_vertical(
@@ -1797,6 +1848,7 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
     """离线执行只替换外部 HTTP 边界；缺省 Lean pass 仍按生产路径 fail closed。"""
 
     from tokenshare.experiments import cli, provider
+    from tokenshare.experiments.lean_environment import LeanEnvironmentInvalid
     from tokenshare.experiments.reducer import reduce_run
     from tokenshare.experiments.storage import RunStore
     from tests.experiments.test_answer_paths import _FakeResponse
@@ -1804,6 +1856,12 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
     services = cli._default_services()
     assert services.execute_root is cli._production_execute_root
     assert services.reduce_run is reduce_run
+    services = replace(
+        services,
+        lean_environment_preflight=lambda _root: (_ for _ in ()).throw(
+            LeanEnvironmentInvalid("offline fixture has no validated Lean environment")
+        ),
+    )
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "task6-offline-deepseek")
     monkeypatch.setenv("SILICONFLOW_API_KEY", "task6-offline-siliconflow")
@@ -1856,7 +1914,8 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
             run_id,
             "--output-root",
             str(tmp_path),
-        ]
+        ],
+        _services=services,
     ) == 0
 
     run_dir = tmp_path / run_id
@@ -1912,7 +1971,7 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
         "exp2": 0,
         "exp3": 0,
         "exp4": 0,
-        "exp5": 24,
+        "exp5": 72,
     }
 
     for experiment_id in ("exp1", "exp2", "exp3", "exp4", "exp5"):
@@ -1935,9 +1994,9 @@ def test_representative_fake_transport_uses_production_runtime_and_reducer(
             for row in jsonl_rows
         )
 
-    # 81 是冻结上界；当前 deterministic parser-failure 路径在 Lean fail-closed 后
-    # 实际产生 72 次 fake HTTP。
-    assert len(requested_models) == len(fake_responses) == 72
+    # 129 是冻结上界；当前 deterministic parser-failure 路径在 Lean fail-closed 后
+    # 实际产生 120 次 fake HTTP。
+    assert len(requested_models) == len(fake_responses) == 120
     assert set(requested_models) == {
         "deepseek-v4-flash",
         "zai-org/GLM-5.2",

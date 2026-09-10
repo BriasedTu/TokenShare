@@ -1068,9 +1068,11 @@ def test_exp3_lean_process_transfers_state_and_p75_dead3_is_terminal(
     assert all(item.provider_call_made is False for item in terminal_row.attempts)
 
 
+@pytest.mark.parametrize("family", ["INVALID_PARSED_CANDIDATE", "PARSER_REQUIRED_CANONICAL_JSON"])
 def test_exp4_failed_source_before_parser_is_valid_no_final_actual_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    family: str,
 ) -> None:
     case, source_store, transport = _acquire_factor_source(tmp_path, monkeypatch)
     source_transport_count = len(transport.responses)
@@ -1083,7 +1085,7 @@ def test_exp4_failed_source_before_parser_is_valid_no_final_actual_evidence(
         challenge_plan_id="plan-invalid-failed-source",
         case_id=str(case["case_id"]),
         repeat_id=1,
-        challenge_family="INVALID_PARSED_CANDIDATE",
+        challenge_family=family,
         target_rule="stable_first_planned_unit",
         attempt_rule="ordinal_0",
     )
@@ -1137,6 +1139,97 @@ def test_exp4_failed_source_before_parser_is_valid_no_final_actual_evidence(
         row.missing_reason["ablation_observations[].verification_route"]
         == "missing_actual_route_evidence"
     )
+
+
+@pytest.mark.parametrize("stage", ["prepared_batch", "after_content_injection"])
+def test_exp4_runtime_error_around_injection_preserves_infrastructure_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    from tokenshare.experiments import execution
+
+    case, source, transport = _acquire_factor_source(tmp_path, monkeypatch)
+    source_calls = len(transport.responses)
+    plan = ChallengePlanV1(
+        challenge_plan_id="runtime-error-boundary", case_id=str(case["case_id"]),
+        repeat_id=1, challenge_family="PARSER_REQUIRED_CANONICAL_JSON",
+        target_rule="stable_first_planned_unit", attempt_rule="every_attempt",
+    )
+    inventory = _inventory(
+        experiment_id="exp4", case=case, domain="factorization", mode="FULL",
+        challenge_plan_id=plan.challenge_plan_id,
+    )
+
+    def configure(scenario):
+        def fail(*_args, **_kwargs):
+            raise RuntimeError("offline injected runtime failure")
+        if stage == "prepared_batch":
+            execute_batch = scenario.worker_backend.execute_batch
+            def fail_child_batch(requests):
+                requests = tuple(requests)
+                if any((request.soft_hints or {}).get("planned_ai_unit_id") for request in requests):
+                    fail()
+                return execute_batch(requests)
+            monkeypatch.setattr(scenario.worker_backend, "execute_batch", fail_child_batch)
+        else:
+            monkeypatch.setattr(execution, "_submission_from_content", fail)
+
+    scenario, _assembly, protocol, row = _run_factor_scenario(
+        tmp_path / stage, inventory=inventory, case=case, source_store=source,
+        challenge_plan=plan, before_run=configure,
+    )
+    assert len(transport.responses) == source_calls
+    assert scenario.provider_call_count == 0
+    assert row.failure_kind == "infrastructure_invalid"
+    assert row.failure_origin == "unexpected_runtime_error"
+    assert (
+        "experiments_runtime_failure" in protocol.summary
+        or protocol.summary["terminal_failure"]["infrastructure_invalid"] is True
+    )
+    assert row.final_result_present is False
+    assert scenario.submission_adapter.attempts == []
+    if stage == "prepared_batch":
+        assert row.challenge_observations == []
+        assert row.missing_reason["challenge_observations"] == "challenge_boundary_not_observed"
+    else:
+        assert [item.attempt_ordinal for item in row.challenge_observations] == [0, 1]
+        assert all(item.injected is True and item.reached_verification is False for item in row.challenge_observations)
+
+
+@pytest.mark.parametrize("content", [None, [], {}, 1, "model returned non-JSON"])
+def test_exp4_parser_challenge_unusable_source_content_is_natural_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: object,
+) -> None:
+    case, source, transport = _acquire_factor_source(tmp_path, monkeypatch)
+    source_calls = len(transport.responses)
+    read_response = source.read_relative_response
+
+    def read_modified(path):
+        document = read_response(path)
+        document["body"]["choices"][0]["message"]["content"] = content
+        return document
+
+    monkeypatch.setattr(source, "read_relative_response", read_modified)
+    plan = ChallengePlanV1(
+        challenge_plan_id="unusable-source-content", case_id=str(case["case_id"]),
+        repeat_id=1, challenge_family="PARSER_REQUIRED_CANONICAL_JSON",
+        target_rule="stable_first_planned_unit", attempt_rule="every_attempt",
+    )
+    inventory = _inventory(
+        experiment_id="exp4", case=case, domain="factorization", mode="FULL",
+        challenge_plan_id=plan.challenge_plan_id,
+    )
+    scenario, _assembly, _protocol, row = _run_factor_scenario(
+        tmp_path / "unusable", inventory=inventory, case=case,
+        source_store=source, challenge_plan=plan,
+    )
+    assert len(transport.responses) == source_calls
+    assert scenario.provider_call_count == 0
+    assert row.failure_kind == "no_final"
+    assert row.failure_origin == (
+        "model_parse_exhausted" if isinstance(content, str) else "provider_transport_exhausted"
+    )
+    assert [item.attempt_ordinal for item in row.challenge_observations] == [0, 1]
+    assert all(item.opportunity is False and item.injected is False for item in row.challenge_observations)
 
 
 def test_exp4_arbitrary_runtime_exception_preserves_unexpected_runtime_fallback(
@@ -1207,6 +1300,87 @@ def test_exp4_arbitrary_runtime_exception_preserves_unexpected_runtime_fallback(
     assert row.verified_correct is False
     assert row.failure_kind == "infrastructure_invalid"
     assert row.failure_origin == "unexpected_runtime_error"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["NO_VERIFICATION", "NO_VERIFICATION__NO_PARSER_POLICY",
+     "NO_VERIFICATION__NO_REQUEUE", "NO_VERIFICATION__NO_MERGE_GATE",
+     "NO_PARSER_POLICY", "NO_PARSER_POLICY__NO_REQUEUE",
+     "NO_PARSER_POLICY__NO_MERGE_GATE"],
+)
+def test_exp4_lean_dependency_dead_end_before_delay_target_is_projectable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    case, source, transport = _acquire_lean_source(
+        tmp_path, monkeypatch,
+        case_id="lean_v2_hard_frontier_function_set_checker_11",
+    )
+    source_calls = len(transport.responses)
+    plan = ChallengePlanV1(
+        challenge_plan_id="delay-after-dependency-dead-end",
+        case_id=str(case["case_id"]), repeat_id=1,
+        challenge_family="REQUIRED_CHILD_DELAY",
+        target_rule="last_required_terminal_slot", attempt_rule="ordinal_0",
+    )
+    inventory = _inventory(
+        experiment_id="exp4", case=case, domain="lean", mode=mode,
+        challenge_plan_id=plan.challenge_plan_id,
+    )
+    scenario, assembly, protocol, row, _checker = _run_lean_scenario(
+        tmp_path / "replay", inventory=inventory, case=case,
+        source_store=source, challenge_plan=plan,
+    )
+    assert len(transport.responses) == source_calls
+    assert scenario.provider_call_count == 0
+    if "NO_VERIFICATION" in mode:
+        assert protocol.summary["experiments_controlled_no_final"]["failure_stage"] == "canonical_dependency"
+        assert row.failure_origin == "ablation_dependency_unavailable"
+    elif mode == "NO_PARSER_POLICY":
+        assert protocol.status == "failed"
+        assert row.failure_origin == "model_verification_exhausted"
+    else:
+        assert protocol.status == "processing"
+        assert row.failure_origin == (
+            "replacement_disabled_with_pending_root" if "NO_REQUEUE" in mode
+            else "premature_merge_no_final"
+        )
+    assert row.failure_kind == "no_final"
+    assert row.final_result_present is False
+    assert row.challenge_target_planned_ai_unit_ids == ["function_set_hard_root_11"]
+    assert set(row.challenge_target_planned_ai_unit_ids) <= set(row.unscheduled_ai_unit_ids)
+    assert scenario.challenge_controller.injection_records == []
+    assert row.challenge_observations == []
+    assert row.missing_reason["challenge_observations"] == "challenge_target_not_dispatched"
+
+    # A controlled dead end must still reject missing evidence for a reached target.
+    reached_plan = replace(
+        scenario.challenge_plan,
+        target_planned_ai_unit_ids=(row.dispatched_ai_unit_ids[0],),
+    )
+    with pytest.raises(RootProjectionError, match="lacks persisted actual injection evidence"):
+        project_root_result(
+            inventory=inventory, assembly=assembly, protocol_result=protocol,
+            provider_family="deepseek", requested_model="deepseek-v4-pro",
+            resolved_model="deepseek-v4-pro", reasoning_mode="thinking",
+            attempts=scenario.submission_adapter.attempts,
+            scenario=replace(scenario, challenge_plan=reached_plan),
+        )
+
+    # Request and completed-attempt evidence governs projection directly.
+    from tokenshare.experiments.projector import _challenge_projection
+
+    with pytest.raises(RootProjectionError, match="lacks persisted actual injection evidence"):
+        _challenge_projection(
+            scenario=replace(scenario, challenge_plan=reached_plan),
+            assembly=assembly, events=assembly.event_ledger.read_all(),
+            verification_status={}, canonical_attempt_ids=set(), recoveries=(),
+            verified_correct=False,
+            domain=str(inventory.domain), planned_ai_unit_ids=inventory.planned_ai_unit_ids,
+            attempts=scenario.submission_adapter.attempts,
+        )
 
 
 def test_exp4_raw_passthrough_cannot_replace_missing_actual_challenge_record(

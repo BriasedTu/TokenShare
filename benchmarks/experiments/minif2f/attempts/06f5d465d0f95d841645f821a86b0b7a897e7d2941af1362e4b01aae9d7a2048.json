@@ -1,0 +1,31 @@
+{
+  "case_id": "test/numbertheory_exk2powkeqapb2mulbpa2_aeq1",
+  "original_declaration": "theorem numbertheory_exk2powkeqapb2mulbpa2_aeq1\n  (a b : ℕ)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : ∃ k > 0, 2^k = (a + b^2) * (b + a^2)) :\n  a = 1",
+  "source_file": "upstream/MiniF2F/Test/numbertheory_exk2powkeqapb2mulbpa2_aeq1.lean",
+  "source_sha256": "5401ff4c266e39fe9e0f7ba4463053fadee02be6094bd3095065e17cb2a80bcb",
+  "partial_statement": "∃ u v : ℕ, a + b ^ 2 = 2 ^ u ∧ b + a ^ 2 = 2 ^ v",
+  "partial_proof": "by\n  obtain ⟨k, hk, he⟩ := h₁\n  have ha : a + b ^ 2 ∣ 2 ^ k := by rw [he]; exact dvd_mul_right _ _\n  have hb : b + a ^ 2 ∣ 2 ^ k := by rw [he]; exact dvd_mul_left _ _\n  obtain ⟨u, hu, hau⟩ := (Nat.dvd_prime_pow (by decide : Nat.Prime 2)).mp ha\n  obtain ⟨v, hv, hbv⟩ := (Nat.dvd_prime_pow (by decide : Nat.Prime 2)).mp hb\n  exact ⟨u, v, hau, hbv⟩",
+  "mathematical_route": "Extract two scalar powers of two from the factorization hypothesis; compare their exponents, parity and valuations to force the smaller variable to 1.",
+  "unresolved_full_proof_obligation": "The remaining positive-integer classification of a+b²=2^u and b+a²=2^v is unresolved. Merely knowing both factors have no odd prime divisor does not exclude a,b>1.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(a b : ℕ)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : ∃ k > 0, 2^k = (a + b^2) * (b + a^2))",
+  "partial_start_line": 16,
+  "partial_block_sha256": "8f45e9b1b566acd2c2b2d464f553c6a598b90d471decf6ae57365ba9f30eaf7d",
+  "partial_end_line": 26,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+  "compiler_log_sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: split on equal/opposite parity first and compare 2-adic valuations. Opposite parity is easy, but equal-parity positive solutions still require the unresolved descent/classification.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∃ u v : ℕ, a + b ^ 2 = 2 ^ u ∧ b + a ^ 2 = 2 ^ v",
+      "source_sha256": "8f45e9b1b566acd2c2b2d464f553c6a598b90d471decf6ae57365ba9f30eaf7d",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json"
+    }
+  ]
+}

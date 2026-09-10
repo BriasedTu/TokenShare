@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_aime_1991_p9",
+  "node_proof_sources": {
+    "rational_value": "by\n  have hm : (m : ℝ) = 29 / 15 := by\n    norm_num [Real.tan_eq_sin_div_cos, node_trigonometric_values.1, node_trigonometric_values.2] at h₁\n    linarith\n  apply Rat.cast_injective (α := ℝ)\n  norm_num\n  exact hm",
+    "root": "by\n  rw [node_rational_value]\n  norm_num",
+    "trigonometric_values": "by\n  have hc : Real.cos x ≠ 0 := by\n    intro hc\n    rw [Real.tan_eq_sin_div_cos, hc] at h₀\n    norm_num at h₀\n  have hline := h₀\n  rw [Real.tan_eq_sin_div_cos] at hline\n  field_simp [hc] at hline\n  have hs : Real.sin x = (22 * Real.cos x - 7) / 7 := by linarith\n  have hcircle := Real.sin_sq_add_cos_sq x\n  rw [hs] at hcircle\n  have hz : Real.cos x * (533 * Real.cos x - 308) = 0 := by nlinarith\n  have he := (mul_eq_zero.mp hz).resolve_left hc\n  have hv : Real.cos x = 308 / 533 := by linarith\n  exact ⟨by linarith, hv⟩"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

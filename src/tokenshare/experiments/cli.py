@@ -137,12 +137,15 @@ def _parser() -> argparse.ArgumentParser:
 
     lean_environment = commands.add_parser("lean-environment-test")
     lean_environment.add_argument("--pass-path")
+    lean_environment.add_argument("--profile", choices=("full", "minif2f"), default="full")
+    lean_environment.add_argument("--recheck", action="store_true",
+        help="Explicitly recompile miniF2F proofs instead of reusing matching verified evidence")
     return parser
 
 
 def _profile_and_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--profile", choices=("representative", "full"), required=True
+        "--profile", choices=("representative", "full", "minif2f"), required=True
     )
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output-root")
@@ -253,7 +256,7 @@ def _provider_config_paths(
         )
     if "exp5" in experiment_ids:
         paths.append(
-            repo_root / "configs" / "experiments" / "exp5_siliconflow_provider_config.v3.json"
+            repo_root / "configs" / "experiments" / "exp5_siliconflow_provider_config.v4.json"
         )
     return tuple(paths)
 
@@ -273,8 +276,13 @@ def _preflight_provider_entries(
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"provider config cannot be read: {path}") from exc
         provider_family = document.get("provider_family")
+        defaults = document.get("defaults")
         raw_entries = document.get("entries")
-        if not isinstance(provider_family, str) or not isinstance(raw_entries, list):
+        if (
+            not isinstance(provider_family, str)
+            or not isinstance(defaults, Mapping)
+            or not isinstance(raw_entries, list)
+        ):
             raise RuntimeError(f"provider config inventory is invalid: {path}")
         for raw in raw_entries:
             if not isinstance(raw, Mapping) or raw.get("enabled") is not True:
@@ -288,6 +296,8 @@ def _preflight_provider_entries(
                 configured_model=raw.get("model"),
                 request_overrides=dict(raw.get("request_overrides") or {}),
                 supports_json_mode=raw.get("supports_json_mode"),
+                timeout_seconds=defaults.get("timeout_seconds"),
+                max_tokens=defaults.get("max_tokens"),
             )
             entry.validate()
             entry_id = str(entry.entry_id)
@@ -357,6 +367,9 @@ def _case_inputs(repo_root: Path = _REPO_ROOT) -> dict[str, Mapping[str, Any]]:
         repo_root / "benchmarks" / "experiments" / "lean_lemma_graph_catalog.v1.jsonl",
     )
     cases: dict[str, Mapping[str, Any]] = {}
+    supplement = repo_root / "benchmarks" / "experiments" / "minif2f_catalog.v1.jsonl"
+    if supplement.is_file():
+        paths += (supplement,)
     for path in paths:
         for item in load_cases(path):
             case_id = str(item["case_id"])
@@ -415,7 +428,7 @@ def _root_caps(
     provider_upper = (
         protocol_upper
         if root.experiment_id == "exp1"
-        else planned
+        else protocol_upper
         if root.experiment_id == "exp5"
         else 0
     )
@@ -804,6 +817,8 @@ def _journal_resume_entry(root: RootInventoryV1) -> ProviderEntryViewV1:
         configured_model=root.configured_model,
         request_overrides={},
         supports_json_mode=True,
+        timeout_seconds=1.0,
+        max_tokens=1,
     )
 
 
@@ -1287,7 +1302,11 @@ def _run_experiment_locked(
         from .lean_environment import LeanEnvironmentInvalid
 
         try:
-            services.lean_environment_preflight(_REPO_ROOT)
+            if profile_id == "minif2f":
+                from .minif2f import validate_environment_pass
+                validate_environment_pass(_REPO_ROOT)
+            else:
+                services.lean_environment_preflight(_REPO_ROOT)
         except LeanEnvironmentInvalid:
             lean_environment_invalid_keys = {
                 _root_key(root) for root in pending_lean_roots
@@ -1450,11 +1469,15 @@ def main(
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command == "lean-environment-test":
-        from .lean_environment import run_lean_environment_test
+        if args.profile == "minif2f":
+            from .minif2f import run_environment_test as run_lean_environment_test
+        else:
+            from .lean_environment import run_lean_environment_test
 
         result = run_lean_environment_test(
             repository_root=_REPO_ROOT,
             pass_path=args.pass_path,
+            **({"recheck": args.recheck} if args.profile == "minif2f" else {}),
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0

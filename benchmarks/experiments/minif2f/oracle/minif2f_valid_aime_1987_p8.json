@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_aime_1987_p8",
+  "node_proof_sources": {
+    "integer_interval": "by\n  intro n hn k\n  have hd : (0 : ℝ) < n + k := by exact_mod_cast (by omega : 0 < n + k)\n  rw [div_lt_div_iff₀ (by norm_num : (0 : ℝ) < 15) hd, div_lt_div_iff₀ hd (by norm_num : (0 : ℝ) < 13)]\n  constructor\n  · rintro ⟨ha, hb⟩\n    constructor\n    · have h : (6 : ℝ) * n < 7 * k := by nlinarith\n      exact_mod_cast h\n    · have h : (8 : ℝ) * k < 7 * n := by nlinarith\n      exact_mod_cast h\n  · rintro ⟨ha, hb⟩\n    have ha' : (6 : ℝ) * n < 7 * k := by exact_mod_cast ha\n    have hb' : (8 : ℝ) * k < 7 * n := by exact_mod_cast hb\n    constructor <;> nlinarith",
+    "root": "by\n  constructor\n  · refine ⟨by norm_num, 97, ?_, ?_⟩\n    · exact (node_integer_interval 112 (by norm_num) 97).mpr (by norm_num)\n    · intro k hk\n      have hb := (node_integer_interval 112 (by norm_num) k).mp hk\n      omega\n  · intro n hn\n    change 0 < n ∧ ∃! k : ℕ, (8 : ℝ) / 15 < n / (n + k) ∧ (n : ℝ) / (n + k) < 7 / 13 at hn\n    by_contra hg\n    obtain ⟨k, l, hkl, hk, hl⟩ := node_two_integers_above_threshold n (by omega)\n    obtain ⟨w, hw, hu⟩ := hn.2\n    have hkw := hu k ((node_integer_interval n hn.1 k).mpr hk)\n    have hlw := hu l ((node_integer_interval n hn.1 l).mpr hl)\n    exact hkl (hkw.trans hlw.symm)",
+    "two_integers_above_threshold": "by\n  intro n hn\n  refine ⟨6 * n / 7 + 1, 6 * n / 7 + 2, ?_⟩\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

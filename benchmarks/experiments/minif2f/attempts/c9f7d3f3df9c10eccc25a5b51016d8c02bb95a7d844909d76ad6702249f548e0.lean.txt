@@ -1,0 +1,48 @@
+import Mathlib
+set_option linter.unusedVariables false
+set_option autoImplicit false
+set_option maxHeartbeats 0
+set_option maxRecDepth 2048
+open BigOperators Real Nat Topology Rat
+
+example (S : Finset ℕ)
+  (h₀ : ∀ (n : ℕ), n ∈ S ↔ 2010 ≤ n ∧ n ≤ 2019 ∧ ∃ m, ((Nat.divisors m).card = 4 ∧ ∑ p ∈ (Nat.divisors m), p = n)) :
+∀ p : ℕ, Nat.Prime p → (∑ d ∈ Nat.divisors (p ^ 3), d) = (p + 1) * (p ^ 2 + 1) := by
+  intro p hp
+  rw [Nat.sum_divisors_prime_pow hp]
+  norm_num [Finset.sum_range_succ]
+  ring
+
+example (a b : ℕ)
+  (h₀ : 0 < a ∧ 0 < b)
+  (h₁ : ∃ k > 0, 2^k = (a + b^2) * (b + a^2)) :
+∃ u v : ℕ, a + b ^ 2 = 2 ^ u ∧ b + a ^ 2 = 2 ^ v := by
+  obtain ⟨k, hk, he⟩ := h₁
+  have ha : a + b ^ 2 ∣ 2 ^ k := by rw [he]; exact dvd_mul_right _ _
+  have hb : b + a ^ 2 ∣ 2 ^ k := by rw [he]; exact dvd_mul_left _ _
+  obtain ⟨u, hu, hau⟩ := (Nat.dvd_prime_pow (by decide : Nat.Prime 2)).mp ha
+  obtain ⟨v, hv, hbv⟩ := (Nat.dvd_prime_pow (by decide : Nat.Prime 2)).mp hb
+  exact ⟨u, v, hau, hbv⟩
+
+example (k m n : ℕ) (c : ℕ → ℕ) (h₀ : 0 < k ∧ 0 < m ∧ 0 < n)
+  (h₁ : ∀ s, c s = s * (s + 1)) (h₂ : Nat.Prime (k + m + 1)) (h₃ : n + 1 < k + m + 1) :
+∀ s : ℕ, c s - c k = (s - k) * (s + k + 1) := by
+  intro s
+  rw [h₁, h₁]
+  by_cases hk : k ≤ s
+  · have hs : k * (k + 1) ≤ s * (s + 1) := Nat.mul_le_mul hk (by omega)
+    have hsub := Nat.sub_add_cancel hs
+    have hsk := Nat.sub_add_cancel hk
+    nlinarith
+  · have hs : s * (s + 1) ≤ k * (k + 1) := Nat.mul_le_mul (by omega) (by omega)
+    simp [Nat.sub_eq_zero_of_le hs, Nat.sub_eq_zero_of_le (show s ≤ k by omega)]
+
+example (n : ℕ) (a : ℕ → ℕ) (h₀ : Function.Injective a) (h₁ : a 0 = 0) (h₂ : 0 < n) :
+∀ u w : ℕ → ℝ, ∀ j : ℕ, (∑ k ∈ Finset.range (j + 1), (u (k + 1) - u k) * w (k + 1)) = u (j + 1) * w (j + 1) - u 0 * w 1 + ∑ k ∈ Finset.range j, u (k + 1) * (w (k + 1) - w (k + 2)) := by
+  intro u w j
+  induction j with
+  | zero => simp; ring
+  | succ j ih =>
+    rw [Finset.sum_range_succ, ih, Finset.sum_range_succ]
+    ring
+

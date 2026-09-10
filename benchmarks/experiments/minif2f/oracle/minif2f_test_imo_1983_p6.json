@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_test_imo_1983_p6",
+  "node_proof_sources": {
+    "root": "by\n  have hx : 0 ≤ a + c - b := by linarith\n  have hy : 0 ≤ a + b - c := by linarith\n  have hz : 0 ≤ b + c - a := by linarith\n  have hleft := mul_nonneg (mul_nonneg hx hz) (sq_nonneg (c - b))\n  have hmiddle := mul_nonneg (mul_nonneg hx hy) (sq_nonneg (a - c))\n  have hright := mul_nonneg (mul_nonneg hy hz) (sq_nonneg (b - a))\n  nlinarith [node_triangle_square_certificate]",
+    "triangle_square_certificate": "by\n  ring"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

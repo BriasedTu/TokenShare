@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_algebra_apbpceq2_abpbcpcaeq1_aleq1on3anbleq1ancleq4on3",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/5da266aa6e2d1bdc/result.json",
+    "result_sha256": "sha256:795003776d4847589975b4d9203a1dea67758086723966236b72b7d4f46bfc51"
+  },
+  "mathematical_review": "Three independent endpoint estimates exploit square nonnegativity and order; the root combines them and deduces the middle-coordinate bounds.",
+  "node_proofs_digest": "sha256:d55004f68ec346c9773cff64009f627be431dbf46e6c57c892c9f894ed2fa588",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Use nonnegative discriminants of the remaining two coordinates to bound the outermost coordinates.",
+      "node_id": "outer_bounds"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Exploit that both other coordinates exceed the smallest one to exclude the forbidden interval above one third.",
+      "node_id": "smallest_upper_bound"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Independently exploit that both other coordinates are below the largest one to exclude its interval below one.",
+      "node_id": "largest_lower_bound"
+    },
+    {
+      "dependencies": [
+        "outer_bounds",
+        "smallest_upper_bound",
+        "largest_lower_bound"
+      ],
+      "mathematical_role": "Combine independent endpoint bounds, and derive the middle coordinate bounds from ordering and the fixed sum.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:a01db5e2656ccb7f5d6e577f365597ec0632d8db35fddda268ef586aa69ef39a",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:00:02.751881+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

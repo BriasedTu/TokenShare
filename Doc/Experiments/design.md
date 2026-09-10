@@ -1,6 +1,6 @@
 # Experiment design contract
 
-本文件是公开分支的实验设计摘要。详细开发历史已被清洗；本分支只保留运行冻结实验和核验正式结果所必需的系统、corpus、配置、结果与 harness。
+本文件概述实验问题、冻结条件、执行语义和输出边界。实现入口见 [代码导航](code-map.md)，核验步骤见 [复现指南](../../REPRODUCIBILITY.md)。
 
 ## 设计原则
 
@@ -52,10 +52,16 @@ fixed-response trace 缺少当前 ordinal 时，只能确定性回退到同一 t
 - outcome 必须来自实际 route/event/artifact/checker 证据，不能由 mode 配置反推。
 - `{R,M}` 使用 `RECOVERY_MERGE_FIRST`：premature merge 抢先时 recovery 观察记为 preempted，不能双计 stuck。
 
+challenge 的实际暴露按每个目标及适用 attempt 的 request、执行记录和 submission 判定，独立于 mode 与失败原因。目标尚无 request 时保留空观察并注明 `challenge_target_not_dispatched`；request 已准备但执行边界未被观察到时注明 `challenge_boundary_not_observed`，不能据此捏造注入机会。多目标及 `every_attempt` 逐项核对，已观察到一项不能豁免其它已完成项。
+
+已执行到 parser challenge 但源响应缺失、内容不是字符串或不是 JSON 时，注入器显式记录 `opportunity=false, injected=false`，保留自然失败。真实注入后即使 parser 异常、attempt 尚未完成，也保留已有注入记录和原基础设施失败分类。
+
+已落盘的 submission 必须自身携带适用挑战记录；内存副本不能代替缺失的持久记录。身份、边界、ordinal、类型、冲突副本或 artifact 校验失败仍报证据错误。零暴露的合法失败保留在计划分母中，机会数和注入数为零；基础设施失败仍使对应统计单元无效。
+
 ## Experiment 5
 
 - 使用 SiliconFlow 三个冻结 endpoint：`zai-org/GLM-5.2`、`Qwen/Qwen3-14B`、`MiniMaxAI/MiniMax-M2.5`。
-- 每个 AI unit 最多一次 provider attempt。
+- 当前 v4 配置每次协议 attempt 最多发起一次 provider transport attempt；每个 AI unit 允许两次协议重试，因此最多三次 provider calls。
 - 记录 provider usage、latency、model identity、pricing version 与 cost estimate。
 
 ## 输出模型

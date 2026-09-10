@@ -1,0 +1,45 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12a_2008_p15",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.177618+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/3bbaab13ab2f7310/result.json",
+    "result_sha256": "sha256:cb069cb17901973a4507b911c6baa62129bec4767d3318b9f2d513b825d0af3f"
+  },
+  "mathematical_review": "An inductively proved last-digit power cycle gives the exponent congruences, which the root combines with the square residue without evaluating the enormous power.",
+  "node_proofs_digest": "sha256:38b1b72ebbdafd850a791b4f5b1b11fe7d4dc0f3e5edee5726679ad47a69340c",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Prove the nonzero period-four residue class of powers of two by induction.",
+      "node_id": "power_cycle"
+    },
+    {
+      "dependencies": [
+        "power_cycle"
+      ],
+      "mathematical_role": "Reduce the explicitly defined exponent in the two moduli controlling the last digit.",
+      "node_id": "exponent_congruences"
+    },
+    {
+      "dependencies": [
+        "exponent_congruences",
+        "power_cycle"
+      ],
+      "mathematical_role": "Combine the square residue with the proved exponent cycle, without evaluating 2^k.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:391ee546beda70e8fd5e26dc35b096b8d2d53bb39c49a04b10b19db2f02bc97e",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.177618+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

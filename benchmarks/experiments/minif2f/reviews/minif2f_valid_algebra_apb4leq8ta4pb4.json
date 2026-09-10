@@ -1,0 +1,38 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_valid_algebra_apb4leq8ta4pb4",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/fb16516c63c428a2/result.json",
+    "result_sha256": "sha256:7956de9b98966ca3151b02934a216a47c8d1c2e578f5b75c636996844c539074"
+  },
+  "mathematical_review": "Two quadratic Cauchy bounds on the original variables and their squares provide distinct bounds needed for the quartic conclusion.",
+  "node_proofs_digest": "sha256:1a370145fff4a3114bc4dfd48e3993949124617fd9a889ea965816b921063b9c",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Apply the quadratic arithmetic mean bound to the original variables.",
+      "node_id": "sum_square_bound"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Independently bound the square of the sum of squared variables by fourth powers.",
+      "node_id": "squares_square_bound"
+    },
+    {
+      "dependencies": [
+        "sum_square_bound",
+        "squares_square_bound"
+      ],
+      "mathematical_role": "Square the first nonnegative bound and compose it with the independent fourth-power bound.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:31a2a5120b494fa5ec53a1a6bd038c07fefb075756fa58625d41472886ce6b81",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:01:07.037622+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

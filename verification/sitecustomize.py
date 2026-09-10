@@ -105,3 +105,10 @@ def _record_provider_attempt() -> None:
 
 if os.environ.get(ACTIVE_ENV) == "1":
     activate()
+
+# Direct Python children inherit the pytest compiler boundary independently of
+# the network tripwire. Normal CLI execution does not set this variable.
+if os.environ.get("TOKENSHARE_PYTEST_LEAN_GUARD_ACTIVE") == "1":
+    from verification.lean_integration_guard import activate as activate_lean_guard
+
+    activate_lean_guard()

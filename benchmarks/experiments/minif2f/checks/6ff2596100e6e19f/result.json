@@ -1,0 +1,60 @@
+{
+  "case_id": "minif2f_test_imo_1992_p1",
+  "checks": [
+    {
+      "end_line": 33,
+      "node_id": "quotient_and_smallest_factor_bounds",
+      "payload_digest": "sha256:b573b095c4735ec8807ff0591475ffe46d83355dbff05a3454521308d5a9596f",
+      "proof_sha256": "sha256:192cb1db20c069e1104ce7890d5d1776a35d9cb5532e4587cd08d997352a68ef",
+      "segment_sha256": "sha256:f781ba72b574ccc9024faedc5f89444d8d432017386ddadaddd587a585095d54",
+      "standalone_source_sha256": "sha256:bd43b279b630ac445551d4565edeb5758769dedafe3f492730374ae6a9966cf0",
+      "start_line": 4,
+      "status": "accepted"
+    },
+    {
+      "end_line": 70,
+      "node_id": "root",
+      "payload_digest": "sha256:4f8f9989f7c03a1940bb002cc20916e66fab053676e04f0dfc3b15e2c0a2ab95",
+      "proof_sha256": "sha256:15b54273415f63962dfb43c99d029e46ca5bc1c77275bad1c64f5b4ce5d7da8f",
+      "segment_sha256": "sha256:3cbd5ecfae4bc6a56dc953afdc269aa579eea363473a65650998c49faa828389",
+      "standalone_source_sha256": "sha256:6bdeba812273cd3c2027f1dcb1f78363968deabcbe4d91f2d531b91dfec64f47",
+      "start_line": 35,
+      "status": "accepted"
+    },
+    {
+      "end_line": 130,
+      "node_id": "original_root_recheck",
+      "payload_digest": "sha256:8bc2cba77cc7976227a6f66f06543a9cedea11f1433c97d8e94a8f0a82d2084d",
+      "proof_sha256": "sha256:4656f4d785b9499bc5d2dbb96a597a67e6531f61580088346c87d8d324257dab",
+      "segment_sha256": "sha256:08e1d5853932396b1759143ca869f1af4e58ce6c659905e3a38b4d7e3e41b6ea",
+      "standalone_source_sha256": "sha256:9cb5d4e27e6cc607d62cefdf213c95f5b87ad5604e439f97b7d43c25ff6ae2ca",
+      "start_line": 72,
+      "status": "accepted"
+    }
+  ],
+  "command": [
+    "L:\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\6ff2596100\\8301282800\\isolated_nodes_and_original_root.lean"
+  ],
+  "cwd": "L:\\project",
+  "duration_seconds": 38.797,
+  "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+  "exit_code": 0,
+  "isolation_method": "Lean 4.24 anonymous example: withoutModifyingEnv",
+  "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+  "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db",
+  "metadata_rebinding": {
+    "original_plan_digest": "sha256:f7db4c498afcbcf353e74c331fcdf791a99749faca1d9450ca97bdc0413ecb2e",
+    "original_result_sha256": "sha256:c790ab93e50ef8e813e80c6d8aea90767897ea81f8aa164fb028f0f8789248f2",
+    "reason": "Only non-Lean plan metadata changed; regenerated source and every payload/proof/segment identity match the original successful compiler invocation exactly."
+  },
+  "plan_digest": "sha256:a36e324848394bf628327bd90ea99e828c6ed4843b90b9874c61c1a14f4017e7",
+  "real_provider_call_count": 0,
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\6ff2596100\\8301282800\\isolated_nodes_and_original_root.lean",
+  "source_sha256": "sha256:c67dfc3b987bb4e2e662bbbfff3b3553a3d9fdc63051de8176bff5d1376b6be9",
+  "status": "passed",
+  "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "sha256:da03185d50be11867d4c8b1d4f01d153aa4a36c48851433e08dcebf990021e79",
+  "timeout_seconds": 360
+}

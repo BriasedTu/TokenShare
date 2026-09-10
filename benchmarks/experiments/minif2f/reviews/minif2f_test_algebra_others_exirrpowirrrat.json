@@ -1,0 +1,96 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_algebra_others_exirrpowirrrat",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:50:09.091576+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "authoring_sha256": "sha256:b631b341e28ba8c8336e4e82339640da640853fd8bdb15b9baabf5e3e2cb96bf",
+      "case_id": "test/algebra_others_exirrpowirrrat",
+      "checked_segments": [
+        {
+          "end_line": 14,
+          "node_id": "iterated_irrational_power",
+          "payload_digest": "sha256:26f7c84267e93fd97c0b32e8cde6224cf44133ddf180d6c259b74eaae6dc02f6",
+          "proof_sha256": "sha256:942c6c715363c31854a7afb202af7a7f24a2a04149bf845e36a9b872f3b9eea8",
+          "segment_sha256": "sha256:eacfa7313e6a647391efc2f59a069d91563b3e98d7e80f0ad29289d4e3a582a9",
+          "standalone_source_sha256": "sha256:bc69a172ac1c188a237cb968e15587d50dc9c3536059e6ac6537ee8c82e8d436",
+          "start_line": 4
+        },
+        {
+          "end_line": 28,
+          "node_id": "root",
+          "payload_digest": "sha256:302a8de700d8455d7c3db479c4440be7b92212351543761c8920df9307d70229",
+          "proof_sha256": "sha256:b4a9fc482eef5bdaf79fb98ae25d272cc1a314750d9a0460e7015a2eb930537e",
+          "segment_sha256": "sha256:2710810d8ae5252e91fe1476e9b001c522ebb4e01d5b815193ea626e11d1455c",
+          "standalone_source_sha256": "sha256:107c3da31f082d66be39970abe00b4b7bed9a68e008f6bc54f2cb6357cb2150e",
+          "start_line": 16
+        },
+        {
+          "end_line": 48,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:be955531853bccb4933bba6d362cafc6b5d041648e0afe7a97c27288a7143fcd",
+          "proof_sha256": "sha256:2cfdcbc4e5b61443f6c303b24b7dc4506fed2a1c113d6d3d7155f482a9d4955d",
+          "segment_sha256": "sha256:b0b3611678ac3724a81a037d58ffd50f1da67a672096ceb42b084ef1c9c0322e",
+          "standalone_source_sha256": "sha256:0081c2be3c52a0ffed15f2683d8491fd77d369efc76a38c2cc57129798b6a112",
+          "start_line": 30
+        }
+      ],
+      "current_plan_digest": "sha256:1af8f8a8db0b3169cc1226c6ada9f20b57c9b27d2994554ac1d82ff3e02ef436",
+      "dependency_review": "The root uses the iterated-power identity in the first branch; the second branch legitimately needs no prerequisite.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\f39238f6\\a1\\result.json",
+      "formal_result_sha256": "sha256:235c707d9f80baefd7361841e7cf8119a5900c9a6e68120ee25e5e2bc76b0a3a",
+      "graph_digest": "sha256:ddec9c85324edc4c92225b5a610f1f4af1c22e6a49a0875c027e1e8b9730d33b",
+      "lean_source_sha256": "sha256:36a2367b0246f6d1f9dd23c981ca9821a2c92c58d230d642716a68485854da90",
+      "mathematical_review": "The iterated irrational-power identity establishes the concrete mechanism behind the existence construction. The root makes a classical case split on the irrationality of the first power and selects different witnesses in the two cases. The identity is not the existential root restated and no witness-only node is counted.",
+      "node_count": 2,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:e289bbd91feec4e504c4bf901d7ce87056c099b217d78942a295cdadcec0be13",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:1af8f8a8db0b3169cc1226c6ada9f20b57c9b27d2994554ac1d82ff3e02ef436",
+      "review_scope": "Final authoring, unchanged upstream source, current isolated segments and assembled theorem, preserved compiler stdout/stderr/result hashes; no repeated Lean run.",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:4a2cba2314e73847ed6a92222954c504e49726a7e98aec5c37b341cfaa14a910",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:82d747ebd3a7c747a4583874b6f20c77674816328b7ce5ce5271cd792eb541c5"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498.json",
+    "source_report_sha256": "sha256:b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/f39238f67d6c1594/result.json",
+    "result_sha256": "sha256:235c707d9f80baefd7361841e7cf8119a5900c9a6e68120ee25e5e2bc76b0a3a"
+  },
+  "mathematical_review": "The iterated irrational-power identity establishes the concrete mechanism behind the existence construction. The root makes a classical case split on the irrationality of the first power and selects different witnesses in the two cases. The identity is not the existential root restated and no witness-only node is counted.",
+  "node_proofs_digest": "sha256:e289bbd91feec4e504c4bf901d7ce87056c099b217d78942a295cdadcec0be13",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Compute the twice-iterated irrational exponent using real-power multiplication.",
+      "node_id": "iterated_irrational_power"
+    },
+    {
+      "dependencies": [
+        "iterated_irrational_power"
+      ],
+      "mathematical_role": "Select witnesses according to whether the first irrational power is irrational.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:1af8f8a8db0b3169cc1226c6ada9f20b57c9b27d2994554ac1d82ff3e02ef436",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:50:09.091576+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

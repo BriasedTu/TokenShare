@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/imo_1979_p1",
+  "original_declaration": "theorem imo_1979_p1 (p q : ℕ) (h₀ : 0 < q)\n  (h₁ : (∑ k ∈ Finset.Icc (1 : ℕ) 1319, (-1) ^ (k + 1) * ((1 : ℝ) / k)) = p / q) : 1979 ∣ p",
+  "source_file": "upstream/MiniF2F/Valid/imo_1979_p1.lean",
+  "source_sha256": "6213296c7d95fb9e2948386c9bc5955de274c13d4dd6fbf770be8468c9548eb4",
+  "partial_statement": "∀ u : ℝ, 0 < u → u < 1979 → 1 / u + 1 / (1979 - u) = 1979 / (u * (1979 - u))",
+  "partial_proof": "by\n  intro u hu hv\n  have hn : u ≠ 0 := ne_of_gt hu\n  have hm : 1979 - u ≠ 0 := by linarith\n  field_simp\n  ring",
+  "mathematical_route": "Reindex the alternating harmonic sum as the harmonic block 660..1319, then pair k with 1979-k. The checked identity makes every pair numerator divisible by 1979.",
+  "unresolved_full_proof_obligation": "Need the exact finite-sum reindexing and a rational denominator-coprimality proof to transfer the modular numerator property through the given real equality p/q. Direct floating-point or real decimal evaluation would not establish integer divisibility.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(p q : ℕ) (h₀ : 0 < q)\n  (h₁ : (∑ k ∈ Finset.Icc (1 : ℕ) 1319, (-1) ^ (k + 1) * ((1 : ℝ) / k)) = p / q)",
+  "partial_start_line": 8,
+  "partial_block_sha256": "b84dd15900d70b71992c6cc976436e8d60e2f99ab0d07b9b9fee48ea16ce74d3",
+  "partial_end_line": 16,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+  "compiler_log_sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: exact rational evaluation of the whole 1319-term sum. Pairing exposes the mathematical divisibility mechanism, but exact denominator-coprimality and finite reindexing remain unproved.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ u : ℝ, 0 < u → u < 1979 → 1 / u + 1 / (1979 - u) = 1979 / (u * (1979 - u))",
+      "source_sha256": "b84dd15900d70b71992c6cc976436e8d60e2f99ab0d07b9b9fee48ea16ce74d3",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json"
+    }
+  ]
+}

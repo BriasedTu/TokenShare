@@ -4,6 +4,7 @@ tests/storage
 tests/executors
 tests/plugins/factorization
 tests/plugins/test_plugin_registry.py
+tests/verification
 tests/experiments/test_case_source.py
 tests/experiments/test_cli_plan.py
 tests/experiments/test_gui_launcher.py

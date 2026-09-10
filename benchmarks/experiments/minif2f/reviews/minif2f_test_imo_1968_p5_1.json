@@ -1,0 +1,40 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_imo_1968_p5_1",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/2eca6dbeb57a3abb/result.json",
+    "result_sha256": "sha256:990a659e25b28cc48e3ddcc81d62fabe52a47059068710cd81b3a8bc16c2bd04"
+  },
+  "mathematical_review": "Translation gives a global range bound, legitimizing square-root squaring and the composed radicand identity; these establish a nonzero period.",
+  "node_proofs_digest": "sha256:c802bc50491b9ae6a480e198c081c4150c401e8fa4e192a78af9515b979df72b",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Use translation surjectivity and a universal quadratic bound to constrain the entire function range.",
+      "node_id": "global_range"
+    },
+    {
+      "dependencies": [
+        "global_range"
+      ],
+      "mathematical_role": "After the range check makes square-root squaring valid, identify the twice-composed radicand as a square.",
+      "node_id": "composed_radicand"
+    },
+    {
+      "dependencies": [
+        "global_range",
+        "composed_radicand"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:8fed9ce0f411dcedaf33320451638cc15f1fc8569249f8fee2887266266e5680",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:04:54.458188+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

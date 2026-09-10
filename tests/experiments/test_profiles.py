@@ -507,8 +507,8 @@ def test_full_attempt_and_provider_call_hard_caps_are_derived_from_inventory() -
     assert plan.exp3_reference_planned_first_attempt_ai_units == 464
     assert plan.exp3_reference_protocol_execution_attempt_upper == 1_392
     assert plan.experiments["exp5"].planned_first_attempt_ai_units == 852
-    assert plan.experiments["exp5"].protocol_execution_attempt_upper == 852
-    assert plan.experiments["exp5"].provider_call_upper == 852
+    assert plan.experiments["exp5"].protocol_execution_attempt_upper == 3 * 852
+    assert plan.experiments["exp5"].provider_call_upper == 3 * 852
     fixed_replay_attempts = sum(
         (
             plan.experiments["exp2"].protocol_execution_attempt_upper,
@@ -518,8 +518,8 @@ def test_full_attempt_and_provider_call_hard_caps_are_derived_from_inventory() -
         )
     )
     assert fixed_replay_attempts == 84_042
-    assert fixed_replay_attempts + plan.online_provider_call_upper == 90_804
-    assert plan.online_provider_call_upper == 6_762
+    assert fixed_replay_attempts + plan.online_provider_call_upper == 92_508
+    assert plan.online_provider_call_upper == 8_466
     assert plan.online_provider_call_upper == sum(
         experiment.provider_call_upper for experiment in plan.experiments.values()
     )
@@ -531,8 +531,10 @@ def test_full_hard_upper_tracks_three_model_exp5_online_term() -> None:
     plan = build_plan("full", representative_raw_response_p95_bytes=256 * 1024)
 
     assert plan.hard_response_bytes == 16 * 1024 * 1024
-    assert plan.online_response_artifact_hard_upper_bytes == 283_826_565_120
-    assert round(plan.online_response_artifact_hard_upper_gib, 2) == 264.33
+    assert plan.estimate_bytes == 10_578_165_760
+    assert plan.hard_upper_bytes == 357_345_525_760
+    assert plan.online_response_artifact_hard_upper_bytes == 355_349_852_160
+    assert round(plan.online_response_artifact_hard_upper_gib, 2) == 330.95
     assert plan.hard_upper_bytes > plan.online_response_artifact_hard_upper_bytes
     assert plan.hard_upper_gib == plan.hard_upper_bytes / 1024**3
     assert isinstance(plan.hard_upper_bytes, int)
@@ -651,7 +653,7 @@ def test_full_exp5_inventory_preserves_repeat_model_order() -> None:
     ]
     assert len(exp5_conditions) == 12
     assert {condition.repeat_id for condition in exp5_conditions} == {0}
-    assert {condition.max_retries for condition in exp5_conditions} == {0}
+    assert {condition.max_retries for condition in exp5_conditions} == {2}
     blocks: list[tuple[int, str | None]] = []
     for root in inventory.roots:
         if root.experiment_id != "exp5":
@@ -679,6 +681,19 @@ def test_full_exp5_inventory_preserves_repeat_model_order() -> None:
         "Qwen/Qwen3-14B",
         "MiniMaxAI/MiniMax-M2.5",
     ]
+
+
+def test_exp5_profiles_freeze_retry_and_provider_controls() -> None:
+    from tokenshare.experiments.profiles import build_profile
+
+    for profile_id in ("full", "representative"):
+        controls = build_profile(profile_id).experiments["exp5"]
+        assert (
+            controls.max_retries,
+            controls.thinking,
+            controls.timeout_seconds,
+            controls.max_tokens,
+        ) == (2, True, 1_200, 4_096)
 
 
 def test_representative_inventory_and_provider_call_hard_cap_are_exact() -> None:
@@ -719,8 +734,9 @@ def test_representative_inventory_and_provider_call_hard_cap_are_exact() -> None
     assert plan.experiments["exp3"].protocol_execution_attempt_upper == (
         3 * exp3_rate_units + 4 * exp3_death_units
     ) == 190
-    assert plan.experiments["exp5"].provider_call_upper == 24
-    assert plan.online_provider_call_upper == 81
+    assert plan.experiments["exp5"].protocol_execution_attempt_upper == 72
+    assert plan.experiments["exp5"].provider_call_upper == 72
+    assert plan.online_provider_call_upper == 129
     assert all(
         root.worker_count == 10
         for root in inventory.roots

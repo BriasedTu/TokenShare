@@ -1,0 +1,32 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_imo_1965_p2",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/189bc10117909b62/result.json",
+    "result_sha256": "sha256:ceb0dedcf7a0b103da88352f2b16848377417d2ab4903069ad9467cdeb039c54"
+  },
+  "mathematical_review": "A signed maximum principle for arbitrary solutions follows from row dominance and negative off-diagonal entries; apply it to both a solution and its negation to force all coordinates to zero.",
+  "node_proofs_digest": "sha256:bfe7bd3c27923d29902fe9b63af679605adde9ddc47ff590e3a608d965515fcf",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Establish the signed maximum principle for every solution of the coefficient system, using the sign of off-diagonal entries and strict row dominance.",
+      "node_id": "maximum_principle"
+    },
+    {
+      "dependencies": [
+        "maximum_principle"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:9f9d4ce6cf5eb79d65540aacef8f24aa36dd64074e77eec593f4f7773b6861da",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:04:22.957523+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12_2000_p20",
+  "node_proof_sources": {
+    "eliminated_relation": "by\n  have hx := h₀.1.ne'\n  have hy := h₀.2.1.ne'\n  have hz := h₀.2.2.ne'\n  have e1 := h₁\n  have e2 := h₂\n  have e3 := h₃\n  field_simp at e1 e2 e3\n  have p1 := congrArg (fun t : ℝ => t*z) e1\n  have p2 := congrArg (fun t : ℝ => t*x) e2\n  nlinarith",
+    "first_coordinate": "by\n  have hx := h₀.1.ne'\n  have e3 := h₃\n  field_simp at e3\n  have hp := congrArg (fun t : ℝ => t*x) node_eliminated_relation\n  have hs : (2*x-3)^2=0 := by nlinarith\n  have he := (sq_eq_zero_iff).mp hs\n  linarith",
+    "root": "by\n  have hy := h₀.2.1.ne'\n  have hz := h₀.2.2.ne'\n  have e1 := h₁\n  have e2 := h₂\n  field_simp at e1 e2\n  have ey : y=2/5 := by nlinarith [node_first_coordinate]\n  have ez : z=5/3 := by nlinarith [ey]\n  rw [node_first_coordinate, ey, ez]\n  norm_num"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_mathd_numbertheory_530",
+  "node_proof_sources": {
+    "gcd_reduction_data": "by\n  have hk : 0 < k := by\n    by_contra h\n    have hk0 : k = 0 := by omega\n    norm_num [hk0] at h₁\n  have hg := Nat.gcd_pos_of_pos_right n hk\n  obtain ⟨a, ha⟩ := Nat.gcd_dvd_left n k\n  obtain ⟨b, hb⟩ := Nat.gcd_dvd_right n k\n  refine ⟨a, b, ha, hb, hg, ?_⟩\n  have hgR : (Nat.gcd n k : ℝ) ≠ 0 := by exact_mod_cast Nat.ne_of_gt hg\n  calc\n    (n : ℝ) / k = ((Nat.gcd n k : ℝ) * a) / ((Nat.gcd n k : ℝ) * b) := by\n      exact congrArg₂ (fun x y : ℝ => x / y) (by exact_mod_cast ha) (by exact_mod_cast hb)\n    _ = (a : ℝ) / b := mul_div_mul_left _ _ hgR",
+    "integer_ratio_bound": "by\n  intro a b hlo hhi\n  have hb : 0 < b := by\n    by_contra h\n    have hb0 : b = 0 := by omega\n    norm_num [hb0] at hlo\n  have hbR : (0 : ℝ) < b := by exact_mod_cast hb\n  have hloR := (lt_div_iff₀ hbR).mp hlo\n  have hhiR := (div_lt_iff₀ hbR).mp hhi\n  have alo : 5 * b < a := by exact_mod_cast hloR\n  have ahi : a < 6 * b := by exact_mod_cast hhiR\n  have blow : 2 ≤ b := by omega\n  have alow : 11 ≤ a := by omega\n  nlinarith",
+    "root": "by\n  obtain ⟨a, b, ha, hb, hg, hr⟩ := node_gcd_reduction_data\n  have hab : 22 ≤ a * b := node_integer_ratio_bound a b (by simpa [hr] using h₁) (by simpa [hr] using h₀)\n  let g := Nat.gcd n k\n  change n = g * a at ha\n  change k = g * b at hb\n  change 0 < g at hg\n  have ident : g * Nat.lcm n k = g * (g * (a * b)) := by\n    calc\n      g * Nat.lcm n k = n * k := Nat.gcd_mul_lcm n k\n      _ = g * (g * (a * b)) := by rw [ha, hb]; ring\n  have hl := Nat.eq_of_mul_eq_mul_left hg ident\n  change 22 ≤ Nat.lcm n k / g\n  rw [hl, Nat.mul_div_right (a * b) hg]\n  exact hab"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

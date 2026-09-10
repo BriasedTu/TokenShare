@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_imo_1977_p5",
+  "node_proof_sources": {
+    "quotient_identification": "by\n  have hp : 0 < a + b := by omega\n  have hc : (a + b) ^ 2 < 2 * (q + 1) * (a + b) := by\n    nlinarith [sq_nonneg ((a : ℤ) - (b : ℤ))]\n  have hs : a + b < 2 * (q + 1) := by\n    by_contra hn\n    have hm := Nat.mul_le_mul_right (a + b) (show 2 * (q + 1) ≤ a + b by omega)\n    nlinarith\n  have hu : q ≤ 44 := by nlinarith\n  have hl : 44 ≤ q := by\n    by_contra hn\n    have hq : q ≤ 43 := by omega\n    have hq2 := Nat.mul_le_mul hq hq\n    nlinarith\n  omega",
+    "root": "by\n  rw [node_quotient_identification] at h₁ h₂\n  have hr : r = 41 := by omega\n  subst r\n  have ha : a ≤ 66 := by nlinarith [sq_nonneg ((b : ℤ) - 22)]\n  have hb : b ≤ 66 := by nlinarith [sq_nonneg ((a : ℤ) - 22)]\n  interval_cases a <;> interval_cases b <;> norm_num at *"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12a_2020_p15",
+  "node_proof_sources": {
+    "first_root_geometry": "by\n  have he : a^3=8 := sub_eq_zero.mp h₀\n  have hn := congrArg norm he\n  norm_num [norm_pow] at hn\n  have hn2 : ‖a‖=2 := by nlinarith [norm_nonneg a, sq_nonneg (‖a‖-2)]\n  refine ⟨hn2, ?_⟩\n  have hf : (a-2)*(a^2+2*a+4)=0 := by linear_combination h₀\n  rcases mul_eq_zero.mp hf with hp | hq\n  · have ha : a=2 := sub_eq_zero.mp hp\n    norm_num [ha]\n  · have hr := congrArg Complex.re hq\n    have hi := congrArg Complex.im hq\n    simp [pow_two, Complex.mul_re, Complex.mul_im] at hr hi\n    have him : a.im ≠ 0 := by intro hz; rw [hz] at hr; nlinarith [sq_nonneg (a.re+1)]\n    have hz : (a.re+1)*a.im=0 := by nlinarith\n    have hx := (mul_eq_zero.mp hz).resolve_right him\n    linarith",
+    "root": "by\n  have hs := Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 21)\n  have hp := Real.sqrt_nonneg (21:ℝ)\n  rcases node_second_root_classification with hb | hb\n  · rw [hb]\n    have ha : a.re^2+a.im^2=4 := by have := Complex.normSq_eq_norm_sq a; rw [node_first_root_geometry.1] at this; norm_num [Complex.normSq_apply] at this; nlinarith\n    have hd := Complex.normSq_eq_norm_sq (a-8)\n    simp [Complex.normSq_apply, Complex.sub_re, Complex.sub_im] at hd\n    nlinarith [node_first_root_geometry.2, norm_nonneg (a-8)]\n  · have ht := norm_sub_le a b\n    rw [node_first_root_geometry.1] at ht\n    nlinarith [norm_nonneg (a-b)]",
+    "second_root_classification": "by\n  have hf : (b-8)*(b^2-8)=0 := by linear_combination h₁\n  rcases mul_eq_zero.mp hf with hp | hq\n  · exact Or.inl (sub_eq_zero.mp hp)\n  · right\n    have he : b^2=8 := sub_eq_zero.mp hq\n    have hn := congrArg norm he\n    norm_num [norm_pow] at hn\n    nlinarith [norm_nonneg b]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

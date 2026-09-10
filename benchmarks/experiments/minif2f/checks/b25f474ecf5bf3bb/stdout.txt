@@ -1,0 +1,1 @@
+'mathd_algebra_31' depends on axioms: [propext, Classical.choice, Quot.sound]

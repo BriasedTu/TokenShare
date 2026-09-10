@@ -1,0 +1,45 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12a_2010_p11",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.433433+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/ddf2beef29397ce8/result.json",
+    "result_sha256": "sha256:c50cd6f02b2fb8e7248ab6be80bd0f002cb8014d0e8d7d46076123fe5182d75c"
+  },
+  "mathematical_review": "Logarithms of the exponential equation determine a nonzero exponent; the logarithm-base equation excludes the singular base and gives a second product identity, allowing cancellation and logarithm injectivity at the root.",
+  "node_proofs_digest": "sha256:f90dbd0d4a0eea2f404bc7b2efd5dd131bf3b77664b02a5d879811c4fbff6fbe",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Take logarithms of the real-exponent equation to isolate the exponent multiplicatively.",
+      "node_id": "exponential_log_identity"
+    },
+    {
+      "dependencies": [
+        "exponential_log_identity"
+      ],
+      "mathematical_role": "Use the nonzero exponent to exclude base one and clear the logarithm-base denominator.",
+      "node_id": "base_log_identity"
+    },
+    {
+      "dependencies": [
+        "exponential_log_identity",
+        "base_log_identity"
+      ],
+      "mathematical_role": "Cancel the nonzero exponent and use injectivity of logarithm on positive bases.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:ec1320b51f92ecff68fd8860db51f156da1df0817e42af040435c8fbb30c055e",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.433433+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

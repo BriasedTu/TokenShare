@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_imo_1968_p5_1",
+  "node_proof_sources": {
+    "composed_radicand": "by\n  intro x\n  have hr := node_global_range x\n  have hnon : 0 ≤ f x - f x ^ 2 := by nlinarith\n  have hs := Real.sq_sqrt hnon\n  rw [h₁ x]\n  nlinarith",
+    "global_range": "by\n  intro x\n  have hx := h₁ (x - a)\n  have he : x - a + a = x := by ring\n  rw [he] at hx\n  have hs := Real.sqrt_nonneg (f (x - a) - f (x - a) ^ 2)\n  have hu : Real.sqrt (f (x - a) - f (x - a) ^ 2) ≤ 1 / 2 := by\n    apply Real.sqrt_le_iff.mpr\n    constructor\n    · norm_num\n    · nlinarith [sq_nonneg (f (x - a) - 1 / 2)]\n  constructor <;> linarith",
+    "root": "by\n  refine ⟨2 * a, by linarith, ?_⟩\n  intro x\n  have he : x + 2 * a = (x + a) + a := by ring\n  rw [he, h₁ (x + a), node_composed_radicand x]\n  rw [Real.sqrt_sq (by linarith [(node_global_range x).1] : 0 ≤ f x - 1 / 2)]\n  ring"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

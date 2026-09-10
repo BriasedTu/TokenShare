@@ -1,0 +1,40 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_imo_1977_p6",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/e152a81e9757fd79/result.json",
+    "result_sha256": "sha256:09c5b63e3184130a9e0b81795e5271df01fa81f09a14b1775099fb6e11db1498"
+  },
+  "mathematical_review": "Induction on inverse sublevel sets gives the global lower bound, which implies monotonicity on positive integers and the final functional identity.",
+  "node_proofs_digest": "sha256:a3ad5e5e790e999c60eb459647ad99359f8b3ace460beeb1643c9e6919059cc4",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Prove a global lower bound by induction on inverse sublevel sets of the positive integer-valued function.",
+      "node_id": "pointwise_lower_bound"
+    },
+    {
+      "dependencies": [
+        "pointwise_lower_bound"
+      ],
+      "mathematical_role": "Turn the composite inequality and global lower bound into monotonicity on the positive domain.",
+      "node_id": "positive_monotonicity"
+    },
+    {
+      "dependencies": [
+        "pointwise_lower_bound",
+        "positive_monotonicity"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:130e56168f06d00e3c5f43d9b8b5bd219a7216e142682520bb3c1e05f877aad1",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:05:25.564588+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

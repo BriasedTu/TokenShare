@@ -1,0 +1,105 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_algebra_amgm_sum1toneqn_prod1tonleq1",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T16:00:33.144618+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "author_disposition": {
+        "authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__algebra_amgm_sum1toneqn_prod1tonleq1\\authoring.json",
+        "batch": "batch08",
+        "case_id": "test/algebra_amgm_sum1toneqn_prod1tonleq1",
+        "formal_preflight_result": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\9ce911cc\\a3\\result.json",
+        "reason": "Official offline checker accepted isolated nodes and the unchanged root, with printed axioms and no sorryAx.",
+        "source_sha256": "7512c3ec27350608bdefcc44a265e70028256b49e442af3dbfd69d1e4746ebe7",
+        "status": "lean_passed_pending_independent_review",
+        "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__algebra_amgm_sum1toneqn_prod1tonleq1\\validation-3.json"
+      },
+      "authoring_sha256": "sha256:4ffca11455768e3e077c336f529286c326750038a4c315fea8c7184e93c1905f",
+      "case_id": "test/algebra_amgm_sum1toneqn_prod1tonleq1",
+      "checked_segments": [
+        {
+          "end_line": 18,
+          "node_id": "square_root_sum_bound",
+          "payload_digest": "sha256:dd7669c7862bf694cffa247528e8cbc9c137cbc0e92f2a0f1d4b79fb3e5c8558",
+          "proof_sha256": "sha256:480ac81e22ccce02270d94909dbd3dd7bff55641942e418ab5df3ee1a50101e2",
+          "segment_sha256": "sha256:b11a1b973d11a496fa9847fb4a6faa2b80526776e7c9f85c9e8067b55ef461c1",
+          "standalone_source_sha256": "sha256:97e563c70256577c4afdce8193ae340a7fbd34c3a5c29f7fd1a7f8983ca444e2",
+          "start_line": 4
+        },
+        {
+          "end_line": 52,
+          "node_id": "root",
+          "payload_digest": "sha256:d8aa18cca12fc8660b477bd2a372b34601ffc8df0c4ca3199510d59f11b978bf",
+          "proof_sha256": "sha256:84cea36dc9a9682846800c2e5c59f82f3835b7fe6d4c573c885e3349bdd6fd29",
+          "segment_sha256": "sha256:5f1a2b1114c05c0c79eb08efad3e505eb3a4aae7f5a0deea7dac532f24bcfbfd",
+          "standalone_source_sha256": "sha256:d504dd24ee0c77ef5d19671fec72eb63916dbbe5c7c66f2690c9f79547963f8b",
+          "start_line": 20
+        },
+        {
+          "end_line": 94,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:304534212fee9a44be04fcae3a7b141181d40af41aac78de9b646b9661817721",
+          "proof_sha256": "sha256:9ac512c37d306e2caa55d4b886e4d0de7bc5305fcd780c6724ade297e5933f84",
+          "segment_sha256": "sha256:ba8baf615db94b87e87400edf4e29a6f134862c6fb99375ddcb200fbd7200abc",
+          "standalone_source_sha256": "sha256:e6e6317a0fe1d82ad5c2a62f99f22cec61f4650923df773937309b0f64269d17",
+          "start_line": 54
+        }
+      ],
+      "current_plan_digest": "sha256:8637b03cd4064182735495bb0008d4608d20030b61e2225cf36577ba350698b3",
+      "dependency_review": "The root explicitly consumes square_root_sum_bound when bounding the summed logarithm tangent terms. The former logarithmic_sum_bound node was rejected as an equivalent restatement and has been removed.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\9ce911cc\\a3\\result.json",
+      "formal_result_sha256": "sha256:6092f24c63f890835109e1358193b89acbad7f079ef55ad580a8492806254c3c",
+      "graph_digest": "sha256:ca978ae127066d982cecd7495878a62b6d039288fca9db5b7099f8eb0813d1e1",
+      "lean_source_sha256": "sha256:14695184a959edeccfda7e4aa065583d59ac01c09c984a0a962d53f1f1498cb4",
+      "mathematical_review": "The revised intermediate uses Cauchy-Schwarz to control the sum of square roots from the prescribed sum of nonnegative factors. The root applies the logarithm tangent inequality to those square roots, sums the resulting inequalities, and converts the logarithmic bound to the product bound, handling zero factors locally. This controls a distinct intermediate quantity instead of merely taking logarithms of the requested product conclusion.",
+      "node_count": 2,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:5e17142a1ef02a358c34be1b1d7d847e04988b5bd21116e19c407224b41b446c",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:8637b03cd4064182735495bb0008d4608d20030b61e2225cf36577ba350698b3",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:7512c3ec27350608bdefcc44a265e70028256b49e442af3dbfd69d1e4746ebe7",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:b1bfabfea12ddb7f14b13ff8eafb64bb7797f3957143f87656d1ca43e48cc57f"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/4765a0d9dfab621ea7704e21806fa90222184e5a06ee35bf1c0a9f226d70d9b8.json",
+    "source_report_sha256": "sha256:4765a0d9dfab621ea7704e21806fa90222184e5a06ee35bf1c0a9f226d70d9b8"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/9ce911cccf68f17f/result.json",
+    "result_sha256": "sha256:6092f24c63f890835109e1358193b89acbad7f079ef55ad580a8492806254c3c"
+  },
+  "mathematical_review": "The revised intermediate uses Cauchy-Schwarz to control the sum of square roots from the prescribed sum of nonnegative factors. The root applies the logarithm tangent inequality to those square roots, sums the resulting inequalities, and converts the logarithmic bound to the product bound, handling zero factors locally. This controls a distinct intermediate quantity instead of merely taking logarithms of the requested product conclusion.",
+  "node_proofs_digest": "sha256:5e17142a1ef02a358c34be1b1d7d847e04988b5bd21116e19c407224b41b446c",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Use Cauchy-Schwarz to control the independent concave transform sum of square roots.",
+      "node_id": "square_root_sum_bound"
+    },
+    {
+      "dependencies": [
+        "square_root_sum_bound"
+      ],
+      "mathematical_role": "Handle zero factors and otherwise recover the product bound through the logarithm of a product.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:8637b03cd4064182735495bb0008d4608d20030b61e2225cf36577ba350698b3",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T16:00:33.143608+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

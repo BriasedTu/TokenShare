@@ -18,8 +18,13 @@ from tokenshare.plugins.lean_proof.schemas import (
 
 
 LEAN_LEMMA_GRAPH_CERTIFICATE_SCHEMA_VERSION = "lean_proof.lemma_graph_certificate.v2"
-LEAN_LEMMA_GRAPH_TOPIC_FAMILIES = ("pure_logic", "function_set", "induction")
+LEAN_LEMMA_GRAPH_TOPIC_FAMILIES = (
+    "pure_logic", "function_set", "induction", "algebra", "number_theory",
+    "combinatorics", "analysis", "geometry",
+)
+LEAN_LEMMA_GRAPH_CHECKED_BODIES_SHAPE = "checked_node_bodies.v1"
 LEAN_LEMMA_GRAPH_PROOF_ASSEMBLY_SHAPES = (
+    LEAN_LEMMA_GRAPH_CHECKED_BODIES_SHAPE,
     "recursive_lemma_dag_required_slots.v1",
     "recursive_induction_lemma_dag_required_slots.v1",
     "structured_blocked_no_oracle_frontier_stress.v1",

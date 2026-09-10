@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_imo_1977_p6",
+  "node_proof_sources": {
+    "pointwise_lower_bound": "by\n  have inv : ∀ k n : ℕ, 0 < n → f n ≤ k → n ≤ k := by\n    intro k\n    induction k with\n    | zero =>\n      intro n hn hf\n      have := h₀ n\n      omega\n    | succ k ih =>\n      intro n hn hf\n      by_cases he : n = 1\n      · omega\n      have hn' : 0 < n - 1 := by omega\n      have hs := h₁ (n - 1) hn'\n      have he' : n - 1 + 1 = n := by omega\n      rw [he'] at hs\n      have inner : f (f (n - 1)) ≤ k := by omega\n      have middle : f (n - 1) ≤ k := ih _ (h₀ _) inner\n      have lower : n - 1 ≤ k := ih _ hn' middle\n      omega\n  intro n hn\n  exact inv (f n) n hn le_rfl",
+    "positive_monotonicity": "by\n  intro i j hi hij\n  induction j, hij using Nat.le_induction with\n  | base => exact le_rfl\n  | succ j hj ih =>\n    have hjpos : 0 < j := by omega\n    have hc := h₁ j hjpos\n    have hl := node_pointwise_lower_bound (f j) (h₀ j)\n    omega",
+    "root": "by\n  intro n hn\n  have hlo := node_pointwise_lower_bound n hn\n  by_contra hne\n  have hstep : n + 1 ≤ f n := by omega\n  have hm := node_positive_monotonicity (n + 1) (f n) (by omega) hstep\n  have hc := h₁ n hn\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

@@ -1,0 +1,112 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_valid_aimeII_2001_p3",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:50:09.139371+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "authoring_sha256": "sha256:3c012ca7dcede7621cf6c650b9eff180ed7b3c9e8352b69f4830ef28a26e5d85",
+      "case_id": "valid/aimeII_2001_p3",
+      "checked_segments": [
+        {
+          "end_line": 18,
+          "node_id": "five_step_negation",
+          "payload_digest": "sha256:36ee14e668faa6111daa16a08e9be2ecc6a5ffe325bb72178723d22d8a118e16",
+          "proof_sha256": "sha256:ac9bbb714161aeea39b3ebdec2ebe6289f76b5fc825d5487d213f52ff4d8e3b4",
+          "segment_sha256": "sha256:f241f8149196aa4638059279e6ce7374ec9ace569819dedd68eaa551c280bbea",
+          "standalone_source_sha256": "sha256:141aff4897a943e10398344c9d9b903219496c1d88cc1db4ba6258d39d454888",
+          "start_line": 4
+        },
+        {
+          "end_line": 36,
+          "node_id": "iterated_period",
+          "payload_digest": "sha256:d49c4d59cb4d9a4eda4b2b3dab943333a21ce6d582f3da24690450524cc41ba5",
+          "proof_sha256": "sha256:a5bced6515b90b4a9d8650d48802e5cd975363816f7e02629b1031fc668839b4",
+          "segment_sha256": "sha256:f9e048456ac32dc620648fc82bfecc0cda79fbf876c4878352d852cd69b639a2",
+          "standalone_source_sha256": "sha256:3af7fef553a8ec64b060642bd71af856c40d638ed246f1d0909ffed84560916c",
+          "start_line": 20
+        },
+        {
+          "end_line": 53,
+          "node_id": "root",
+          "payload_digest": "sha256:213cb37210911ab4755c9c44e021711bf6e860527e08d7668d5f05946f2ad270",
+          "proof_sha256": "sha256:8227f7a649130ee0e9f553f43ccbcb3fa25c1bd276a8c01c398556f1f3bfe08b",
+          "segment_sha256": "sha256:b5305f7fdacb248c83dda8bbf902be4b48a57860cfeb7a58f617b1f0e23a6a9b",
+          "standalone_source_sha256": "sha256:3e9757418a599a97ee879594ef205cfc32bbecc8d9d243cee92b03d64f03fd82",
+          "start_line": 38
+        },
+        {
+          "end_line": 88,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:0bddb8415a402bc16a87dbef4bff641a8b5ad029b9d58a5826b3829b74000450",
+          "proof_sha256": "sha256:5c135ebe716c261f7a074268331d70618a268b2f08afcf8363ce8e4fb6fe7f18",
+          "segment_sha256": "sha256:a7517bad486d78d3aa17b05c6bbadfc719a270c8f14000297e43e31132bfd099",
+          "standalone_source_sha256": "sha256:49eb021f89ce563965215013f4400f42e55611808fce6466ab6ee2ed95c97c54",
+          "start_line": 55
+        }
+      ],
+      "current_plan_digest": "sha256:f552e1445057c88d5ed4177c3664e859df4c2be80034a9a28ceea7b166fe1f43",
+      "dependency_review": "five_step_negation is used twice in each period induction step; iterated_period reduces all three root indices.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\3a345d20\\a1\\result.json",
+      "formal_result_sha256": "sha256:6d18b897564376913a4fa178efdee3d2abd5f0243e30013993bc349d6577097c",
+      "graph_digest": "sha256:61f92896a00533d731f58c27af4a881a9ff73c0a43e0698ed85ea350a8fb3eb9",
+      "lean_source_sha256": "sha256:5c569fe3b749e3b504e5855cb915470baf33846670dca9b1692d883022813700",
+      "mathematical_review": "Consecutive recurrence equations yield an anti-period of five by cancellation. A separate induction proves all multiples of the derived period ten, and the root reduces three large indices to initial data. The induction adds a universally iterated recurrence property rather than merely renaming one index.",
+      "node_count": 3,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:fc66446a4032e0d1a6f67adfe20ec72356b361add21c515584c5f02e61b4224f",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:f552e1445057c88d5ed4177c3664e859df4c2be80034a9a28ceea7b166fe1f43",
+      "review_scope": "Final authoring, unchanged upstream source, current isolated segments and assembled theorem, preserved compiler stdout/stderr/result hashes; no repeated Lean run.",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:ccec65472d2eaf2708c9dca0690312c51ee499b1881a53d68119aaf810b7dba5",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:2124cccf558b1d768045216887012edd19da65be90b9544276ad50b0ac62214a"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498.json",
+    "source_report_sha256": "sha256:b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/3a345d20fc298572/result.json",
+    "result_sha256": "sha256:6d18b897564376913a4fa178efdee3d2abd5f0243e30013993bc349d6577097c"
+  },
+  "mathematical_review": "Consecutive recurrence equations yield an anti-period of five by cancellation. A separate induction proves all multiples of the derived period ten, and the root reduces three large indices to initial data. The induction adds a universally iterated recurrence property rather than merely renaming one index.",
+  "node_proofs_digest": "sha256:fc66446a4032e0d1a6f67adfe20ec72356b361add21c515584c5f02e61b4224f",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Adding consecutive recurrence equations produces anti-period five.",
+      "node_id": "five_step_negation"
+    },
+    {
+      "dependencies": [
+        "five_step_negation"
+      ],
+      "mathematical_role": "Iterate the period ten derived from applying anti-period five twice.",
+      "node_id": "iterated_period"
+    },
+    {
+      "dependencies": [
+        "iterated_period"
+      ],
+      "mathematical_role": "Reduce all three large indices to the given initial values and the computed fifth term.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:f552e1445057c88d5ed4177c3664e859df4c2be80034a9a28ceea7b166fe1f43",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:50:09.138373+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

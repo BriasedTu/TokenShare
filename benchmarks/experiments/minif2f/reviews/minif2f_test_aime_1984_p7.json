@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_aime_1984_p7",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:26.965531+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/8826d504703f97f6/result.json",
+    "result_sha256": "sha256:5fef1ba97e40b4b9d62063f6c7d9a6139c44e6bc4f3e607a5c79d9752d2c8a06"
+  },
+  "mathematical_review": "Establish the closed two-value recursion cycle, propagate a uniform formula below the threshold by strong induction, then evaluate the requested argument.",
+  "node_proofs_digest": "sha256:52839a61ccf3671c9b30ac647374e9ec9ea68fa80868d3051ed19946f96b87d9",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Use the explicit threshold rule and nested recursion to establish a closed two-value cycle.",
+      "node_id": "closed_two_cycle"
+    },
+    {
+      "dependencies": [
+        "closed_two_cycle"
+      ],
+      "mathematical_role": "Propagate the closed cycle down through all integers using strong induction on distance below the threshold.",
+      "node_id": "below_threshold_formula"
+    },
+    {
+      "dependencies": [
+        "below_threshold_formula"
+      ],
+      "mathematical_role": "Evaluate the proved global below-threshold rule at the requested input.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:59ffc4133ca42d7779f345db02b54fbde2c2849067a93826a745b73088ecbefe",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:26.964531+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from collections import Counter
 from dataclasses import dataclass
@@ -80,13 +81,128 @@ def verify_all(
     asset_summary = _verify_assets(repo_root, manifest, frozen_sha)
     sidecar_summary = _verify_semantic_sidecar(repo_root, manifest)
     inventory_summary = _verify_profile_inventory(repo_root, manifest)
+    supplement_summary = _verify_minif2f_supplement(repo_root, manifest)
     summary: JsonObject = {
         "status": "ok",
         "assets_checked": asset_summary,
         "semantic_sidecar": sidecar_summary,
         "inventory": inventory_summary,
+        "minif2f_supplement": supplement_summary,
     }
     return summary
+
+
+def _verify_minif2f_supplement(repo_root: Path, manifest: Mapping[str, Any]) -> JsonObject:
+    """Check the additive corpus against full records, source bytes and inventory identities."""
+    from dataclasses import asdict
+    from tokenshare.experiments.case_source import load_cases
+    from tokenshare.experiments.minif2f import validate_case_evidence
+    from tokenshare.experiments.profiles import build_inventory, project_root_inventory_rows
+    from tokenshare.plugins.lean_proof.fixed_plan import LeanFixedDecompositionPlan
+    from tokenshare.plugins.lean_proof.models import canonical_json_digest
+
+    catalog = repo_root / 'benchmarks/experiments/minif2f_catalog.v1.jsonl'
+    section = manifest.get('supplements', {}).get('minif2f')
+    if section is None and not catalog.exists():
+        return {'status': 'not_registered'}
+    if not isinstance(section, dict) or section.get('experiment_ids') != ['exp1']:
+        raise ValueError('miniF2F authority must register only Experiment 1')
+    for relative, expected in section['files_sha256'].items():
+        if sha256((repo_root / relative).read_bytes()).hexdigest() != expected:
+            raise ValueError(f'miniF2F file SHA mismatch: {relative}')
+    rows = list(load_cases(catalog))
+    if not rows or [row['case_id'] for row in rows] != section['ordered_case_ids']:
+        raise ValueError('miniF2F full case identity array mismatch')
+    node_identities = []
+    required_files = {
+        'benchmarks/experiments/minif2f_catalog.v1.jsonl',
+        'configs/experiments/exp1_minif2f.v1.json',
+        *(path.relative_to(repo_root).as_posix() for path in
+          (repo_root / 'benchmarks/experiments/fixtures/minif2f_project').rglob('*')
+          if path.is_file() and '.lake' not in path.parts),
+    }
+    for row in rows:
+        plan = LeanFixedDecompositionPlan.from_catalog_case(row)
+        if plan.proof_assembly_shape != 'checked_node_bodies.v1':
+            raise ValueError('miniF2F requires checked mathematical node bodies')
+        if plan.environment_digest != section['environment_digest']:
+            raise ValueError('miniF2F environment identity mismatch')
+        if len(plan.node_ids) < 2:
+            raise ValueError('miniF2F root lacks a substantive intermediate node')
+        source = row['source_provenance']
+        if (source['repository'] != 'https://github.com/yangky11/miniF2F-lean4'
+                or source['commit'] != '5746b7d6c47855ce1294bed87329618ff7f1bc31'):
+            raise ValueError('miniF2F upstream revision changed')
+        source_path = repo_root / source['public_statement_path']
+        if sha256(source_path.read_bytes()).hexdigest() != source['file_sha256']:
+            raise ValueError('miniF2F upstream source SHA mismatch')
+        original = re.search(r'\btheorem\s+' + re.escape(plan.parent_theorem_payload().theorem_name)
+                             + r'\b[\s\S]*?\s*:=\s*by', source_path.read_text(encoding='utf-8'))
+        if original is None:
+            raise ValueError('miniF2F original declaration is unavailable')
+        declaration = original.group().rsplit(':=', 1)[0].strip()
+        parent = plan.parent_theorem_payload()
+        original_text = source_path.read_text(encoding='utf-8')
+        if (parent.imports != re.findall(r'^import (.+)$', original_text, re.M)
+                or parent.open_namespaces != ' '.join(re.findall(r'^open (.+)$', original_text, re.M)).split()):
+            raise ValueError('miniF2F original import context changed')
+        if not _matches_original_declaration(declaration, parent):
+            raise ValueError(f'{plan.case_id}: miniF2F original theorem semantics changed')
+        oracle = row['oracle_proof_package_ref']
+        package_path = repo_root / oracle['source_path']
+        if 'sha256:' + sha256(package_path.read_bytes()).hexdigest() != oracle['content_hash']:
+            raise ValueError('miniF2F oracle package SHA mismatch')
+        package = _read_json(package_path)
+        if package['node_proof_sources'] != oracle['node_proof_sources']:
+            raise ValueError('miniF2F oracle proof bodies differ from package')
+        review = _read_json(repo_root / row['independent_review']['source_path'])
+        if review.get('status') != 'approved' or review.get('plan_digest') != plan.plan_digest:
+            raise ValueError('miniF2F independent review does not bind the admitted plan')
+        if review.get('reviewer') == review.get('author') or not review.get('reviewer'):
+            raise ValueError('miniF2F review must be independent from author')
+        if review.get('node_proofs_digest') != canonical_json_digest(oracle['node_proof_sources']):
+            raise ValueError('miniF2F review proof digest mismatch')
+        validate_case_evidence(repo_root, row)
+        evidence_directory = Path(review['lean_validation']['result_path']).parent
+        required_files.update({source['public_statement_path'], oracle['source_path'],
+                               row['independent_review']['source_path']})
+        required_files.update((evidence_directory / name).as_posix() for name in (
+            'result.json', 'isolated_nodes_and_original_root.lean', 'stdout.txt', 'stderr.txt'))
+        for node_id in plan.topological_order():
+            payload = plan.node_theorem_payload(node_id)
+            proof = oracle['node_proof_sources'][node_id]
+            if re.search(r'\b(sorry|admit|axiom|native_decide|unsafe)\b', proof):
+                raise ValueError(f'miniF2F forbidden proof construction: {plan.case_id}:{node_id}')
+            if payload.imports != ['Mathlib'] or payload.proof_candidate_ref or payload.theorem_source:
+                raise ValueError('miniF2F model payload exposes extra sources')
+            node_identities.append({
+                'case_id': plan.case_id, 'node_id': node_id,
+                'theorem_payload_digest': payload.payload_digest,
+                'proof_sha256': sha256(proof.encode('utf-8')).hexdigest(),
+            })
+    if not required_files.issubset(section['files_sha256']):
+        raise ValueError('miniF2F authority omits required file SHA records')
+    inventory = build_inventory('minif2f')
+    roots = [asdict(root) for root in project_root_inventory_rows(inventory).roots]
+    if inventory.references or inventory.challenges or any(root['experiment_id'] != 'exp1' for root in roots):
+        raise ValueError('miniF2F inventory leaked into other experiments')
+    for name, actual in (('node_identities', node_identities), ('root_identities', roots)):
+        block = section[name]
+        if block['items'] != actual or block['count'] != len(actual):
+            raise ValueError(f'miniF2F full {name} array mismatch')
+        if block['sha256'] != _items_sha256(actual):
+            raise ValueError(f'miniF2F {name} SHA mismatch')
+    return {'status': 'ok', 'roots': len(rows), 'nodes': len(node_identities),
+            'root_identity_sha256': section['root_identities']['sha256']}
+
+
+def _matches_original_declaration(declaration: str, parent: Any) -> bool:
+    normalize = lambda text: re.sub(r'\s+', ' ', text).strip()
+    prefix = normalize(f'theorem {parent.theorem_name} {parent.parameters_source}')
+    # Only the known parameter/type separator permits absent whitespace. Keep
+    # token boundaries inside the original parameters and conclusion unchanged.
+    pattern = re.escape(prefix) + r'\s*:\s*' + re.escape(normalize(parent.statement_source))
+    return re.fullmatch(pattern, normalize(declaration)) is not None
 
 
 def _verify_manifest_header(manifest: Mapping[str, Any], frozen_sha: str) -> None:
@@ -1159,6 +1275,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "reference_identity_sha="
             f"{summary['inventory']['full_reference_identities']['items_sha256']}"
         )
+        supplement = summary['minif2f_supplement']
+        if supplement['status'] == 'ok':
+            print(f"miniF2F supplement ok: roots={supplement['roots']} "
+                  f"nodes={supplement['nodes']} "
+                  f"root_identity_sha={supplement['root_identity_sha256']}")
     return 0
 
 

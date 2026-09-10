@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_mathd_numbertheory_495",
+  "node_proof_sources": {
+    "exceptional_gcd": "by\n  intro ha\n  by_contra hb\n  have db : 6 ∣ b := by simpa [h₃] using Nat.gcd_dvd_right a b\n  have mb := Nat.mod_eq_zero_of_dvd db\n  have beq : b = 24 := by omega\n  norm_num [ha, beq] at h₃",
+    "residue_bounds": "by\n  have da : 6 ∣ a := by simpa [h₃] using Nat.gcd_dvd_left a b\n  have db : 6 ∣ b := by simpa [h₃] using Nat.gcd_dvd_right a b\n  have ma := Nat.mod_eq_zero_of_dvd da\n  have mb := Nat.mod_eq_zero_of_dvd db\n  omega",
+    "root": "by\n  have prod : 648 ≤ a * b := by\n    rcases node_residue_bounds with ⟨ha, hb⟩\n    rcases ha with ha | ha\n    · have hb' := node_exceptional_gcd ha\n      nlinarith\n    · nlinarith\n  have ident := Nat.gcd_mul_lcm a b\n  rw [h₃] at ident\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

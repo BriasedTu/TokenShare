@@ -1,0 +1,39 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_valid_mathd_algebra_482",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/1e37687531f61764/result.json",
+    "result_sha256": "sha256:5724aea7b29144b04476d6fe47337adb8b29a93950b4ce46fbe29106889e7a9f"
+  },
+  "mathematical_review": "Distinct prime roots give their sum, which bounds and classifies the prime pair; substitute that pair into the original polynomial.",
+  "node_proofs_digest": "sha256:06d16db17441bc8daba204f82ec4b10abf0c50649b1c39cd9753446a7a1bfd50",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Subtract distinct polynomial root equations and transfer Vieta’s sum to the natural numbers.",
+      "node_id": "prime_root_sum"
+    },
+    {
+      "dependencies": [
+        "prime_root_sum"
+      ],
+      "mathematical_role": "Use the sum constraint to bound and classify the possible prime pairs.",
+      "node_id": "admissible_prime_pairs"
+    },
+    {
+      "dependencies": [
+        "admissible_prime_pairs"
+      ],
+      "mathematical_role": "Substitute either admissible prime root into the original polynomial to recover its constant coefficient.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:a13ddc6c0481a6ec6cc2dc21cb1c40f1fc82a1dcd7baa6f0d940f59df5b6aa94",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:03:00.515768+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

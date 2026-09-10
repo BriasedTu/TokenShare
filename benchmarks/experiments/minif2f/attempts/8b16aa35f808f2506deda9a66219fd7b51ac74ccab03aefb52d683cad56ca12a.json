@@ -1,0 +1,16 @@
+{
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "command": [
+    "L:/lean-4.24.0-windows/bin/lake.exe",
+    "env",
+    "lean",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\partial_obligations.lean"
+  ],
+  "cwd": "L:/project",
+  "file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\partial_obligations.lean",
+  "file_sha256": "f9b0bcd6527dbf4a3603c7c2be3a1839303d139d9cb687f95960928e15c5a3da",
+  "duration_seconds": 90.90871262550354
+}

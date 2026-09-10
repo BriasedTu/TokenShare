@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_aime_1991_p1",
+  "node_proof_sources": {
+    "root": "by\n  have hs := congrArg (fun t : ℕ => t ^ 2) node_sum_and_product.1\n  nlinarith [node_sum_and_product.2]",
+    "sum_and_product": "by\n  have h := congrArg (fun t : ℕ => t * (x + y)) h₁\n  have he : (x + y) ^ 2 + 880 = 71 * (x + y) := by nlinarith [h₂]\n  have he' : ((x : ℤ) + y) ^ 2 + 880 = 71 * ((x : ℤ) + y) := by exact_mod_cast he\n  have hz : ((x : ℤ) + y - 16) * ((x : ℤ) + y - 55) = 0 := by nlinarith\n  rcases mul_eq_zero.mp hz with hs | hs\n  · have hs' : x + y = 16 := by omega\n    exact ⟨hs', by omega⟩\n  · omega",
+    "sum_bound": "by\n  have hx : (1 : ℤ) ≤ x := by exact_mod_cast h₀.1\n  have hy : (1 : ℤ) ≤ y := by exact_mod_cast h₀.2\n  have hs : (x : ℤ) * y + ((x : ℤ) + y) = 71 := by exact_mod_cast h₁\n  have hp := mul_nonneg (sub_nonneg.mpr hx) (sub_nonneg.mpr hy)\n  have hb : (x : ℤ) + y ≤ 36 := by nlinarith\n  exact_mod_cast hb"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

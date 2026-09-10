@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_aimeII_2001_p3",
+  "node_proof_sources": {
+    "five_step_negation": "by\n  intro n hn\n  have h1 := h₆ (n+5) (by omega)\n  have h2 := h₆ (n+4) (by omega)\n  simp only [show n+5-1=n+4 by omega, show n+5-2=n+3 by omega, show n+5-3=n+2 by omega, show n+5-4=n+1 by omega] at h1\n  simp only [show n+4-1=n+3 by omega, show n+4-2=n+2 by omega, show n+4-3=n+1 by omega, show n+4-4=n by omega] at h2\n  omega",
+    "iterated_period": "by\n  intro k n hn\n  induction k with\n  | zero => simp\n  | succ k ih =>\n    have h1 := node_five_step_negation (n+10*k) (by omega)\n    have h2 := node_five_step_negation (n+10*k+5) (by omega)\n    have he : n+10*(k+1)=(n+10*k+5)+5 := by omega\n    rw [he, h2, h1, neg_neg, ih]",
+    "root": "by\n  have hx5 := h₆ 5 (by norm_num)\n  norm_num [h₀, h₂, h₃, h₄] at hx5\n  have h1 := node_iterated_period 53 1 (by norm_num)\n  have h3 := node_iterated_period 75 3 (by norm_num)\n  have h5 := node_iterated_period 97 5 (by norm_num)\n  norm_num [h₀, h₃, hx5] at h1 h3 h5\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

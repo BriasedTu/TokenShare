@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_numbertheory_3pow2pownm1mod2pownp3eq2pownp2",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:28.045868+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/47cee030699a4111/result.json",
+    "result_sha256": "sha256:32da5cc425529b2e5dd14a8e84df3e1e3c315b7f81265c749e8ef4d7b1d13c16"
+  },
+  "mathematical_review": "A constructive quotient formula lifts a power-of-two congruence through squaring; induction applies the lift to the exponential sequence before taking the final remainder.",
+  "node_proofs_digest": "sha256:a5fae229b2a2fde82af018c1df5f8aa686bb67db6731f48e8f6b7d785b8c0a39",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Prove a general exact quotient lift under squaring at a power-of-two modulus, with a constructive integer quotient witness.",
+      "node_id": "binary_squaring_lift"
+    },
+    {
+      "dependencies": [
+        "binary_squaring_lift"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:8fa5995fe1109c9a5dcacde1482fb5b090c3edd1f69e024bdb1dd9b23f35a200",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:28.045868+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

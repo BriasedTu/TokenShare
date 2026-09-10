@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,7 @@ from tokenshare.plugins.lean_proof.environment import (
     build_lean_environment_ref,
 )
 from tokenshare.plugins.lean_proof.models import (
+    LEAN_LEMMA_GRAPH_CHECKED_BODIES_SHAPE,
     LEAN_LEMMA_GRAPH_STRUCTURED_BLOCKED_SHAPE,
     LeanLemmaGraphCertificate,
     LeanTheoremPayload,
@@ -173,8 +175,32 @@ class LeanFixedDecompositionPlan:
     def node_theorem_payload(self, node_id: str) -> LeanTheoremPayload:
         for node in self.lemma_nodes:
             if node.get("node_id") == node_id:
+                body = copy.deepcopy(node["theorem_payload"])
+                if self.proof_assembly_shape == LEAN_LEMMA_GRAPH_CHECKED_BODIES_SHAPE:
+                    base = self.root_theorem_payload_body.get("parameters_source", "")
+                    if body.get("parameters_source", "") != base:
+                        raise ValueError("mathematical DAG node parameter context differs from root")
+                    if (node_id == self.root_node_id and body["statement_source"]
+                            != self.root_theorem_payload_body["statement_source"]):
+                        raise ValueError("mathematical DAG root statement differs from original theorem")
+                    for field in ("imports", "open_namespaces", "namespace", "options"):
+                        if body.get(field) != self.root_theorem_payload_body.get(field):
+                            raise ValueError("mathematical DAG node import context differs from root")
+                    if body.get("theorem_source") or body.get("proof_candidate_ref"):
+                        raise ValueError("mathematical DAG payload cannot contain answer sources")
+                    for item in self.lemma_nodes:
+                        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(item["node_id"])):
+                            raise ValueError("mathematical DAG node IDs must be Lean-safe ASCII identifiers")
+                    incoming = _incoming_by_target(self.node_ids, self.dependency_edges)
+                    by_id = {item["node_id"]: item for item in self.lemma_nodes}
+                    bindings = [
+                        f"(node_{source} : {by_id[source]['theorem_payload']['statement_source']})"
+                        for source in incoming[node_id]
+                    ]
+                    body["parameters_source"] = " ".join([base, *bindings]).strip()
+                    body.pop("payload_digest", None)
                 return _payload_from_body(
-                    node["theorem_payload"],
+                    body,
                     case_id=self.case_id,
                     node_id=node_id,
                 )
@@ -234,6 +260,17 @@ class LeanFixedDecompositionPlan:
         }
 
 
+def checked_plan_environment_digest(manifest: LeanEnvironmentManifest) -> str:
+    """Bind mathematical plans to locked content and tools, independent of checkout path."""
+    return canonical_json_digest({
+        "schema_version": "lean_proof.checked_plan_environment.v1",
+        **{name: getattr(manifest, name) for name in (
+            "lean_version", "lake_version", "toolchain_file_digest", "lakefile_digest",
+            "import_set_digest", "helper_sources_digest", "resource_limits",
+        )},
+    })
+
+
 def build_fixed_plan_certificate(
     *,
     plan: LeanFixedDecompositionPlan,
@@ -244,7 +281,10 @@ def build_fixed_plan_certificate(
 
     certificate_environment_digest = str(environment_manifest.environment_digest)
     environment_authority_bridge: JsonObject | None = None
-    if plan.environment_digest != certificate_environment_digest:
+    if plan.proof_assembly_shape == LEAN_LEMMA_GRAPH_CHECKED_BODIES_SHAPE:
+        if plan.environment_digest != checked_plan_environment_digest(environment_manifest):
+            raise ValueError("mathematical fixed plan locked environment digest mismatch")
+    elif plan.environment_digest != certificate_environment_digest:
         environment_ref = build_lean_environment_ref(
             environment_manifest,
             expected_authority_environment_digest=plan.environment_digest,
@@ -311,6 +351,7 @@ def build_fixed_plan_certificate(
                 "plan_id": plan.plan_id,
                 "plan_digest": plan.plan_digest,
                 "preflight_status": plan.preflight_status,
+                "fixed_plan_environment_digest": plan.environment_digest,
                 **(
                     {}
                     if environment_authority_bridge is None

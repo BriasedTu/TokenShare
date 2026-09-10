@@ -1,19 +1,19 @@
 # Authoritative corpus manifest
 
-Task E 将正式 catalog、provider config、Lean sidecar 与 Lean fixture project 迁移到公开路径，并生成 `benchmarks/experiments/manifest.v1.json`。该 manifest 是公开 corpus 的机器可读权威；本文件是人工可读摘要。
+`benchmarks/experiments/manifest.v1.json` 是公开 corpus 的机器可读权威，绑定正式 catalog、provider config、Lean sidecar、fixture 和 miniF2F 证明证据。本文件是人工可读摘要。
 
 ## Verification entry
 
 ```powershell
-$repo = "E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction"
+$repo = (Get-Location).Path
 $env:PYTHONPATH = "$repo\src;$repo"
-conda run -n tokenshare python verification/verify_authoritative_corpus.py
+python verification/verify_authoritative_corpus.py
 ```
 
 成功输出应报告：
 
 ```text
-authoritative corpus ok: assets=20 root_identities=7017 root_identity_sha=ec5ca012faffc148be5eff65d43394b2d7861c666468e59841c716c88dea7c07 reference_identities=106 reference_identity_sha=b537bd614ac9c86f2f864afb0e6a7f3c1fe22e38d772784c1fc8c0c914f43cdb
+authoritative corpus ok: assets=20 root_identities=6912 root_identity_sha=600d29b146d7324ae09dd2ce2c227d64ad90ff8a0ba5eb9db0eab98eae1b352e reference_identities=104 reference_identity_sha=0478c5eaa96a35571f1c942da84e090a58af3323dc7ed961bbd603e4a812750e
 ```
 
 ## Frozen source identity
@@ -59,7 +59,18 @@ The verifier recomputes full inventory from public corpus/config and compares ex
 
 | Identity set | Count | Canonical byte length | SHA-256 |
 |---|---:|---:|---|
-| full root identities | 7,017 | 1,448,798 | `ec5ca012faffc148be5eff65d43394b2d7861c666468e59841c716c88dea7c07` |
-| full reference identities | 106 | 22,055 | `b537bd614ac9c86f2f864afb0e6a7f3c1fe22e38d772784c1fc8c0c914f43cdb` |
+| full root identities | 6,912 | 1,427,265 | `600d29b146d7324ae09dd2ce2c227d64ad90ff8a0ba5eb9db0eab98eae1b352e` |
+| full reference identities | 104 | 21,647 | `0478c5eaa96a35571f1c942da84e090a58af3323dc7ed961bbd603e4a812750e` |
 
 No provider call is needed for these checks.
+
+## miniF2F supplement
+
+The separate Experiment 1 supplement binds 81 ordered root identities, 223 ordered
+node identities, and 672 file SHA-256 values. These include the catalog, pinned
+fixture, original statements, proof packages, independent reviews, admission
+dispositions, and recorded compiler inputs and outputs. They are reproducibility
+assets, not disposable test output.
+
+The current full-profile identity table above remains separate from the supplement.
+See [the supplement guide](minif2f-supplement.md) for admission requirements.

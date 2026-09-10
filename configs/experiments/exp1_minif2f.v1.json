@@ -1,0 +1,16 @@
+{
+  "schema_version": "tokenshare.experiments.minif2f_config.v1",
+  "profile_id": "minif2f",
+  "experiment_ids": ["exp1"],
+  "catalog_path": "benchmarks/experiments/minif2f_catalog.v1.jsonl",
+  "provider_config_path": "configs/experiments/exp1_baseline_provider_config.v3.json",
+  "local_environment_root": "TokenShareData/outputs/experiments/minif2f-integration-20260907/environment",
+  "toolchain_directory": "lean-4.24.0-windows",
+  "lean_version": "Lean (version 4.24.0, x86_64-w64-windows-gnu, commit 797c613eb9b6d4ec95db23e3e00af9ac6657f24b, Release)",
+  "lake_version": "Lake version 5.0.0-src+797c613 (Lean version 4.24.0)",
+  "checker_timeout_seconds": 120,
+  "upstream_repository": "https://github.com/yangky11/miniF2F-lean4",
+  "upstream_commit": "5746b7d6c47855ce1294bed87329618ff7f1bc31",
+  "mathlib_revision": "f897ebcf72cd16f89ab4577d0c826cd14afaafc7",
+  "environment_override_variable": "TOKENSHARE_MINIF2F_ENVIRONMENT"
+}

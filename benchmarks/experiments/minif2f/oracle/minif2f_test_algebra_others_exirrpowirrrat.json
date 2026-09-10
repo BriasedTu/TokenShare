@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_test_algebra_others_exirrpowirrrat",
+  "node_proof_sources": {
+    "iterated_irrational_power": "by\n  rw [← Real.rpow_mul (Real.sqrt_nonneg 2), Real.mul_self_sqrt (by norm_num : (0:ℝ) ≤ 2)]\n  norm_cast\n  exact Real.sq_sqrt (by norm_num)",
+    "root": "by\n  by_cases h : Irrational ((Real.sqrt 2)^(Real.sqrt 2):ℝ)\n  · refine ⟨(Real.sqrt 2)^(Real.sqrt 2), Real.sqrt 2, h, irrational_sqrt_two, ?_⟩\n    rw [node_iterated_irrational_power]\n    exact fun hi => hi ⟨2, by norm_num⟩\n  · exact ⟨Real.sqrt 2, Real.sqrt 2, irrational_sqrt_two, irrational_sqrt_two, h⟩"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

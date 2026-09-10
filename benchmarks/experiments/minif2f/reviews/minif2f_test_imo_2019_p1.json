@@ -1,0 +1,38 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_imo_2019_p1",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/fbafa226413b3ea4/result.json",
+    "result_sha256": "sha256:3e4ee1f83ea79c69083d6e83a9e1af26f48c84f47ade75b8e17e3b9da87d2efd"
+  },
+  "mathematical_review": "Two independent conditional lemmas establish shifted additivity and classify integer affine maps; the root checks both directions of the original functional equivalence.",
+  "node_proofs_digest": "sha256:2f791be5794e3103f9d4cf2edcbba48052e03338b2db9ef03d84417c6e0badce",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Eliminate the composite function values to derive additivity after subtracting f(0).",
+      "node_id": "additive_shift"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Classify integer-valued shifted additive maps by induction in both integer directions.",
+      "node_id": "integer_affine_form"
+    },
+    {
+      "dependencies": [
+        "additive_shift",
+        "integer_affine_form"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:716ecc39d1058ab225f5efec5f912e8f209345a71bea4b3aafed933901870741",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:07:02.205059+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

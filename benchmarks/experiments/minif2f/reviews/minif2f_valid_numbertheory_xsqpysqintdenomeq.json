@@ -1,0 +1,43 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_numbertheory_xsqpysqintdenomeq",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:29.252136+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/23081715348437fa/result.json",
+    "result_sha256": "sha256:f593633f432be7c52c265d024a1fcbbab8e5d7d27373799d660f11cc1ac9779c"
+  },
+  "mathematical_review": "The denominator divisibility law applied in both subtraction directions gives independent mutual divisibilities of squared denominators; antisymmetry and positivity give equality.",
+  "node_proofs_digest": "sha256:f93eee7d1053285789557a750837f600a99fb0f7164ae60db9d0de71e9545126",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Cancel y squared from the integer sum and use the denominator divisibility law to bound the first reduced denominator.",
+      "node_id": "first_denominator_divides"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Independently cancel x squared to obtain the reverse divisibility of reduced squared denominators.",
+      "node_id": "second_denominator_divides"
+    },
+    {
+      "dependencies": [
+        "first_denominator_divides",
+        "second_denominator_divides"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:79e52ac0c5f706cb180e6aaf867fe0aa7dedb781b44122ee30a4c4c308cb4dff",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:29.251138+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

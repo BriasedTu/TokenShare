@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_mathd_algebra_320",
+  "node_proof_sources": {
+    "coordinate_bounds": "by\n  have hx : x < 7/2 := by nlinarith [h₀.2.2.2]\n  have hs := Real.sqrt_nonneg (b:ℝ)\n  have hb : (1:ℝ) ≤ b := by exact_mod_cast h₀.2.1\n  have ha : (1:ℝ) ≤ a := by exact_mod_cast h₀.1\n  have hr : 1 ≤ Real.sqrt (b:ℝ) := (Real.le_sqrt (by norm_num) (by positivity)).2 (by simpa using hb)\n  have he : 2*x=(a:ℝ)+Real.sqrt b := by rw [h₃] at h₂; norm_num at h₂; linarith\n  have har : (a:ℝ) < 6 := by linarith\n  have hbr : (b:ℝ) < 36 := by nlinarith [Real.sq_sqrt (by positivity : 0 ≤ (b:ℝ))]\n  have ha' : a < 6 := by exact_mod_cast har\n  have hb' : b < 36 := by exact_mod_cast hbr\n  omega",
+    "integer_eliminant": "by\n  have he : 2*x=(a:ℝ)+Real.sqrt b := by rw [h₃] at h₂; norm_num at h₂; linarith\n  have hs := Real.sq_sqrt (by positivity : 0 ≤ (b:ℝ))\n  have hp : (a:ℝ)^2+b-4*a-18=(4-2*(a:ℝ))*Real.sqrt b := by nlinarith\n  have hq : ((a:ℝ)^2+b-4*a-18)^2=(2*(a:ℝ)-4)^2*b := by rw [hp]; nlinarith only [hs]\n  exact_mod_cast hq",
+    "root": "by\n  rcases node_coordinate_bounds with ⟨ha, hb⟩\n  interval_cases a <;> interval_cases b <;> norm_num at *\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

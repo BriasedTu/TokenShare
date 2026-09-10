@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_imo_1992_p1",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.698879+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/6ff2596100e6e19f/result.json",
+    "result_sha256": "sha256:ed2bac091761f9e291c085344a1227f6ed9c43c209366397c321002fb0addbfe"
+  },
+  "mathematical_review": "Positive shifted-product bounds restrict the integral quotient to two or three and the smallest factor to two or three; the root classifies the resulting finite branches without changing the original ordered-triple assertion.",
+  "node_proofs_digest": "sha256:fbed1ba589e0c305b6d4940a68612ded8a2c4e839bad93b10af22784c36e9875",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Bound the integral quotient using positive shifted-product certificates, then use a sharper product bound to force the smallest factor below four.",
+      "node_id": "quotient_and_smallest_factor_bounds"
+    },
+    {
+      "dependencies": [
+        "quotient_and_smallest_factor_bounds"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:a36e324848394bf628327bd90ea99e828c6ed4843b90b9874c61c1a14f4017e7",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.698879+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

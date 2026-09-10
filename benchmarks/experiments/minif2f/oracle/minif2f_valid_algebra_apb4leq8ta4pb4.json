@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_algebra_apb4leq8ta4pb4",
+  "node_proof_sources": {
+    "root": "by\n  have h := mul_self_le_mul_self (sq_nonneg (a + b)) node_sum_square_bound\n  nlinarith [sq_nonneg (a ^ 2 + b ^ 2)]",
+    "squares_square_bound": "by\n  nlinarith [sq_nonneg (a ^ 2 - b ^ 2)]",
+    "sum_square_bound": "by\n  nlinarith [sq_nonneg (a - b)]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

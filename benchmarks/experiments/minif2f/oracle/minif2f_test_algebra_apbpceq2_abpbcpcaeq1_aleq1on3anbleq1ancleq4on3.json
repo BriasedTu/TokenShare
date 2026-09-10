@@ -1,0 +1,10 @@
+{
+  "case_id": "minif2f_test_algebra_apbpceq2_abpbcpcaeq1_aleq1on3anbleq1ancleq4on3",
+  "node_proof_sources": {
+    "largest_lower_bound": "by\n  have hc := congrArg (fun t : ℝ => c * t) h₁\n  have hprod := mul_nonneg (sub_nonneg.mpr (le_trans h₀.1 h₀.2)) (sub_nonneg.mpr h₀.2)\n  by_contra hh\n  have hu : c < 1 := lt_of_not_ge hh\n  have hl : 1 / 3 < c := by linarith [h₀.1, h₀.2]\n  have hp := mul_pos (sub_pos.mpr hl) (sub_pos.mpr hu)\n  nlinarith",
+    "outer_bounds": "by\n  have hs := congrArg (fun t : ℝ => t ^ 2) h₁\n  have ha := congrArg (fun t : ℝ => a * t) h₁\n  have hc := congrArg (fun t : ℝ => c * t) h₁\n  constructor\n  · nlinarith [sq_nonneg (b - c), sq_nonneg a]\n  · nlinarith [sq_nonneg (a - b), sq_nonneg (c - 4 / 3)]",
+    "root": "by\n  refine ⟨node_outer_bounds.1, node_smallest_upper_bound, ?_, ?_, node_largest_lower_bound, node_outer_bounds.2⟩\n  · linarith [node_outer_bounds.2, h₀.1]\n  · linarith [node_outer_bounds.1, h₀.2]",
+    "smallest_upper_bound": "by\n  have ha := congrArg (fun t : ℝ => a * t) h₁\n  have hprod := mul_nonneg (sub_nonneg.mpr h₀.1) (sub_nonneg.mpr (le_trans h₀.1 h₀.2))\n  by_contra hh\n  have hl : 1 / 3 < a := lt_of_not_ge hh\n  have hu : a < 1 := by linarith [h₀.1, h₀.2]\n  have hp := mul_pos (sub_pos.mpr hl) (sub_pos.mpr hu)\n  nlinarith"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

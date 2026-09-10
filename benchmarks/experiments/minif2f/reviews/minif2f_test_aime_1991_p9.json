@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_aime_1991_p9",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.064763+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/0a994bdf53ab9854/result.json",
+    "result_sha256": "sha256:2874817183a51e76a8834444111f3d63a7c8807000456e0e81ce935c36214262"
+  },
+  "mathematical_review": "The secant-tangent equation and unit circle determine sine and cosine after excluding a zero denominator; transfer the second expression to an exact rational before reducing numerator and denominator.",
+  "node_proofs_digest": "sha256:83ffb99733b6e681ed5d83bb41f52513287ec8c77bdd4a50021c1126f27ca388",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Combine the secant-tangent relation with the unit-circle identity and exclude the zero-cosine factor to determine both trigonometric values.",
+      "node_id": "trigonometric_values"
+    },
+    {
+      "dependencies": [
+        "trigonometric_values"
+      ],
+      "mathematical_role": "Substitute the determined sine and cosine into the cosecant-cotangent relation and transfer the exact value to the rational field.",
+      "node_id": "rational_value"
+    },
+    {
+      "dependencies": [
+        "rational_value"
+      ],
+      "mathematical_role": "Evaluate numerator and denominator of the reduced rational value.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:4636d43e0af67fc0aef134017b2ad1cbde850cb60ca4ea53fe9d517b82a7363d",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.064763+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

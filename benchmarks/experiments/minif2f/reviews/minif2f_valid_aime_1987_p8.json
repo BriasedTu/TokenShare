@@ -1,0 +1,43 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_aime_1987_p8",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:27.941214+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/f75fb1700d1b331f/result.json",
+    "result_sha256": "sha256:b35acfbeafe2c451577a2e8e39fc4ba32b64b85c504e3645d0c879fc054edcc2"
+  },
+  "mathematical_review": "Positive denominator elimination gives a strict integer interval; an independent explicit construction supplies two distinct integers above the threshold, while the root checks uniqueness at 112.",
+  "node_proofs_digest": "sha256:ee3b887c42a3c99de9aac5ba497e20e49352d10618ab69e424abea67d2fc3bb1",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Clear positive denominators and turn the real interval into strict linear inequalities on integers.",
+      "node_id": "integer_interval"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "An interval of length n/56 greater than two contains the two explicitly chosen consecutive integers.",
+      "node_id": "two_integers_above_threshold"
+    },
+    {
+      "dependencies": [
+        "integer_interval",
+        "two_integers_above_threshold"
+      ],
+      "mathematical_role": "Show 112 has exactly k=97 and every larger n has at least two permissible integers.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:47fdfb0ec00c6fc60514a494cdd52bb856e024a7186f74215ce47821c3286c83",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:27.941214+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

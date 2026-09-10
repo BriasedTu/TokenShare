@@ -746,9 +746,9 @@ _EXP4_DISABLED_NAMES = {
     "NO_MERGE_GATE": "merge_gate",
 }
 _EXP5_PROVIDER_ENTRIES = {
-    "zai-org/GLM-5.2": "glm_5_2_exp5_v3",
-    "Qwen/Qwen3-14B": "qwen3_14b_exp5_v3",
-    "MiniMaxAI/MiniMax-M2.5": "minimax_m2_5_exp5_v3",
+    "zai-org/GLM-5.2": "glm_5_2_exp5_v4",
+    "Qwen/Qwen3-14B": "qwen3_14b_exp5_v4",
+    "MiniMaxAI/MiniMax-M2.5": "minimax_m2_5_exp5_v4",
 }
 
 
@@ -781,7 +781,7 @@ class ProfileV1:
 def build_profile(profile_id: str) -> ProfileV1:
     """返回显式冻结的 full/representative 运行控制。"""
 
-    if profile_id not in {"full", "representative"}:
+    if profile_id not in {"full", "representative", "minif2f"}:
         raise ValueError(f"unknown experiments profile: {profile_id}")
     exp2_workers = (1, 3, 7, 10, 30, 50) if profile_id == "full" else (1, 10, 50)
     exp3_repeats = (0, 1) if profile_id == "full" else (0,)
@@ -803,7 +803,10 @@ def build_profile(profile_id: str) -> ProfileV1:
             "exp4", (10,), exp4_repeats, 1, False, 0,
         ),
         "exp5": ExperimentProfileV1(
-            "exp5", (10,), exp5_repeats, 0, False, None,
+            "exp5", (10,), exp5_repeats, 2, False, None,
+            thinking=True,
+            timeout_seconds=1_200,
+            max_tokens=4_096,
         ),
     }
     return ProfileV1(profile_id=profile_id, experiments=experiments)
@@ -899,6 +902,7 @@ class RootInventoryRowsV1:
 _REPO_ROOT = Path(__file__).parents[3]
 _FACTOR_CATALOG = _REPO_ROOT / "benchmarks/experiments/factorization_catalog.v2.jsonl"
 _LEAN_CATALOG = _REPO_ROOT / "benchmarks/experiments/lean_lemma_graph_catalog.v1.jsonl"
+_MINIF2F_CATALOG = _REPO_ROOT / "benchmarks/experiments/minif2f_catalog.v1.jsonl"
 _CHALLENGE_FAMILIES = (
     "INVALID_PARSED_CANDIDATE",
     "PARSER_REQUIRED_CANONICAL_JSON",
@@ -910,6 +914,12 @@ _CHALLENGE_FAMILIES = (
 def _catalogs() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     factor = {str(row["case_id"]): row for row in load_cases(_FACTOR_CATALOG)}
     lean = {str(row["case_id"]): row for row in load_cases(_LEAN_CATALOG)}
+    if _MINIF2F_CATALOG.is_file():
+        for row in load_cases(_MINIF2F_CATALOG):
+            case_id = str(row["case_id"])
+            if case_id in lean:
+                raise ValueError(f"duplicate supplement case_id: {case_id}")
+            lean[case_id] = row
     return factor, lean
 
 
@@ -1199,6 +1209,8 @@ def build_inventory(profile_id: str | ProfileV1) -> InventoryV1:
         if profile.profile_id == "full"
         else REPRESENTATIVE_CASE_IDS
     )
+    if profile.profile_id == "minif2f":
+        exp1_ids = tuple(str(row["case_id"]) for row in load_cases(_MINIF2F_CATALOG))
     exp1_groups: dict[tuple[str, str, str | None], list[str]] = {}
     for case_id in exp1_ids:
         domain, difficulty, topic, _units, _row = _case_data(case_id, factor, lean)
@@ -1222,6 +1234,9 @@ def build_inventory(profile_id: str | ProfileV1) -> InventoryV1:
                     lean=lean,
                 )
             )
+
+    if profile.profile_id == "minif2f":
+        return InventoryV1(profile.profile_id, tuple(conditions), tuple(roots), (), ())
 
     exp2_ids = (
         EXP2_FACTORIZATION_CASE_IDS
@@ -1666,6 +1681,9 @@ def build_plan(
         experiment_id: sum(root.planned_ai_unit_count for root in roots)
         for experiment_id, roots in roots_by_experiment.items()
     }
+    exp5_attempt_upper = planned["exp5"] * (
+        profile.experiments["exp5"].max_retries + 1
+    )
     protocol_upper = {
         "exp1": planned["exp1"] * 3,
         "exp2": planned["exp2"] * 3,
@@ -1687,7 +1705,7 @@ def build_plan(
             )
             for root in roots_by_experiment["exp4"]
         ),
-        "exp5": planned["exp5"],
+        "exp5": exp5_attempt_upper,
     }
 
     provider_upper = {
@@ -1695,7 +1713,7 @@ def build_plan(
         "exp2": 0,
         "exp3": 0,
         "exp4": 0,
-        "exp5": planned["exp5"],
+        "exp5": exp5_attempt_upper,
     }
     reference_planned = sum(root.planned_ai_unit_count for root in references)
     reference_attempt_upper = reference_planned * 3

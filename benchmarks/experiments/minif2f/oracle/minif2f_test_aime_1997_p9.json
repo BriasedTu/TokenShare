@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_aime_1997_p9",
+  "node_proof_sources": {
+    "integer_parts": "by\n  have ha : 1 < a := by\n    by_contra hh\n    have hb : a ≤ 1 := le_of_not_gt hh\n    have hp := mul_nonneg (sub_nonneg.mpr hb) (show 0 ≤ 1 + a by linarith)\n    nlinarith\n  constructor\n  · rw [Int.floor_eq_iff]\n    norm_num\n    exact ⟨by positivity, by simpa only [one_div] using (div_lt_one h₀).2 ha⟩\n  · rw [Int.floor_eq_iff]\n    norm_num\n    exact ⟨h₂.le, h₃⟩",
+    "quadratic_relation": "by\n  have hi : 1 / a = a ^ 2 - 2 := by\n    have he := h₁\n    rw [node_integer_parts.1, node_integer_parts.2] at he\n    norm_num at he\n    simpa only [one_div] using he\n  have he := (div_eq_iff h₀.ne').mp hi\n  have hz : (a + 1) * (a ^ 2 - a - 1) = 0 := by nlinarith\n  exact (mul_eq_zero.mp hz).resolve_left (by linarith)",
+    "root": "by\n  have hi : 1 / a = a - 1 := by\n    apply (div_eq_iff h₀.ne').2\n    nlinarith [node_quadratic_relation]\n  rw [hi]\n  linear_combination (a ^ 10 + a ^ 9 + 2 * a ^ 8 + 3 * a ^ 7 + 5 * a ^ 6 + 8 * a ^ 5 + 13 * a ^ 4 + 21 * a ^ 3 + 34 * a ^ 2 + 55 * a + 89) * node_quadratic_relation"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

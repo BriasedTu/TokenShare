@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_aime_1984_p7",
+  "node_proof_sources": {
+    "below_threshold_formula": "by\n  have h999 := h₁ 999 (by omega)\n  norm_num [h₀ 1004 (by omega), h₀ 1001 (by omega)] at h999\n  have h996 := h₁ 996 (by omega)\n  norm_num [h₀ 1001 (by omega), node_closed_two_cycle.2] at h996\n  have h995 := h₁ 995 (by omega)\n  norm_num [h₀ 1000 (by omega), node_closed_two_cycle.1] at h995\n  intro k\n  induction k using Nat.strong_induction_on with\n  | h k ih =>\n    by_cases hk : k < 5\n    · interval_cases k <;> norm_num [h999, h996, h995, node_closed_two_cycle.1, node_closed_two_cycle.2]\n    · have hk5 : 5 ≤ k := by omega\n      have hi := ih (k - 5) (by omega)\n      have hidx : (999 : ℤ) - (k : ℤ) + 5 = 999 - ((k - 5 : ℕ) : ℤ) := by omega\n      rw [h₁ (999 - (k : ℤ)) (by omega), hidx, hi]\n      by_cases he : Even k\n      · have hkmod := Nat.even_iff.mp he\n        have ho : ¬ Even (k - 5) := Nat.not_even_iff.mpr (by omega)\n        simp [he, ho, node_closed_two_cycle.1]\n      · have hkmod := Nat.not_even_iff.mp he\n        have ho : Even (k - 5) := Nat.even_iff.mpr (by omega)\n        simp [he, ho, node_closed_two_cycle.2]",
+    "closed_two_cycle": "by\n  have ha := h₁ 999 (by omega)\n  norm_num [h₀ 1004 (by omega), h₀ 1001 (by omega)] at ha\n  have hb := h₁ 998 (by omega)\n  norm_num [h₀ 1003 (by omega), h₀ 1000 (by omega)] at hb\n  have hc := h₁ 997 (by omega)\n  norm_num [h₀ 1002 (by omega), ha] at hc\n  exact ⟨hc, hb⟩",
+    "root": "by\n  have h := node_below_threshold_formula 915\n  norm_num at h\n  exact h"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

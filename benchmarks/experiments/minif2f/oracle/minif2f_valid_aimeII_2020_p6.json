@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_aimeII_2020_p6",
+  "node_proof_sources": {
+    "initial_five_cycle": "by\n  have h3 := h₂ 3 (by norm_num)\n  norm_num [h₀, h₁] at h3\n  have h4 := h₂ 4 (by norm_num)\n  norm_num [h₁, h3] at h4\n  have h5 := h₂ 5 (by norm_num)\n  norm_num [h3, h4] at h5\n  have h6 := h₂ 6 (by norm_num)\n  norm_num [h4, h5] at h6\n  have h7 := h₂ 7 (by norm_num)\n  norm_num [h5, h6] at h7\n  exact ⟨h3, h4, h5, h6, h7⟩",
+    "period_five": "by\n  intro n\n  induction n with\n  | zero => simpa [h₀, h₁] using node_initial_five_cycle.2.2.2\n  | succ n ih =>\n      constructor\n      · simpa [Nat.succ_eq_add_one, Nat.add_assoc] using ih.2\n      · change t (n + 8) = t (n + 3)\n        have hh := h₂ (n + 8) (by omega)\n        have hl := h₂ (n + 3) (by omega)\n        simp only [show n + 8 - 1 = n + 7 by omega, show n + 8 - 2 = n + 6 by omega] at hh\n        simp only [show n + 3 - 1 = n + 2 by omega, show n + 3 - 2 = n + 1 by omega] at hl\n        rw [ih.2, ih.1] at hh\n        exact hh.trans hl.symm",
+    "root": "by\n  have hm : ∀ m : ℕ, t (5 * m + 5) = t 5 := by\n    intro m\n    induction m with\n    | zero => rfl\n    | succ m ih =>\n        have hp := (node_period_five (5 * m + 4)).1\n        have he : 5 * (m + 1) + 5 = 5 * m + 4 + 6 := by omega\n        rw [he, hp]\n        simpa [Nat.add_assoc] using ih\n  have hv : t 2020 = 101 / 525 := (hm 403).trans node_initial_five_cycle.2.2.1\n  rw [hv]\n  norm_num"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

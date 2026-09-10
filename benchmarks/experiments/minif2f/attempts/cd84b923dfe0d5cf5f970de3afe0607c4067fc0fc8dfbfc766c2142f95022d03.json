@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/imo_1987_p4",
+  "original_declaration": "theorem imo_1987_p4 (f : ℕ → ℕ) : ∃ n, f (f n) ≠ n + 1987",
+  "source_file": "upstream/MiniF2F/Valid/imo_1987_p4.lean",
+  "source_sha256": "66c580e0d9ed9bb0d712468a9fdf749a704420c2f3a6de313841b2e4f38b3dcf",
+  "partial_statement": "(∀ n : ℕ, f (f n) = n + 1987) → Function.Injective f ∧ (∀ n : ℕ, f (n + 1987) = f n + 1987)",
+  "partial_proof": "by\n  intro hf\n  constructor\n  · intro a b hab\n    have hh := congrArg f hab\n    rw [hf, hf] at hh\n    omega\n  · intro n\n    calc\n      f (n + 1987) = f (f (f n)) := by rw [hf n]\n      _ = f n + 1987 := hf (f n)",
+  "mathematical_route": "The assumed square relation forces injectivity and commutation with translation. Modulo 1987 it induces an involution of an odd finite set, which should have a fixed point.",
+  "unresolved_full_proof_obligation": "Need construct the induced finite permutation and prove the fixed-point parity step; lifting its fixed point then contradicts the odd shift. A search found group-specific fixed-point-free involution lemmas, not a directly applicable arbitrary finite permutation result.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(f : ℕ → ℕ)",
+  "partial_start_line": 17,
+  "partial_block_sha256": "7627a1bd547b6326c127caacbe2a8a997d1a93c0da1403cb5b34cf6ce5aeee6b",
+  "partial_end_line": 29,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+  "compiler_log_sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: finite orbit pairing or a permutation-sign argument. The available group-specific fixed-point lemmas do not directly supply the required arbitrary odd-cardinality involution contradiction.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "(∀ n : ℕ, f (f n) = n + 1987) → Function.Injective f ∧ (∀ n : ℕ, f (n + 1987) = f n + 1987)",
+      "source_sha256": "7627a1bd547b6326c127caacbe2a8a997d1a93c0da1403cb5b34cf6ce5aeee6b",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json"
+    }
+  ]
+}

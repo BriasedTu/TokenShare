@@ -1,0 +1,107 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_aime_1999_p11",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T16:10:30.576393+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "author_disposition": {
+        "authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__aime_1999_p11\\authoring.json",
+        "batch": "batch10",
+        "case_id": "test/aime_1999_p11",
+        "formal_preflight_result": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\03880589\\a3\\result.json",
+        "reason": "Official offline checker accepted isolated nodes and the unchanged root, with printed axioms and no sorryAx.",
+        "source_sha256": "ba0b6bf79f45d29181a7f78772d95c670eb590e1cd8012b16e5a2b01bb497dec",
+        "status": "lean_passed_pending_independent_review",
+        "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__aime_1999_p11\\validation-3.json"
+      },
+      "authoring_sha256": "sha256:857ea48f6645a7ab2ce6226f011d699fc53cc257891e1182e056f617cbde7f4e",
+      "case_id": "test/aime_1999_p11",
+      "checked_segments": [
+        {
+          "end_line": 23,
+          "node_id": "sine_sum_telescope",
+          "payload_digest": "sha256:9fced35d1b7f1c3903c9240a7d6f5ca415f0337e88632416b83b81289b1908d9",
+          "proof_sha256": "sha256:296c4ad36bb130ed65c314f8d656ff6353dea1044f2c7534b1f19644ef2dc63d",
+          "segment_sha256": "sha256:489ca8953854f5cb78228be33c87d8b1f51d7bec314abe1f3bedcd4aadcd9f54",
+          "standalone_source_sha256": "sha256:cdca64d02e23291ef31960d2e27f175dc071d4501c74589b290d6ca16e2028b1",
+          "start_line": 4
+        },
+        {
+          "end_line": 51,
+          "node_id": "root",
+          "payload_digest": "sha256:5aadb8aae7d55708962be91b0c0711acb6d7de932a443e9c2fc893d44082313f",
+          "proof_sha256": "sha256:08c3ae53a831f2c91f7986ee432af0dfd143d42cd6748e3d8422277be0020a02",
+          "segment_sha256": "sha256:322e31223c6f57a29701850e031f954115b36b72ab8d666c4ebbb20da8261825",
+          "standalone_source_sha256": "sha256:b33a987dbb94c827a850c6fbc490f55f37918d7b4f7e24a4c3f0fc17d182b512",
+          "start_line": 25
+        },
+        {
+          "end_line": 91,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:7e3225589be90eb1971022405b600b9a7bc0ec9a1a61dfa0ff70440d072b30eb",
+          "proof_sha256": "sha256:b71eeba4e623a4f60b4475344aecc2e91a130ccd36a37894601df33c223b5f31",
+          "segment_sha256": "sha256:ed1c24b270decf4fd661f8e9fd0bafdaeaf777a751cadf91583af0f7259d0abd",
+          "standalone_source_sha256": "sha256:e3cbcd98ec968d275dbff0bde4830f282565047af0f8265c89127b40a4b9e72a",
+          "start_line": 53
+        }
+      ],
+      "current_plan_digest": "sha256:518998353d0221f4133ad11d77711bb04d1098fca46c02d2ec632907783c6009",
+      "dependency_review": "The root directly uses sine_sum_telescope at 35. The nonzero sine denominator and the tangent injectivity interval are justified before cancellation; the endpoint calculation is no longer counted as an extra AI unit.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\03880589\\a3\\result.json",
+      "formal_result_sha256": "sha256:e998eb1ad8d14044e724ec79239af828d1b01c4379349f920121ae935777b3e3",
+      "formal_result_status": "passed",
+      "graph_digest": "sha256:a583bb2431d7662f835b573085e7c6b1dd9a4ac6ea754db1b34b39409449cd71",
+      "lean_source_sha256": "sha256:8d1ec9fc86fd0f54fb5d028349a6770d302cd0b891ebb323adb31096a2992e54",
+      "mathematical_review": "The retained intermediate proves the finite sine-sum formula by induction and cancellation of consecutive odd-angle cosines. The root evaluates its endpoints locally, recognizes a complementary tangent, and uses tangent injectivity on the original acute-angle interval to recover the rational value and numerator-denominator sum. The former endpoint-specialization node has been folded into the root.",
+      "node_count": 2,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:3b0ec6bf8af35554e23fc3a2a4fbbf5cea51670d836687f67ac01d06ced7bcb1",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:518998353d0221f4133ad11d77711bb04d1098fca46c02d2ec632907783c6009",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:ba0b6bf79f45d29181a7f78772d95c670eb590e1cd8012b16e5a2b01bb497dec",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:86dc0017515aaa04c38a6b5272b5904e97777feb2dae31630f89fe9faf35055a",
+      "strict_warning_as_error_command_verified": true
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/dc5871ab1e47b0f2e1e432f8b208ee88ccd862b6818be3ab0e0964d7ca23a5c0.json",
+    "source_report_sha256": "sha256:dc5871ab1e47b0f2e1e432f8b208ee88ccd862b6818be3ab0e0964d7ca23a5c0"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/03880589e65bfe5e/result.json",
+    "result_sha256": "sha256:e998eb1ad8d14044e724ec79239af828d1b01c4379349f920121ae935777b3e3"
+  },
+  "mathematical_review": "The retained intermediate proves the finite sine-sum formula by induction and cancellation of consecutive odd-angle cosines. The root evaluates its endpoints locally, recognizes a complementary tangent, and uses tangent injectivity on the original acute-angle interval to recover the rational value and numerator-denominator sum. The former endpoint-specialization node has been folded into the root.",
+  "node_proofs_digest": "sha256:3b0ec6bf8af35554e23fc3a2a4fbbf5cea51670d836687f67ac01d06ced7bcb1",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Derive a finite trigonometric sum by telescoping consecutive odd-angle cosines.",
+      "node_id": "sine_sum_telescope"
+    },
+    {
+      "dependencies": [
+        "sine_sum_telescope"
+      ],
+      "mathematical_role": "Use tangent injectivity on the stipulated interval and recover the rational numerator and denominator.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:518998353d0221f4133ad11d77711bb04d1098fca46c02d2ec632907783c6009",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T16:10:30.576393+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

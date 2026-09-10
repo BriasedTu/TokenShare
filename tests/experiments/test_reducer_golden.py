@@ -209,7 +209,12 @@ def _result(
                 challenge_family=challenge_family,
                 target_planned_ai_unit_id="range_0",
                 attempt_ordinal=0,
-                injection_boundary="pre_verification",
+                injection_boundary={
+                    "PARSER_REQUIRED_CANONICAL_JSON": "before_plugin_parser",
+                    "INVALID_PARSED_CANDIDATE": "after_parser_before_verification",
+                    "RECOVERABLE_NO_RETURN": "after_source_usage",
+                    "REQUIRED_CHILD_DELAY": "after_source_usage",
+                }[challenge_family],
                 opportunity=True,
                 injected=True,
                 source_semantics_preserved=True,
@@ -1035,6 +1040,9 @@ def test_exp4_quadruples_reject_blocked_mismatched_and_missing_arms(
                 result = _preflight_blocked_result(inventory)
             if invalid_kind == "mismatched" and mode == modes[-1]:
                 result.challenge_plan_id = "different-plan"
+                # Keep the result internally consistent while differing from
+                # the frozen inventory, which is the reducer boundary under test.
+                result.challenge_observations[0].challenge_plan_id = "different-plan"
                 result.validate()
             results.append(result)
 
@@ -2032,6 +2040,45 @@ def test_exp5_single_repeat_keeps_wall_clock_summary_schema(
     assert row["missing_reasons"]["model_wall_clock_sample_stddev_ms"] == (
         "insufficient_observations_for_sample_variance"
     )
+
+
+@pytest.mark.parametrize("exposure", ["not_reached", "no_op", "infrastructure_failure"])
+def test_exp4_zero_exposure_keeps_failure_denominator_without_inventing_injection(
+    tmp_path: Path, exposure: str,
+) -> None:
+    store = RunStore(tmp_path / exposure)
+    inventory = _inventory(
+        "exp4", "condition", "unreached-case", mode="NO_VERIFICATION",
+        challenge_plan_id="unreached-plan",
+    )
+    result = _result(inventory, final=False, verified=False)
+    result.failure_origin = "model_verification_exhausted"
+    if exposure == "no_op":
+        result.challenge_observations[0].opportunity = False
+        result.challenge_observations[0].injected = False
+    else:
+        result.challenge_observations = []
+        result.dispatched_ai_unit_ids = []
+        result.unscheduled_ai_unit_ids = ["range_0"]
+        result.missing_reason["challenge_observations"] = "challenge_target_not_dispatched"
+    if exposure == "infrastructure_failure":
+        result.failure_kind = "infrastructure_invalid"
+        result.failure_origin = "unexpected_runtime_error"
+    result.validate()
+    store.write_frozen_inventories(
+        conditions=[], roots=[inventory], exp3_references=[],
+        exp4_challenges=[_challenge_plan("unreached-case", plan_id="unreached-plan")],
+    )
+    store.write_root_result(result)
+    reduce_run(store.run_dir)
+    cell = next(row for row in _read_rows(store.run_dir / "metrics/tables/exp4.jsonl") if row["row_kind"] == "cell")
+    assert cell["challenge_planned_root_count"] == 1
+    assert cell["challenge_target_opportunity_count"] == 0
+    assert cell["challenge_injection_count"] == 0
+    assert cell["challenge_applied_root_count"] == 0
+    assert cell["challenge_application_coverage"] is None
+    assert cell["scientifically_valid_ablation_cell"] is (exposure != "infrastructure_failure")
+    assert cell["no_final_failure_count"] == int(exposure != "infrastructure_failure")
 
 
 def test_exp4_normal_retry_exhaustion_remains_scientifically_valid(tmp_path: Path) -> None:

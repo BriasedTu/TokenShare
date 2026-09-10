@@ -1,0 +1,96 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12b_2020_p13",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:50:09.187551+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "authoring_sha256": "sha256:b533ceba3f8a6a8cd1f27ff8803b04108b0f95e75b1075e15d3a6aa14123e869",
+      "case_id": "test/amc12b_2020_p13",
+      "checked_segments": [
+        {
+          "end_line": 17,
+          "node_id": "reciprocal_radical_product",
+          "payload_digest": "sha256:04ccb691e26fc235720dee19c9dad51eeda8936aae3c82094a5ab73e71a1974a",
+          "proof_sha256": "sha256:012065473040dc7e11c3fcd12e537d5e6cbc471ae6d91ecfc203a3065a3d0dce",
+          "segment_sha256": "sha256:283dd6dd6fa6a112f161d587f0de3d9c3fdd0fe62b8325c1062be3cfc61adede",
+          "standalone_source_sha256": "sha256:a6d20357f56b54d7f625c33105d9c3ee0d6da6c08cfc88f3d413e65290ac67de",
+          "start_line": 4
+        },
+        {
+          "end_line": 35,
+          "node_id": "root",
+          "payload_digest": "sha256:39b6ed3b53ad01475b8a7cdab8c26b61e9aba893bdfbb0c7f1ce62d094ce41f6",
+          "proof_sha256": "sha256:6df7b2c72f782e32d8106779855355a83af4962f59e740a058ec778ed83cc888",
+          "segment_sha256": "sha256:43acf9089791aafecbd548e6a1f9b873e9a9599728aaf11d339eaff9cfbfb3e3",
+          "standalone_source_sha256": "sha256:fa4146189eda4abbd3c2001a7d8e534a22ec0a8b5b29dbff7a6c483d3c825806",
+          "start_line": 19
+        },
+        {
+          "end_line": 62,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:bf7f3a072904a43e8e5899373e0f4e9760ef8a933b2dbdf646c4f193c69060ae",
+          "proof_sha256": "sha256:b37b7a0e9e2c27991a135f0ec336b3d52b9ecf2d95c7d03ed77fa724b64ce34a",
+          "segment_sha256": "sha256:1d38f8875fed15a31ad6922bed2afc110a3bf942e85084349310a8180c11d4ea",
+          "standalone_source_sha256": "sha256:0f628e4725e60ed511feaa016cac96d1f42d0ce6ab10f095ff3ae90fdb4f6405",
+          "start_line": 37
+        }
+      ],
+      "current_plan_digest": "sha256:33705e2c032b41b9d1ed91819507ded0b317a4f70f2263cf9aca645e75c8b723",
+      "dependency_review": "reciprocal_radical_product supplies the cross term in the root square comparison; positivity and nonzero logarithms are proved locally.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\3e570a40\\a1\\result.json",
+      "formal_result_sha256": "sha256:b78f89aba544bc3f86108c239835f0957233bde3738f98ed38ce2f8e86c70277",
+      "graph_digest": "sha256:982828749a8f24caaece128b2a1bb8b292db4fb338d5ced0f3cf25d25de2b4fc",
+      "lean_source_sha256": "sha256:3293a03c51f8f9b510dcdc776907e902aec857390063a00c7a63e683663f40ce",
+      "mathematical_review": "The positive logarithmic ratios give a reciprocal radical product. The root independently expands log six, proves the outer radicand nonnegative, and compares squares to obtain the requested sum of radicals. The intermediate product identifies the cross term and does not state the radical-sum conclusion.",
+      "node_count": 2,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:262cb42176aa7d2e0d5cb15216f7a0a2a34435b9e4ba2296ee448dfdc75cfb93",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:33705e2c032b41b9d1ed91819507ded0b317a4f70f2263cf9aca645e75c8b723",
+      "review_scope": "Final authoring, unchanged upstream source, current isolated segments and assembled theorem, preserved compiler stdout/stderr/result hashes; no repeated Lean run.",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:56b15466aac201d1b0f293e597e899fba8259c60b9f025d5774064668bd98fc7",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:c50ffa2dcd5b4f70f089524cd0e3da4d714a13e496b0cccf6161289223aad2fc"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498.json",
+    "source_report_sha256": "sha256:b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/3e570a403ca5f1a3/result.json",
+    "result_sha256": "sha256:b78f89aba544bc3f86108c239835f0957233bde3738f98ed38ce2f8e86c70277"
+  },
+  "mathematical_review": "The positive logarithmic ratios give a reciprocal radical product. The root independently expands log six, proves the outer radicand nonnegative, and compares squares to obtain the requested sum of radicals. The intermediate product identifies the cross term and does not state the radical-sum conclusion.",
+  "node_proofs_digest": "sha256:262cb42176aa7d2e0d5cb15216f7a0a2a34435b9e4ba2296ee448dfdc75cfb93",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Show the two positive radical terms are reciprocal.",
+      "node_id": "reciprocal_radical_product"
+    },
+    {
+      "dependencies": [
+        "reciprocal_radical_product"
+      ],
+      "mathematical_role": "Expand log six and compare squares of the nonnegative sides.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:33705e2c032b41b9d1ed91819507ded0b317a4f70f2263cf9aca645e75c8b723",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:50:09.187551+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

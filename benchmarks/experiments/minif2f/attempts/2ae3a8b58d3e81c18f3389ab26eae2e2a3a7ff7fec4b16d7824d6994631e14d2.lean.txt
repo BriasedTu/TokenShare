@@ -1,0 +1,58 @@
+import Mathlib
+set_option autoImplicit false
+set_option maxHeartbeats 0
+set_option maxRecDepth 2048
+set_option linter.unusedVariables false
+open BigOperators Real Nat Topology Rat
+
+example (a b c d : ℝ)
+  (f : ℂ → ℂ)
+  (h₀ : ∀ z, f z = z^6 - 10 * z^5 + a * z^4 + b * z^3 + c * z^2 + d * z + 16)
+  (h₁ : ∀ z, f z = 0 → (z.im = 0 ∧ 0 < z.re ∧ ↑(Int.floor z.re) = z.re))
+ :
+∀ z : ℂ, f z = 0 → ∃ n : ℕ, 0 < n ∧ z = (n : ℂ) := by
+  intro z hz
+  obtain ⟨him, hrpos, hfloor⟩ := h₁ z hz
+  have hn : 0 ≤ Int.floor z.re := Int.floor_nonneg.mpr hrpos.le
+  have ht : ((Int.floor z.re).toNat : ℤ) = Int.floor z.re := Int.toNat_of_nonneg hn
+  have hr : ((Int.floor z.re).toNat : ℝ) = z.re := by
+    calc
+      _ = (Int.floor z.re : ℝ) := by exact_mod_cast ht
+      _ = z.re := hfloor
+  refine ⟨(Int.floor z.re).toNat, ?_, ?_⟩
+  · have hpos : 0 < ((Int.floor z.re).toNat : ℝ) := by rw [hr]; exact hrpos
+    exact_mod_cast hpos
+  · apply Complex.ext
+    · simpa using hr.symm
+    · simpa using him
+
+example (a b c d : ℝ)
+  (f : ℂ → ℂ)
+  (h₀ : ∀ z, f z = z^6 - 10 * z^5 + a * z^4 + b * z^3 + c * z^2 + d * z + 16)
+  (h₁ : ∀ z, f z = 0 → (z.im = 0 ∧ 0 < z.re ∧ ↑(Int.floor z.re) = z.re))
+ :
+∀ r₁ r₂ r₃ r₄ r₅ r₆ : ℕ, (1 ≤ r₁ ∧ r₁ ≤ r₂ ∧ r₂ ≤ r₃ ∧ r₃ ≤ r₄ ∧ r₄ ≤ r₅ ∧ r₅ ≤ r₆) → r₁ + r₂ + r₃ + r₄ + r₅ + r₆ = 10 → r₁ * r₂ * r₃ * r₄ * r₅ * r₆ = 16 → (r₁, r₂, r₃, r₄, r₅, r₆) = (1, 1, 2, 2, 2, 2) := by
+  intro r₁ r₂ r₃ r₄ r₅ r₆ ho hs hp
+  have h1 : r₁ = 1 := by omega
+  have h2 : r₂ = 1 := by omega
+  subst r₁
+  subst r₂
+  norm_num at hs hp
+  have h3lo : 1 ≤ r₃ := by omega
+  have h3hi : r₃ ≤ 2 := by omega
+  interval_cases r₃
+  · have h4lo : 1 ≤ r₄ := by omega
+    have h4hi : r₄ ≤ 2 := by omega
+    interval_cases r₄
+    · norm_num at hs hp
+      nlinarith [sq_nonneg ((r₅ : ℤ) - r₆)]
+    · have h5 : r₅ = 2 := by omega
+      have h6 : r₆ = 3 := by omega
+      subst r₅
+      subst r₆
+      norm_num at hp
+  · have h4 : r₄ = 2 := by omega
+    have h5 : r₅ = 2 := by omega
+    have h6 : r₆ = 2 := by omega
+    simp [h4, h5, h6]
+

@@ -1,0 +1,43 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_aime_1991_p6",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.015644+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/6492b76f02630e7b/result.json",
+    "result_sha256": "sha256:6477cd7c26c176abaddc02d59dfc64b7c3a2deabf260eef80d3cefe508bc31dc"
+  },
+  "mathematical_review": "Independent sharp lower and upper floor-sum comparisons isolate r between 7.43 and 7.44; the root applies the defining floor interval.",
+  "node_proofs_digest": "sha256:19c70a04bdd1f9ed4b076f53b4bc2a631ba0120332300118304573f62a9a0fcb",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Below 7.43 the crossing term k=57 falls to seven, forcing the total floor sum to be at most 545.",
+      "node_id": "lower_floor_threshold"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "At 7.44 or above the crossing term k=56 becomes eight, forcing the sum to be at least 547.",
+      "node_id": "upper_floor_threshold"
+    },
+    {
+      "dependencies": [
+        "lower_floor_threshold",
+        "upper_floor_threshold"
+      ],
+      "mathematical_role": "The two sharp real bounds place 100r in the defining interval of floor 743.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:dc19f0116753c6fce8ecb49c6ccd5a23a40d7b3514ba168c00e62a031f7f0425",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.014645+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

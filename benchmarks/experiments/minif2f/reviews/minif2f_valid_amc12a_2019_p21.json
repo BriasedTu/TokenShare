@@ -1,0 +1,53 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12a_2019_p21",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.515637+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/a08145a4b6f1d580/result.json",
+    "result_sha256": "sha256:3596eff9c55eadecb28898c90516e9d7cf8e50f120b2b797e8eea175b4142458"
+  },
+  "mathematical_review": "Normalize the square of the specified complex number, then independently evaluate the forward and reciprocal quadratic-exponent sums by residues modulo eight before multiplying them.",
+  "node_proofs_digest": "sha256:3c4e47885fb2eb95202246c385d45520dcc867a20c56f534e35cd12eba97a083",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Identify z as a square root of i using the real square-root normalization.",
+      "node_id": "unit_square"
+    },
+    {
+      "dependencies": [
+        "unit_square"
+      ],
+      "mathematical_role": "Reduce square exponents modulo eight; the even terms cancel and the six odd terms equal z.",
+      "node_id": "forward_gauss_sum"
+    },
+    {
+      "dependencies": [
+        "unit_square"
+      ],
+      "mathematical_role": "Apply the same residue decomposition to reciprocal powers in an independent branch.",
+      "node_id": "reciprocal_gauss_sum"
+    },
+    {
+      "dependencies": [
+        "unit_square",
+        "forward_gauss_sum",
+        "reciprocal_gauss_sum"
+      ],
+      "mathematical_role": "Multiply the two evaluated sums and cancel the nonzero eighth root of unity.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:ea8060efcc1f1d30cf790da92731946a672a0074a42dffe1dd5bc8605bdf3c74",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.515637+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

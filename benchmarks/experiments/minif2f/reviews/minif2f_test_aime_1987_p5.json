@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_aime_1987_p5",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.015158+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/1129578315963714/result.json",
+    "result_sha256": "sha256:831e4f3635eb09cb717440c387bdb73db90d9cae8cd353cb44ae24ffa19d6cfe"
+  },
+  "mathematical_review": "Integer-square discreteness bounds the second variable away from zero, which yields a finite bound on the first variable before exact Diophantine exclusion.",
+  "node_proofs_digest": "sha256:30ce017b398503cf864e311f6fc1299d197a081165add57576b680eaf6d8c043",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "First exclude all small integer squares for y using the positive factor implicit in the Diophantine equation.",
+      "node_id": "integer_square_lower_bound"
+    },
+    {
+      "dependencies": [
+        "integer_square_lower_bound"
+      ],
+      "mathematical_role": "Use the nontrivial lower bound on y squared to obtain a finite bound on the first variable.",
+      "node_id": "bounded_first_square"
+    },
+    {
+      "dependencies": [
+        "bounded_first_square"
+      ],
+      "mathematical_role": "Classify the bounded integer possibilities; divisibility eliminates all but x squared equal to four, while the zero case would require the impossible square 517.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:f5c92881477e8c11471dac4607cac4a624434ce91c7b4d748ee1788c3c7e0c28",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.015158+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

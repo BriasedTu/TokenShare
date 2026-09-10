@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_mathd_numbertheory_13",
+  "node_proof_sources": {
+    "root": "by\n  have hfirst : 39 ∈ S := by rw [h₀]; norm_num\n  have huhi := h₁.2 hfirst\n  have hum := node_solution_residue u h₁.1\n  have hu : u = 39 := by omega\n  have hsecond : 89 ∈ S \\ {u} := by\n    simp only [Set.mem_diff, Set.mem_singleton_iff]\n    constructor\n    · rw [h₀]; norm_num\n    · omega\n  have hvhi := h₂.2 hsecond\n  have hvm := node_solution_residue v h₂.1.1\n  have hvne : v ≠ u := by simpa using h₂.1.2\n  have hv : v = 89 := by omega\n  norm_num [hu, hv]",
+    "solution_residue": "by\n  intro n hn\n  have hm := (h₀ n).mp hn\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

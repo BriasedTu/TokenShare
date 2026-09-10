@@ -1,0 +1,10 @@
+{
+  "case_id": "minif2f_valid_amc12a_2019_p21",
+  "node_proof_sources": {
+    "forward_gauss_sum": "by\n  have hz4 : z ^ 4 = -1 := by\n    calc z ^ 4 = (z ^ 2) ^ 2 := by ring\n         _ = -1 := by rw [node_unit_square]; norm_num\n  have hz8 : z ^ 8 = 1 := by\n    calc z ^ 8 = (z ^ 4) ^ 2 := by ring\n         _ = 1 := by rw [hz4]; norm_num\n  calc\n    (∑ k ∈ Finset.Icc 1 12, z ^ k ^ 2) = ∑ k ∈ Finset.Icc 1 12, z ^ (k ^ 2 % 8) := by\n      apply Finset.sum_congr rfl\n      intro k hk\n      exact pow_eq_pow_mod (k ^ 2) hz8\n    _ = 6 * z := by norm_num [Finset.sum_Icc_succ_top, hz4]; ring",
+    "reciprocal_gauss_sum": "by\n  have hz4 : z ^ 4 = -1 := by\n    calc z ^ 4 = (z ^ 2) ^ 2 := by ring\n         _ = -1 := by rw [node_unit_square]; norm_num\n  have hz8 : z ^ 8 = 1 := by\n    calc z ^ 8 = (z ^ 4) ^ 2 := by ring\n         _ = 1 := by rw [hz4]; norm_num\n  calc\n    (∑ k ∈ Finset.Icc 1 12, 1 / z ^ k ^ 2) = ∑ k ∈ Finset.Icc 1 12, 1 / z ^ (k ^ 2 % 8) := by\n      apply Finset.sum_congr rfl\n      intro k hk\n      rw [pow_eq_pow_mod (k ^ 2) hz8]\n    _ = 6 / z := by norm_num [Finset.sum_Icc_succ_top, hz4]; ring",
+    "root": "by\n  have hz : z ≠ 0 := by\n    intro he\n    have hi := node_unit_square\n    simp [he] at hi\n    exact Complex.I_ne_zero hi.symm\n  rw [node_forward_gauss_sum, node_reciprocal_gauss_sum]\n  field_simp\n  ; ring",
+    "unit_square": "by\n  have hs : (Real.sqrt 2) ^ 2 = (2 : ℝ) := Real.sq_sqrt (by norm_num)\n  have hc : ((Real.sqrt 2 : ℝ) : ℂ) ^ 2 = (2 : ℂ) := by exact_mod_cast hs\n  rw [h₀, div_pow, hc]\n  norm_num [add_sq, Complex.I_sq]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

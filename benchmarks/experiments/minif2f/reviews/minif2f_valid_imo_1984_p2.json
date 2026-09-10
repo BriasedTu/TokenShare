@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_imo_1984_p2",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:28.775840+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/7362cf3f91221a46/result.json",
+    "result_sha256": "sha256:99d05de1d003edb15818b56543dd84a6a75e41ea48a1c85bf58af515090c055d"
+  },
+  "mathematical_review": "Factor the seventh-power difference and cancel one power of seven; the resulting divisibility excludes every positive pair below the claimed bound.",
+  "node_proofs_digest": "sha256:d0f023241e78441191c6ff9737dec838c086041c08b9f0e8993ff04eb27a45d1",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Factor the seventh-power difference into its linear and quadratic factors and cancel the first power of seven.",
+      "node_id": "seventh_power_reduction"
+    },
+    {
+      "dependencies": [
+        "seventh_power_reduction"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:576d1f5f824191e458f26ae7262ffd44e6e721dd773eea6f49d4b1915902ac35",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:28.774840+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

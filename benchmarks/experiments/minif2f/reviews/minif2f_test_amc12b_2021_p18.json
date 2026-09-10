@@ -1,0 +1,43 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12b_2021_p18",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:17:59.395186+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/7a10a787ae70ec1e/result.json",
+    "result_sha256": "sha256:f54f3a5d83fe5a75898bc911a59e08d9d9b5d82b9a01c53b5f39d0bbcc443ee6"
+  },
+  "mathematical_review": "Nonnegative-square constraints independently determine the real part and squared modulus; together they justify nonzero cancellation and the original reciprocal identity.",
+  "node_proofs_digest": "sha256:853f9b49f6cd964eb6c2dd28fbecd20a3f7270c70102ac5c2f7d18a1d0069b4c",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Complete the norm identity into nonnegative squares to force the real part.",
+      "node_id": "real_part"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Independently use the same nonnegative-square decomposition to determine the squared modulus.",
+      "node_id": "norm_square"
+    },
+    {
+      "dependencies": [
+        "real_part",
+        "norm_square"
+      ],
+      "mathematical_role": "The two independent constraints determine the reciprocal expression after valid cancellation of the nonzero complex number.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:15527a5ceb7b315cbc7c28bbc314c29ccb506bb63eebf9e769d00f153f9f1f6f",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:17:59.394181+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

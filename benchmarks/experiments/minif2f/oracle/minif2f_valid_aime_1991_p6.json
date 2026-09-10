@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_aime_1991_p6",
+  "node_proof_sources": {
+    "lower_floor_threshold": "by\n  by_contra hh\n  have hr : r < 743 / 100 := by linarith\n  have hb : (∑ k ∈ Finset.Icc (19 : ℕ) 91, Int.floor (r + k / 100)) ≤\n      ∑ k ∈ Finset.Icc (19 : ℕ) 91, (if k ≤ 57 then (7 : ℤ) else 8) := by\n    apply Finset.sum_le_sum\n    intro k hk\n    have hk91 : (k : ℝ) ≤ 91 := by exact_mod_cast (Finset.mem_Icc.mp hk).2\n    by_cases h57 : k ≤ 57\n    · rw [if_pos h57]\n      have hk57 : (k : ℝ) ≤ 57 := by exact_mod_cast h57\n      have hf : Int.floor (r + k / 100) < 8 := Int.floor_lt.mpr (by norm_num; linarith)\n      omega\n    · rw [if_neg h57]\n      have hf : Int.floor (r + k / 100) < 9 := Int.floor_lt.mpr (by norm_num; linarith)\n      omega\n  have he : (∑ k ∈ Finset.Icc (19 : ℕ) 91, (if k ≤ 57 then (7 : ℤ) else 8)) = 545 := by decide\n  omega",
+    "root": "by\n  apply Int.floor_eq_iff.mpr\n  constructor <;> norm_num <;> linarith",
+    "upper_floor_threshold": "by\n  by_contra hh\n  have hr : 744 / 100 ≤ r := by linarith\n  have hb : (∑ k ∈ Finset.Icc (19 : ℕ) 91, (if k < 56 then (7 : ℤ) else 8)) ≤\n      ∑ k ∈ Finset.Icc (19 : ℕ) 91, Int.floor (r + k / 100) := by\n    apply Finset.sum_le_sum\n    intro k hk\n    have hk19 : (19 : ℝ) ≤ k := by exact_mod_cast (Finset.mem_Icc.mp hk).1\n    by_cases h56 : k < 56\n    · rw [if_pos h56]\n      apply Int.le_floor.mpr\n      norm_num\n      linarith\n    · rw [if_neg h56]\n      have hk56 : (56 : ℝ) ≤ k := by exact_mod_cast (by omega : 56 ≤ k)\n      apply Int.le_floor.mpr\n      norm_num\n      linarith\n  have he : (∑ k ∈ Finset.Icc (19 : ℕ) 91, (if k < 56 then (7 : ℤ) else 8)) = 547 := by decide\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

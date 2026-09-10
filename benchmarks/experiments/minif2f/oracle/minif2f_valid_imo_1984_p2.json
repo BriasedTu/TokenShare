@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_imo_1984_p2",
+  "node_proof_sources": {
+    "root": "by\n  by_contra hbound\n  have ha : 1 ≤ a := by omega\n  have hb : 1 ≤ b := by omega\n  have hau : a ≤ 17 := by omega\n  have hbu : b ≤ 17 := by omega\n  clear h₄\n  interval_cases a <;> interval_cases b <;> norm_num at *",
+    "seventh_power_reduction": "by\n  have hf : (a + b) ^ 7 - a ^ 7 - b ^ 7 = 7 * (a * b * (a + b) * (a ^ 2 + a * b + b ^ 2) ^ 2) := by ring\n  obtain ⟨k, hk⟩ := h₄\n  refine ⟨k, ?_⟩\n  rw [hf] at hk\n  norm_num at hk ⊢\n  nlinarith only [hk]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

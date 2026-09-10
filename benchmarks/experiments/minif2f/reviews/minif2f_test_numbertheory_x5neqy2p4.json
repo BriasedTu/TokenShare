@@ -1,0 +1,38 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_numbertheory_x5neqy2p4",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/9c52e18a185a5a3f/result.json",
+    "result_sha256": "sha256:bf7f0e05abd7e9aa4df52eeb0e76961a985335f95b7e6e1932e78ca93959924e"
+  },
+  "mathematical_review": "Independent classifications of fifth powers and translated squares modulo eleven give disjoint residue sets at the original root.",
+  "node_proofs_digest": "sha256:f915470ee15750f6b7f0837152ce6818cc648e94a194d66a23e9b72497ad0513",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Classify fifth powers modulo eleven as the zero and two fifth-power unit residues.",
+      "node_id": "fifth_power_residues"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Classify the translated quadratic residues modulo eleven, independently of the fifth-power branch.",
+      "node_id": "shifted_square_residues"
+    },
+    {
+      "dependencies": [
+        "fifth_power_residues",
+        "shifted_square_residues"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:1af110ae21e9648b530f6b21c38674732c20b959a62a24c62c837a4af10ee410",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:09:25.453681+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

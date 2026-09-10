@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_mathd_algebra_17",
+  "node_proof_sources": {
+    "inner_radical_value": "by\n  have he : Real.sqrt (1 + Real.sqrt (1 + a)) = 2 := by linarith [node_normalize_nested_radicals]\n  have hs := Real.sq_sqrt (show 0 ≤ 1 + Real.sqrt (1 + a) by positivity)\n  nlinarith",
+    "normalize_nested_radicals": "by\n  have hi : Real.sqrt (16 + 16 * a) = 4 * Real.sqrt (1 + a) := by\n    rw [show 16 + 16 * a = 16 * (1 + a) by ring, Real.sqrt_mul (by norm_num : (0 : ℝ) ≤ 16)]\n    norm_num\n  rw [hi, show 4 + 4 * Real.sqrt (1 + a) = 4 * (1 + Real.sqrt (1 + a)) by ring,\n    Real.sqrt_mul (by norm_num : (0 : ℝ) ≤ 4)]\n  norm_num",
+    "root": "by\n  have hp : 0 < 1 + a := (Real.sqrt_pos.mp (by rw [node_inner_radical_value]; norm_num))\n  have hs := Real.sq_sqrt hp.le\n  nlinarith [node_inner_radical_value]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

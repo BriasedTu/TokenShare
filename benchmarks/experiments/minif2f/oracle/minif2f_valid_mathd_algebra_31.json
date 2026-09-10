@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_mathd_algebra_31",
+  "node_proof_sources": {
+    "continuous_recurrence_limit": "by\n  have hc : Continuous (fun y : NNReal ↦ NNReal.sqrt (x + y)) := by continuity\n  exact hc.continuousAt.tendsto.comp h₁",
+    "root": "by\n  have hs : Filter.Tendsto (fun n ↦ u (n + 1)) Filter.atTop (𝓝 9) := h₁.comp (Filter.tendsto_add_atTop_nat 1)\n  have heq : (fun n ↦ u (n + 1)) = (fun n ↦ NNReal.sqrt (x + u n)) := funext h₀\n  rw [heq] at hs\n  exact tendsto_nhds_unique hs node_continuous_recurrence_limit"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

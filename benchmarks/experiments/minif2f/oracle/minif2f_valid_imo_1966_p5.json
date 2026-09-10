@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_imo_1966_p5",
+  "node_proof_sources": {
+    "root": "by\n  rcases node_successive_row_differences with ⟨e1, e2, e3⟩\n  have hx2 : x 2 = 0 := by linarith\n  have hx3 : x 3 = 0 := by linarith\n  have hx1 : x 1 = x 4 := by linarith\n  have hn : abs (a 1 - a 4) ≠ 0 := abs_ne_zero.mpr (sub_ne_zero.mpr h₂)\n  have hx4 : x 4 = 1 / abs (a 1 - a 4) := by\n    apply (eq_div_iff hn).2\n    rw [hx2, hx3] at h₉\n    nlinarith [h₉]\n  exact ⟨hx2, hx3, hx1.trans hx4, hx4⟩",
+    "successive_row_differences": "by\n  have h13 : a 3 < a 1 := by linarith\n  have h14 : a 4 < a 1 := by linarith\n  have h24 : a 4 < a 2 := by linarith\n  simp only [abs_of_pos (sub_pos.mpr h₆), abs_of_neg (sub_neg.mpr h₆), abs_of_pos (sub_pos.mpr h₇), abs_of_neg (sub_neg.mpr h₇), abs_of_pos (sub_pos.mpr h₈), abs_of_neg (sub_neg.mpr h₈), abs_of_pos (sub_pos.mpr h13), abs_of_neg (sub_neg.mpr h13), abs_of_pos (sub_pos.mpr h14), abs_of_neg (sub_neg.mpr h14), abs_of_pos (sub_pos.mpr h24), abs_of_neg (sub_neg.mpr h24)] at h₉ h₁₀ h₁₁ h₁₂\n  have e1 : (a 1 - a 2) * (-x 1 + x 2 + x 3 + x 4) = 0 := by nlinarith only [h₉, h₁₀]\n  have e2 : (a 2 - a 3) * (-x 1 - x 2 + x 3 + x 4) = 0 := by nlinarith only [h₁₀, h₁₁]\n  have e3 : (a 3 - a 4) * (-x 1 - x 2 - x 3 + x 4) = 0 := by nlinarith only [h₁₁, h₁₂]\n  exact ⟨(mul_eq_zero.mp e1).resolve_left (sub_ne_zero.mpr h₀), (mul_eq_zero.mp e2).resolve_left (sub_ne_zero.mpr h₃), (mul_eq_zero.mp e3).resolve_left (sub_ne_zero.mpr h₅)⟩"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}
