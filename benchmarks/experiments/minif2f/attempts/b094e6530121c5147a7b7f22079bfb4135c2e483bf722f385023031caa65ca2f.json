@@ -1,0 +1,108 @@
+{
+  "case_id": "test/amc12b_2021_p13",
+  "original_declaration": "theorem amc12b_2021_p13\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 < x ∧ x ≤ 2 * Real.pi ∧ 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0) :\n  S.card = 6",
+  "parameters_source": "(S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 < x ∧ x ≤ 2 * Real.pi ∧ 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0)",
+  "statement_source": "S.card = 6",
+  "source_path": "upstream/MiniF2F/Test/amc12b_2021_p13.lean",
+  "source_sha256": "4d1b6c85b77dfb605222d3ad1bfc007f4a9cbf686c6e8fc60af6174869c0b416",
+  "nodes": [
+    {
+      "node_id": "sine_elimination",
+      "statement_source": "∀ x : ℝ, 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0 → (5 * Real.cos x * (1 - 4 * (Real.sin x) ^ 2) = 3 * Real.sin x - 1) ∧ (200 * (Real.sin x) ^ 6 - 300 * (Real.sin x) ^ 4 + 117 * (Real.sin x) ^ 2 - 3 * Real.sin x - 12 = 0)",
+      "dependencies": [],
+      "proof_source": "by\n  intro x hx\n  have hn := Real.sin_sq_add_cos_sq x\n  have h3 := Real.cos_three_mul x\n  have hf : 5 * Real.cos x * (1 - 4 * (Real.sin x) ^ 2) = 3 * Real.sin x - 1 := by\n    nlinarith [congrArg (fun t : ℝ => t * Real.cos x) hn]\n  refine ⟨hf, ?_⟩\n  have hs := congrArg (fun t : ℝ => t ^ 2) hf\n  have hp := congrArg (fun t : ℝ => t * (1 - 4 * (Real.sin x) ^ 2) ^ 2) hn\n  nlinarith",
+      "mathematical_role": "Eliminate the triple-angle cosine into a signed linear relation in cos x, then derive the sextic necessary condition in sin x."
+    },
+    {
+      "node_id": "same_sine_recovers_same_cosine",
+      "statement_source": "∀ u v : ℝ, 1 - 3 * Real.sin u + 5 * Real.cos (3 * u) = 0 → 1 - 3 * Real.sin v + 5 * Real.cos (3 * v) = 0 → Real.sin u = Real.sin v → Real.cos u = Real.cos v",
+      "dependencies": [
+        "sine_elimination"
+      ],
+      "proof_source": "by\n  intro u v hu hv hs\n  have huf := (node_sine_elimination u hu).1\n  have hvf := (node_sine_elimination v hv).1\n  rw [← hs] at hvf\n  have hn : 1 - 4 * (Real.sin u) ^ 2 ≠ 0 := by\n    intro he\n    rw [he, mul_zero] at huf\n    nlinarith\n  apply mul_right_cancel₀ hn\n  nlinarith",
+      "mathematical_role": "The denominator 1−4 sin²x cannot vanish at a solution; hence a sine value determines the cosine, avoiding a spurious doubling of the sextic root count."
+    },
+    {
+      "node_id": "six_disjoint_sine_root_intervals",
+      "statement_source": "(∃ r : ℝ, (-1) < r ∧ r < (-9 / 10) ∧ 200 * r ^ 6 - 300 * r ^ 4 + 117 * r ^ 2 - 3 * r - 12 = 0) ∧\n(∃ r : ℝ, (-9 / 10) < r ∧ r < (-1 / 2) ∧ 200 * r ^ 6 - 300 * r ^ 4 + 117 * r ^ 2 - 3 * r - 12 = 0) ∧\n(∃ r : ℝ, (-1 / 2) < r ∧ r < 0 ∧ 200 * r ^ 6 - 300 * r ^ 4 + 117 * r ^ 2 - 3 * r - 12 = 0) ∧\n(∃ r : ℝ, 0 < r ∧ r < (1 / 2) ∧ 200 * r ^ 6 - 300 * r ^ 4 + 117 * r ^ 2 - 3 * r - 12 = 0) ∧\n(∃ r : ℝ, (1 / 2) < r ∧ r < (9 / 10) ∧ 200 * r ^ 6 - 300 * r ^ 4 + 117 * r ^ 2 - 3 * r - 12 = 0) ∧\n(∃ r : ℝ, (9 / 10) < r ∧ r < 1 ∧ 200 * r ^ 6 - 300 * r ^ 4 + 117 * r ^ 2 - 3 * r - 12 = 0)",
+      "dependencies": [],
+      "proof_source": "by\n  let P : ℝ → ℝ := fun s => 200 * s ^ 6 - 300 * s ^ 4 + 117 * s ^ 2 - 3 * s - 12\n  have hcont : Continuous P := by fun_prop\n  have between : ∀ l u : ℝ, l < u → P l * P u < 0 → ∃ r ∈ Set.Ioo l u, P r = 0 := by\n    intro l u hlu hsign\n    have hlne : P l ≠ 0 := by intro he; rw [he, zero_mul] at hsign; linarith\n    have hune : P u ≠ 0 := by intro he; rw [he, mul_zero] at hsign; linarith\n    have hz : ∃ r ∈ Set.Icc l u, P r = 0 := by\n      rcases mul_neg_iff.mp hsign with hs | hs\n      · exact intermediate_value_Icc' hlu.le hcont.continuousOn ⟨hs.2.le, hs.1.le⟩\n      · exact intermediate_value_Icc hlu.le hcont.continuousOn ⟨hs.1.le, hs.2.le⟩\n    obtain ⟨r, hr, hpr⟩ := hz\n    refine ⟨r, ⟨?_, ?_⟩, hpr⟩\n    · by_contra h\n      have he : r = l := by linarith [hr.1]\n      subst r\n      exact hlne hpr\n    · by_contra h\n      have he : r = u := by linarith [hr.2]\n      subst r\n      exact hune hpr\n  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩\n  · simpa only [P, Set.mem_Ioo, and_assoc] using between (-1) (-9 / 10) (by norm_num) (by norm_num [P])\n  · simpa only [P, Set.mem_Ioo, and_assoc] using between (-9 / 10) (-1 / 2) (by norm_num) (by norm_num [P])\n  · simpa only [P, Set.mem_Ioo, and_assoc] using between (-1 / 2) 0 (by norm_num) (by norm_num [P])\n  · simpa only [P, Set.mem_Ioo, and_assoc] using between 0 (1 / 2) (by norm_num) (by norm_num [P])\n  · simpa only [P, Set.mem_Ioo, and_assoc] using between (1 / 2) (9 / 10) (by norm_num) (by norm_num [P])\n  · simpa only [P, Set.mem_Ioo, and_assoc] using between (9 / 10) 1 (by norm_num) (by norm_num [P])",
+      "mathematical_role": "Use explicit alternating rational endpoint signs and continuity to construct six distinct interior sextic roots in disjoint intervals."
+    }
+  ],
+  "analysis": "The sextic P(s)=200s^6−300s^4+117s²−3s−12 has at most six real roots. The signed linear cosine relation is essential: squaring alone can introduce a wrong cosine sign. Every admissible sine root with the recovered sign corresponds to one angle in (0,2pi], and the checked second bridge supports injectivity.",
+  "unclosed_root_obligations": [
+    "The six disjoint real root intervals are now covered by a separately checked IVT bridge; no assumption that the sextic merely has six roots is used.",
+    "Still need define c=(3s−1)/(5(1−4s²)), prove c²+s²=1 and construct an angle in (0,2pi] with this cosine and sine; then use the signed relation to restore the original triple-angle equation.",
+    "Finally need the Finset bijection/cardinality argument with at-most-six sextic roots and endpoint exclusions. These original-root steps have not been compiled and must not be labeled Lean failures."
+  ],
+  "authoring_owner": "author_algebra",
+  "assistant": "author_numbertheory",
+  "root_proved": false,
+  "provider_calls": 0,
+  "partial_validation": {
+    "all_bridges_passed": true,
+    "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\4458335800\\compiler.json",
+    "compiler_log_sha256": "597e3a0a7bd174267092fd7e8115918148256428e7107ba8287b1cc7c9a9efcf",
+    "checked_node_ids": [
+      "sine_elimination",
+      "same_sine_recovers_same_cosine"
+    ]
+  },
+  "additional_bridge_validation": {
+    "checked_node_ids": [
+      "six_disjoint_sine_root_intervals"
+    ],
+    "all_bridges_passed": true,
+    "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\8324084600\\compiler.json",
+    "compiler_log_sha256": "837db6cb83e839de2b5fc4967c4aa0e72060f69b4c5f0bc699359b83eaef4349"
+  },
+  "local_mathlib_api_investigation": [
+    {
+      "path": "L:\\project\\.lake\\packages\\mathlib\\Mathlib\\Topology\\Order\\IntermediateValue.lean",
+      "file_sha256": "263c72557bceaf1af41106efa43909666563dac9f790a01d715407c31cc3e0a4",
+      "symbols": "intermediate_value_Icc:527, intermediate_value_Icc':533"
+    },
+    {
+      "path": "L:\\project\\.lake\\packages\\mathlib\\Mathlib\\Analysis\\SpecialFunctions\\Trigonometric\\Angle.lean",
+      "file_sha256": "e2f90c894498c3f209b69bee47cffe564b02465edeeacfe5c98eaf7507066767",
+      "symbols": "Real.Angle.cos_sin_inj:234"
+    },
+    {
+      "path": "L:\\project\\.lake\\packages\\mathlib\\Mathlib\\Analysis\\SpecialFunctions\\Complex\\Arg.lean",
+      "file_sha256": "bb2607065087ce253b0fc8901543bdd96a9374296550d1635d0c0228b8ef6b02",
+      "symbols": "Complex.sin_arg:30, Complex.cos_arg:35, Complex.arg_le_pi:141, Complex.neg_pi_lt_arg:144"
+    }
+  ],
+  "disposition_recommendation": "partial_verified_original_root_unclosed",
+  "original_root_compilation_attempted": false,
+  "not_a_theorem_false_claim": true,
+  "integration_note": "Canonical author_algebra owns final authoring and disposition. Verified bridge source can be reused; no full-root success or full-root Lean failure is claimed.",
+  "uncompiled_angle_recovery_recipe": "For a sextic root s, set c=(3s−1)/(5(1−4s²)). Show the denominator is nonzero and c²+s²=1 by field arithmetic and P(s)=0. Form z=c+s*I with norm1; Complex.sin_arg/cos_arg recover the pair. Shift a negative arg by 2pi to enter (0,2pi], excluding angle0 using P(0)≠0. This is a concrete API route, not a compiled claim.",
+  "kind": "partial_mathematical_authoring_not_admissible_fixed_dag",
+  "imports": [
+    "Mathlib"
+  ],
+  "open_namespaces": [
+    "BigOperators",
+    "Real",
+    "Nat",
+    "Topology",
+    "Rat"
+  ],
+  "source_provenance": {
+    "repository": "https://github.com/yangky11/miniF2F-lean4",
+    "commit": "5746b7d6c47855ce1294bed87329618ff7f1bc31",
+    "relative_file": "MiniF2F/Test/amc12b_2021_p13.lean",
+    "file_sha256": "4d1b6c85b77dfb605222d3ad1bfc007f4a9cbf686c6e8fc60af6174869c0b416",
+    "original_declaration": "theorem amc12b_2021_p13\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 < x ∧ x ≤ 2 * Real.pi ∧ 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0) :\n  S.card = 6",
+    "source_split": "test",
+    "reference_proof_path": null,
+    "reference_proof_sha256": null
+  },
+  "admission_status": "excluded_incomplete_bridge",
+  "root_compilation_attempted": false,
+  "exclusion_reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The six disjoint real root intervals are now covered by a separately checked IVT bridge; no assumption that the sextic merely has six roots is used.; Still need define c=(3s−1)/(5(1−4s²)), prove c²+s²=1 and construct an angle in (0,2pi] with this cosine and sine; then use the signed relation to restore the original triple-angle equation.; Finally need the Finset bijection/cardinality argument with at-most-six sextic roots and endpoint exclusions. These original-root steps have not been compiled and must not be labeled Lean failures.",
+  "assistance_source_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12b_2021_p13.json",
+  "assistance_source_sha256": "f1fb2d9a23776e128fa1c30444b5cf63b79c04ad3f3211bcc494217c5bdf5b07"
+}

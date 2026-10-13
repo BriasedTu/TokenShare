@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_numbertheory_sumkmulnckeqnmul2pownm1",
+  "node_proof_sources": {
+    "marked_element_identity": "by\n  intro k hk\n  have hn : n ≠ 0 := by omega\n  have hkpos : k ≠ 0 := by simp only [Finset.mem_Icc] at hk; omega\n  obtain ⟨m, rfl⟩ := Nat.exists_eq_succ_of_ne_zero hn\n  obtain ⟨j, rfl⟩ := Nat.exists_eq_succ_of_ne_zero hkpos\n  simpa [Nat.mul_comm] using (Nat.succ_mul_choose_eq m j).symm",
+    "root": "by\n  have complete_row : (∑ j ∈ Finset.range n, Nat.choose (n - 1) j) = 2 ^ (n - 1) := by\n    have hn : n - 1 + 1 = n := by omega\n    simpa [hn] using Nat.sum_range_choose (n - 1)\n  calc\n    (∑ k ∈ Finset.Icc 1 n, k * Nat.choose n k) = ∑ k ∈ Finset.Icc 1 n, n * Nat.choose (n - 1) (k - 1) := by\n      apply Finset.sum_congr rfl\n      exact node_marked_element_identity\n    _ = n * (∑ j ∈ Finset.range n, Nat.choose (n - 1) j) := by\n      rw [Finset.mul_sum]\n      apply Finset.sum_bij' (fun k _ => k - 1) (fun j _ => j + 1)\n      all_goals\n        intro k hk\n        simp_all [Finset.mem_Icc, Finset.mem_range] <;> omega\n    _ = n * 2 ^ (n - 1) := by rw [complete_row]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

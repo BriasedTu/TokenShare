@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_imo_2019_p1",
+  "node_proof_sources": {
+    "additive_shift": "by\n  intro h a b\n  have hab := h a b\n  have hs := h 0 (a + b)\n  have ha := h a 0\n  have ha' := h 0 a\n  norm_num at hs ha ha'\n  omega",
+    "integer_affine_form": "by\n  intro h z\n  induction z using Int.induction_on with\n  | zero => ring\n  | succ i ih =>\n    have hs := h (i : ℤ) 1\n    rw [ih] at hs\n    nlinarith\n  | pred i ih =>\n    have hs := h (-(i : ℤ) - 1) 1\n    have he : -(i : ℤ) - 1 + 1 = -(i : ℤ) := by ring\n    rw [he, ih] at hs\n    nlinarith",
+    "root": "by\n  constructor\n  · intro h z\n    have hf := node_integer_affine_form (node_additive_shift h)\n    have e0 := h 0 0\n    have e1 := h 0 1\n    norm_num at e0 e1\n    rw [hf (f 0)] at e0\n    rw [hf (f 1)] at e1\n    have hs : f 1 - f 0 = 0 ∨ f 1 - f 0 = 2 := by\n      have he : (f 1 - f 0) * (f 1 - f 0 - 2) = 0 := by nlinarith\n      rcases mul_eq_zero.mp he with he | he\n      · exact Or.inl he\n      · right; omega\n    rcases hs with hs | hs\n    · left\n      have hz : f 0 = 0 := by nlinarith [e0]\n      rw [hf z, hs, hz]\n      ring\n    · right\n      refine ⟨f 0, ?_⟩\n      intro w\n      rw [hf w, hs]\n  · intro h\n    by_cases hz : ∀ z : ℤ, f z = 0\n    · intro a b\n      simp only [hz]\n      ring\n    · obtain ⟨z, hz⟩ := not_forall.mp hz\n      rcases h z with he | ⟨c, hc⟩\n      · exact False.elim (hz he)\n      · intro a b\n        simp only [hc]\n        ring"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

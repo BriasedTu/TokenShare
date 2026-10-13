@@ -1,0 +1,85 @@
+{
+  "case_id": "test/amc12a_2021_p12",
+  "original_declaration": "theorem amc12a_2021_p12\n  (a b c d : ℝ)\n  (f : ℂ → ℂ)\n  (h₀ : ∀ z, f z = z^6 - 10 * z^5 + a * z^4 + b * z^3 + c * z^2 + d * z + 16)\n  (h₁ : ∀ z, f z = 0 → (z.im = 0 ∧ 0 < z.re ∧ ↑(Int.floor z.re) = z.re)) :\n  b = -88",
+  "parameters_source": "(a b c d : ℝ)\n  (f : ℂ → ℂ)\n  (h₀ : ∀ z, f z = z^6 - 10 * z^5 + a * z^4 + b * z^3 + c * z^2 + d * z + 16)\n  (h₁ : ∀ z, f z = 0 → (z.im = 0 ∧ 0 < z.re ∧ ↑(Int.floor z.re) = z.re))",
+  "statement_source": "b = -88",
+  "source_path": "upstream/MiniF2F/Test/amc12a_2021_p12.lean",
+  "source_sha256": "111e0ddac6284b5b2709b8f37100caa2c124fee2c02cd5d09fa0ab9a27c3a859",
+  "nodes": [
+    {
+      "node_id": "complex_roots_are_positive_naturals",
+      "statement_source": "∀ z : ℂ, f z = 0 → ∃ n : ℕ, 0 < n ∧ z = (n : ℂ)",
+      "dependencies": [],
+      "proof_source": "by\n  intro z hz\n  obtain ⟨him, hrpos, hfloor⟩ := h₁ z hz\n  have hn : 0 ≤ Int.floor z.re := Int.floor_nonneg.mpr hrpos.le\n  have ht : ((Int.floor z.re).toNat : ℤ) = Int.floor z.re := Int.toNat_of_nonneg hn\n  have hr : ((Int.floor z.re).toNat : ℝ) = z.re := by\n    calc\n      _ = (Int.floor z.re : ℝ) := by exact_mod_cast ht\n      _ = z.re := hfloor\n  refine ⟨(Int.floor z.re).toNat, ?_, ?_⟩\n  · have hpos : 0 < ((Int.floor z.re).toNat : ℝ) := by rw [hr]; exact hrpos\n    exact_mod_cast hpos\n  · apply Complex.ext\n    · simpa using hr.symm\n    · simpa using him",
+      "mathematical_role": "Convert the original floor-based zero predicate into positive natural roots, retaining the imaginary-part requirement."
+    },
+    {
+      "node_id": "ordered_six_root_classification",
+      "statement_source": "∀ r₁ r₂ r₃ r₄ r₅ r₆ : ℕ, (1 ≤ r₁ ∧ r₁ ≤ r₂ ∧ r₂ ≤ r₃ ∧ r₃ ≤ r₄ ∧ r₄ ≤ r₅ ∧ r₅ ≤ r₆) → r₁ + r₂ + r₃ + r₄ + r₅ + r₆ = 10 → r₁ * r₂ * r₃ * r₄ * r₅ * r₆ = 16 → (r₁, r₂, r₃, r₄, r₅, r₆) = (1, 1, 2, 2, 2, 2)",
+      "dependencies": [],
+      "proof_source": "by\n  intro r₁ r₂ r₃ r₄ r₅ r₆ ho hs hp\n  have h1 : r₁ = 1 := by omega\n  have h2 : r₂ = 1 := by omega\n  subst r₁\n  subst r₂\n  norm_num at hs hp\n  have h3lo : 1 ≤ r₃ := by omega\n  have h3hi : r₃ ≤ 2 := by omega\n  interval_cases r₃\n  · have h4lo : 1 ≤ r₄ := by omega\n    have h4hi : r₄ ≤ 2 := by omega\n    interval_cases r₄\n    · norm_num at hs hp\n      nlinarith [sq_nonneg ((r₅ : ℤ) - r₆)]\n    · have h5 : r₅ = 2 := by omega\n      have h6 : r₆ = 3 := by omega\n      subst r₅\n      subst r₆\n      norm_num at hp\n  · have h4 : r₄ = 2 := by omega\n    have h5 : r₅ = 2 := by omega\n    have h6 : r₆ = 2 := by omega\n    simp [h4, h5, h6]",
+      "mathematical_role": "Use multiplicity, ordering, Vieta sum and product to force the six positive integer roots to be exactly two ones and four twos."
+    }
+  ],
+  "analysis": "Define P ∈ ℂ[X] from the polynomial expression. FTA gives splitting and six roots counted with multiplicity; h₁ and the first bridge turn them into positive naturals. Vieta yields sum10 and product16. Sorting lets the second bridge force [1,1,2,2,2,2]. Thus f(z)=(z−1)²(z−2)^4=z⁶−10z⁵+41z⁴−88z³+104z²−64z+16, so coefficient comparison gives b=−88.",
+  "unclosed_root_obligations": [
+    "The remaining formal bridge must define the complex polynomial and prove monic/natDegree6/eval=f, then use FTA and multiset roots with multiplicity.",
+    "Connect Polynomial.nextCoeff_eq_neg_sum_roots_of_monic_of_splits and Polynomial.coeff_zero_eq_prod_roots_of_monic_of_splits to a sorted six-tuple of positive naturals; mere enumeration of the distinct zero set is insufficient.",
+    "Use Polynomial.eq_prod_roots_of_monic_of_splits_id for factorization, then coefficient comparison or four real-part evaluations to conclude b=−88."
+  ],
+  "authoring_owner": "author_algebra",
+  "assistant": "author_numbertheory",
+  "root_proved": false,
+  "provider_calls": 0,
+  "partial_validation": {
+    "all_bridges_passed": true,
+    "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\d90491ff\\7599902700\\compiler.json",
+    "compiler_log_sha256": "19ca0ec33b88c24e7fa01ee83e3f935dd4db4b2a912966da8e3603bfda50559a",
+    "checked_node_ids": [
+      "complex_roots_are_positive_naturals",
+      "ordered_six_root_classification"
+    ]
+  },
+  "local_mathlib_api_investigation": [
+    {
+      "path": "L:\\project\\.lake\\packages\\mathlib\\Mathlib\\Analysis\\Complex\\Polynomial\\Basic.lean",
+      "file_sha256": "73f3dec4b2752cca85bc0a68f67ed1e0b99620c5ecee19b4bb69dd36603d5115",
+      "symbols": "Complex.isAlgClosed:46"
+    },
+    {
+      "path": "L:\\project\\.lake\\packages\\mathlib\\Mathlib\\Algebra\\Polynomial\\Splits.lean",
+      "file_sha256": "8fca911e177ff929923c39c69c1c83e6792d107f8a6973023203f80897f5d1b1",
+      "symbols": "Polynomial.natDegree_eq_card_roots:340, Polynomial.eq_prod_roots_of_monic_of_splits_id:407, Polynomial.coeff_zero_eq_prod_roots_of_monic_of_splits:588, Polynomial.nextCoeff_eq_neg_sum_roots_of_monic_of_splits:597"
+    }
+  ],
+  "disposition_recommendation": "partial_verified_original_root_unclosed",
+  "original_root_compilation_attempted": false,
+  "not_a_theorem_false_claim": true,
+  "integration_note": "Canonical author_algebra owns final authoring and disposition. Verified bridge source can be reused; no full-root success or full-root Lean failure is claimed.",
+  "kind": "partial_mathematical_authoring_not_admissible_fixed_dag",
+  "imports": [
+    "Mathlib"
+  ],
+  "open_namespaces": [
+    "BigOperators",
+    "Real",
+    "Nat",
+    "Topology",
+    "Rat"
+  ],
+  "source_provenance": {
+    "repository": "https://github.com/yangky11/miniF2F-lean4",
+    "commit": "5746b7d6c47855ce1294bed87329618ff7f1bc31",
+    "relative_file": "MiniF2F/Test/amc12a_2021_p12.lean",
+    "file_sha256": "111e0ddac6284b5b2709b8f37100caa2c124fee2c02cd5d09fa0ab9a27c3a859",
+    "original_declaration": "theorem amc12a_2021_p12\n  (a b c d : ℝ)\n  (f : ℂ → ℂ)\n  (h₀ : ∀ z, f z = z^6 - 10 * z^5 + a * z^4 + b * z^3 + c * z^2 + d * z + 16)\n  (h₁ : ∀ z, f z = 0 → (z.im = 0 ∧ 0 < z.re ∧ ↑(Int.floor z.re) = z.re)) :\n  b = -88",
+    "source_split": "test",
+    "reference_proof_path": null,
+    "reference_proof_sha256": null
+  },
+  "admission_status": "excluded_incomplete_bridge",
+  "root_compilation_attempted": false,
+  "exclusion_reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The remaining formal bridge must define the complex polynomial and prove monic/natDegree6/eval=f, then use FTA and multiset roots with multiplicity.; Connect Polynomial.nextCoeff_eq_neg_sum_roots_of_monic_of_splits and Polynomial.coeff_zero_eq_prod_roots_of_monic_of_splits to a sorted six-tuple of positive naturals; mere enumeration of the distinct zero set is insufficient.; Use Polynomial.eq_prod_roots_of_monic_of_splits_id for factorization, then coefficient comparison or four real-part evaluations to conclude b=−88.",
+  "assistance_source_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12a_2021_p12.json",
+  "assistance_source_sha256": "2a7c99d483439cc8da39055ace1c9000ab257dce14615b88fc515f9abcd6f700"
+}

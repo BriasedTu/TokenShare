@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_algebra_apbmpcneq0_aeq0anbeq0anceq0",
+  "node_proof_sources": {
+    "cube_root_irrational": "by\n  apply irrational_nrt_of_notint_nrt 3 2 (by simpa using h₁) _ (by norm_num)\n  rintro ⟨y, hy⟩\n  have hy0 : 0 < y := by exact_mod_cast (hy ▸ h₀.1)\n  have hc : y^3=2 := by exact_mod_cast (hy ▸ h₁)\n  have hy2 : 2 ≤ y := by\n    by_contra hn\n    have he : y=1 := by omega\n    norm_num [he] at hc\n  have hp := pow_le_pow_left₀ (by norm_num : (0:ℤ) ≤ 2) hy2 3\n  norm_num [hc] at hp",
+    "root": "by\n  rw [node_root_square_relation] at h₃\n  have he : ((a*c-b^2:ℚ):ℝ)*m + (2*c^2-a*b:ℚ)=0 := by\n    push_cast\n    linear_combination c*m*h₃ - b*h₃ - c^2*h₁\n  have hd : a*c-b^2=0 := by\n    by_contra hn\n    have hnr : ((a*c-b^2:ℚ):ℝ) ≠ 0 := by exact_mod_cast hn\n    apply node_cube_root_irrational.ne_rat ((a*b-2*c^2)/(a*c-b^2))\n    push_cast\n    push_cast at hnr he\n    apply (eq_div_iff hnr).2\n    nlinarith only [he]\n  have hdr : (a:ℝ)*c-b^2=0 := by exact_mod_cast hd\n  have hp := congrArg (fun t:ℝ => t*(c:ℝ)) h₃\n  have hc : (c:ℝ)=0 := by\n    have hs := sq_nonneg ((b:ℝ)+2*c*m)\n    have hb0 : (b:ℝ)=0 := by nlinarith only [hp,hdr,hs,sq_nonneg (c*m)]\n    have hcm : (c:ℝ)*m=0 := by nlinarith only [hp,hdr,hb0,sq_nonneg (c*m)]\n    exact (mul_eq_zero.mp hcm).resolve_right h₀.1.ne'\n  have hb : (b:ℝ)=0 := by\n    rw [hc] at hdr\n    have hz : (b:ℝ)^2=0 := by nlinarith only [hdr]\n    exact sq_eq_zero_iff.mp hz\n  have ha : (a:ℝ)=0 := by rw [hc,hb] at h₃; simpa using h₃\n  exact ⟨by exact_mod_cast ha, by exact_mod_cast hb, by exact_mod_cast hc⟩",
+    "root_square_relation": "by\n  apply (pow_left_inj₀ h₀.2.le (sq_nonneg m) (by norm_num : (3:ℕ) ≠ 0)).1\n  rw [h₂]\n  calc\n    (4:ℝ)=(m^3)^2 := by rw [h₁]; norm_num\n    _=(m^2)^3 := by ring"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

@@ -1,0 +1,1 @@
+'algebra_amgm_sum1toneqn_prod1tonleq1' depends on axioms: [propext, Classical.choice, Quot.sound]

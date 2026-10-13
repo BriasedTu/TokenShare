@@ -1,0 +1,31 @@
+{
+  "case_id": "test/imo_1969_p2",
+  "original_declaration": "theorem imo_1969_p2\n  (m n : ℝ)\n  (k : ℕ)\n  (a : ℕ → ℝ)\n  (y : ℝ → ℝ)\n  (h₀ : 0 < k)\n  (h₁ : ∀ x, y x = ∑ i ∈ Finset.range k, ((Real.cos (a i + x)) / (2^i)))\n  (h₂ : y m = 0)\n  (h₃ : y n = 0) :\n  ∃ t : ℤ, m - n = t * π",
+  "source_file": "upstream/MiniF2F/Test/imo_1969_p2.lean",
+  "source_sha256": "99abef4185c6b2a12876da9a8137bb724681971923f409a44270de5833b9271e",
+  "partial_statement": "∀ A B : ℝ, (A ≠ 0 ∨ B ≠ 0) → A * Real.cos m + B * Real.sin m = 0 → A * Real.cos n + B * Real.sin n = 0 → Real.sin (m - n) = 0",
+  "partial_proof": "by\n  intro A B hab hm hn\n  have hA : A * Real.sin (m - n) = 0 := by\n    rw [Real.sin_sub]\n    nlinarith [congrArg (fun z : ℝ => z * Real.sin m) hn, congrArg (fun z : ℝ => z * Real.sin n) hm]\n  have hB : B * Real.sin (m - n) = 0 := by\n    rw [Real.sin_sub]\n    nlinarith [congrArg (fun z : ℝ => z * Real.cos m) hn, congrArg (fun z : ℝ => z * Real.cos n) hm]\n  rcases hab with ha | hb\n  · exact (mul_eq_zero.mp hA).resolve_left ha\n  · exact (mul_eq_zero.mp hB).resolve_left hb",
+  "mathematical_route": "Expand every phase as A cos x+B sin x. A nonzero amplitude and the checked determinant lemma imply sin(m-n)=0, hence an integer multiple of pi.",
+  "unresolved_full_proof_obligation": "Need prove the finite weighted phasor amplitude is nonzero from the leading term of modulus 1 and strictly smaller geometric tail, and connect the finite trigonometric sum to those coefficients.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(m n : ℝ)\n  (k : ℕ)\n  (a : ℕ → ℝ)\n  (y : ℝ → ℝ)\n  (h₀ : 0 < k)\n  (h₁ : ∀ x, y x = ∑ i ∈ Finset.range k, ((Real.cos (a i + x)) / (2^i)))\n  (h₂ : y m = 0)\n  (h₃ : y n = 0)",
+  "partial_start_line": 8,
+  "partial_block_sha256": "caaaae34db75163e5160c8417871cda27203406569017a28b39b76c9becf9df3",
+  "partial_end_line": 27,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json",
+  "compiler_log_sha256": "d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: complex phasor norm and reverse triangle inequality would avoid a real two-coordinate amplitude estimate, but still requires the strict finite geometric-tail bound and finite-sum expansion.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ A B : ℝ, (A ≠ 0 ∨ B ≠ 0) → A * Real.cos m + B * Real.sin m = 0 → A * Real.cos n + B * Real.sin n = 0 → Real.sin (m - n) = 0",
+      "source_sha256": "caaaae34db75163e5160c8417871cda27203406569017a28b39b76c9becf9df3",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json"
+    }
+  ]
+}

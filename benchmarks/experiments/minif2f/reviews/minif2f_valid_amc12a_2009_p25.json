@@ -1,0 +1,45 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12a_2009_p25",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.341203+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/a086b2c78c4f112b/result.json",
+    "result_sha256": "sha256:9934d4ab651061fba25db3df753ceeeb8097072489f6b422a7a47a994ff1258b"
+  },
+  "mathematical_review": "An exact algebraic orbit over Q(sqrt 3) checks all intermediate denominators and the repeated initial pair; paired induction extends its period and the root reduces index 2009 to the verified zero.",
+  "node_proofs_digest": "sha256:f83d23280079a192550bba0296eeb42ae8d2c6b16b6249dfec1209bdb7948939",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Verify the exact 24-step algebraic orbit in Q(sqrt 3), including its zero term and repeated initial pair.",
+      "node_id": "initial_period"
+    },
+    {
+      "dependencies": [
+        "initial_period"
+      ],
+      "mathematical_role": "Propagate the repeated pair through the rational recurrence; no trigonometric periodicity is assumed.",
+      "node_id": "period_twenty_four"
+    },
+    {
+      "dependencies": [
+        "initial_period",
+        "period_twenty_four"
+      ],
+      "mathematical_role": "Reduce 2009 modulo the proved 24-step period to the established zero at index 17.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:e705551e4319d2467def433d946a04d41ebaa5b0b759f69573ba510cf8b75f35",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.339695+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

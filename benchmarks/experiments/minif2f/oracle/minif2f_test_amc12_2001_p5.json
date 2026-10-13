@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12_2001_p5",
+  "node_proof_sources": {
+    "factorial_pair_partition": "by\n  intro n\n  induction n with\n  | zero => norm_num\n  | succ n ih =>\n    rw [show 2*(n+1)=2*n+1+1 by omega, Nat.factorial_succ, Nat.factorial_succ, ih, Finset.prod_range_succ, Nat.factorial_succ, pow_succ]\n    ring",
+    "odd_filter_reindex": "by\n  intro n\n  symm\n  apply Finset.prod_bij (fun i _ => 2*i+1)\n  · intro i hi\n    simp only [Finset.mem_range] at hi\n    simp only [Finset.mem_filter, Finset.mem_range, Nat.even_iff]\n    omega\n  · intro i hi j hj he\n    omega\n  · intro k hk\n    simp only [Finset.mem_filter, Finset.mem_range, Nat.even_iff] at hk\n    refine ⟨k/2, ?_, ?_⟩\n    · simp only [Finset.mem_range]; omega\n    · omega\n  · intro i hi\n    rfl",
+    "root": "by\n  have h1 := node_odd_filter_reindex 5000\n  have h2 := node_factorial_pair_partition 5000\n  simp only [show 2*5000=10000 by rfl] at h1 h2\n  change (∏ k ∈ (Finset.range 10000).filter (fun k => ¬Even k), k) = (10000)!/(2^5000*(5000 !))\n  rw [h1,h2]\n  symm\n  exact Nat.mul_div_right _ (by positivity)"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

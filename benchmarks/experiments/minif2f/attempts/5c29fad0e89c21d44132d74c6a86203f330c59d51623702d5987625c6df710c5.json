@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/imo_1967_p3",
+  "original_declaration": "theorem imo_1967_p3 (k m n : ℕ) (c : ℕ → ℕ) (h₀ : 0 < k ∧ 0 < m ∧ 0 < n)\n  (h₁ : ∀ s, c s = s * (s + 1)) (h₂ : Nat.Prime (k + m + 1)) (h₃ : n + 1 < k + m + 1) :\n  (∏ i ∈ Finset.Icc 1 n, c i) ∣ ∏ i ∈ Finset.Icc 1 n, c (m + i) - c k",
+  "source_file": "upstream/MiniF2F/Valid/imo_1967_p3.lean",
+  "source_sha256": "5b5f1596cd8ec8a7ad2ab50317b82268eb3121c2788c471316c4dc88d24351a0",
+  "partial_statement": "∀ s : ℕ, c s - c k = (s - k) * (s + k + 1)",
+  "partial_proof": "by\n  intro s\n  rw [h₁, h₁]\n  by_cases hk : k ≤ s\n  · have hs : k * (k + 1) ≤ s * (s + 1) := Nat.mul_le_mul hk (by omega)\n    have hsub := Nat.sub_add_cancel hs\n    have hsk := Nat.sub_add_cancel hk\n    nlinarith\n  · have hs : s * (s + 1) ≤ k * (k + 1) := Nat.mul_le_mul (by omega) (by omega)\n    simp [Nat.sub_eq_zero_of_le hs, Nat.sub_eq_zero_of_le (show s ≤ k by omega)]",
+  "mathematical_route": "Factor every shifted quadratic difference while respecting natural truncated subtraction, including the zero-factor case. The two linear-factor products should be related to factorial quotients.",
+  "unresolved_full_proof_obligation": "Need prove divisibility of the entire product by n!(n+1)!, using primality of k+m+1 to justify cancellation of the needed denominator factors. Pointwise factorization alone does not establish this global divisibility.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(k m n : ℕ) (c : ℕ → ℕ) (h₀ : 0 < k ∧ 0 < m ∧ 0 < n)\n  (h₁ : ∀ s, c s = s * (s + 1)) (h₂ : Nat.Prime (k + m + 1)) (h₃ : n + 1 < k + m + 1)",
+  "partial_start_line": 27,
+  "partial_block_sha256": "f10dbc076e8727005dc9dcf0b1aa7b07119757e67455d278f331ac900ccd4fbf",
+  "partial_end_line": 39,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+  "compiler_log_sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: binomial-coefficient integrality after expanding both products. Natural truncated subtraction and prime cancellation across the denominator require separate formal treatment.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ s : ℕ, c s - c k = (s - k) * (s + k + 1)",
+      "source_sha256": "f10dbc076e8727005dc9dcf0b1aa7b07119757e67455d278f331ac900ccd4fbf",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json"
+    }
+  ]
+}

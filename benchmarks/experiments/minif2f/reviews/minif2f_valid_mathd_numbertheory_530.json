@@ -1,0 +1,43 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_mathd_numbertheory_530",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:29.094598+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/31939924fccc75fd/result.json",
+    "result_sha256": "sha256:7e8c022259071e82e4401ff41e1d2212fadeab140ac1e3a9e007cdc7babcc4ca"
+  },
+  "mathematical_review": "An independent discrete ratio bound constrains any reduced pair, while gcd extraction transports the original ratio; combine with the gcd-lcm product identity.",
+  "node_proofs_digest": "sha256:46a30cd4a478b5a3616921d318124b173586ce8effea8f2e84039b726279c0aa",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Use the strict rational interval and integer discreteness to force reduced denominator at least two and numerator at least eleven.",
+      "node_id": "integer_ratio_bound"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Extract the common gcd factor and transfer the real ratio to a shared pair of reduced integer witnesses.",
+      "node_id": "gcd_reduction_data"
+    },
+    {
+      "dependencies": [
+        "integer_ratio_bound",
+        "gcd_reduction_data"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:80f6f7bb3fdacb458deddcf0794a7921d0d5063a3b3a80f5ea62221daadf7136",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:29.093600+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

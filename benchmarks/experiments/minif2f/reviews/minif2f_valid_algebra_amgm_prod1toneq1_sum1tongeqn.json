@@ -1,0 +1,52 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_algebra_amgm_prod1toneq1_sum1tongeqn",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.099369+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/89a66a611b9dfdd4/result.json",
+    "result_sha256": "sha256:20d9d66e76da6791c1532bc840cdf3232da11f0ce30fecc053674257c2fc2f6b"
+  },
+  "mathematical_review": "The product-one constraint forces positive factors; independent logarithmic conservation and a summed tangent inequality then give the original arithmetic-sum bound. The former normalized-root restatement was replaced by these substantive prerequisites.",
+  "node_proofs_digest": "sha256:b18f3fe82886197603b6356b0ebc564d998448841aa1ea6cef788d0da63c9fd1",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "A nonzero product of nonnegative entries forces every contributing factor to be positive.",
+      "node_id": "positive_factors"
+    },
+    {
+      "dependencies": [
+        "positive_factors"
+      ],
+      "mathematical_role": "The multiplicative constraint becomes an additive conservation law for logarithms.",
+      "node_id": "logarithmic_conservation"
+    },
+    {
+      "dependencies": [
+        "positive_factors"
+      ],
+      "mathematical_role": "Sum the concavity tangent inequality log t≤t−1 over the positive factors.",
+      "node_id": "summed_tangent_bound"
+    },
+    {
+      "dependencies": [
+        "logarithmic_conservation",
+        "summed_tangent_bound"
+      ],
+      "mathematical_role": "Combine the conserved logarithmic sum with the tangent bound and return to NNReal.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:ab90b294b291667077c7404a9fa699b05dac91df64634dee7c6d964cc01fdc5b",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.099369+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

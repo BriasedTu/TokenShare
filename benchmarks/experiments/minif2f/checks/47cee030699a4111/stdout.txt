@@ -1,0 +1,1 @@
+'numbertheory_3pow2pownm1mod2pownp3eq2pownp2' depends on axioms: [propext, Classical.choice, Quot.sound]

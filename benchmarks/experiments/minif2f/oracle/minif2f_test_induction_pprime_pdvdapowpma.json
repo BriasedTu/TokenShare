@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_test_induction_pprime_pdvdapowpma",
+  "node_proof_sources": {
+    "frobenius_successor_step": "by\n  letI : Fact p.Prime := ⟨h₁⟩\n  intro n\n  apply (ZMod.natCast_eq_natCast_iff _ _ p).mp\n  push_cast\n  simp [add_pow_char]",
+    "root": "by\n  have hmod : ∀ n : ℕ, n ^ p ≡ n [MOD p] := by\n    intro n\n    induction n with\n    | zero => simp [Nat.ModEq, h₁.ne_zero]\n    | succ n ih => exact (node_frobenius_successor_step n).trans (ih.add (Nat.ModEq.refl 1))\n  exact (Nat.modEq_iff_dvd' (Nat.le_self_pow h₁.ne_zero a)).mp (hmod a).symm"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

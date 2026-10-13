@@ -1,0 +1,37 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12a_2019_p9",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:29.600117+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/b144b49bf3ae04a1/result.json",
+    "result_sha256": "sha256:599d066ce2ba1ffdf228accd3709c67f629cf28ccc88ba0981b3ca5cbc0a271b"
+  },
+  "mathematical_review": "Prove the paired closed form for consecutive rational recurrence terms with all denominator obligations, then specialize and compute the reduced rational data.",
+  "node_proofs_digest": "sha256:809c1f6e7c25e811f615fdbd8435a7ab28e0ac8b908bf29bc60a86fc092e1fc4",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Solve the second-order rational recurrence by induction on a pair of consecutive terms.",
+      "node_id": "rational_closed_form"
+    },
+    {
+      "dependencies": [
+        "rational_closed_form"
+      ],
+      "mathematical_role": "Specialize the closed form at 2019 and use reduced rational numerator/denominator arithmetic.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:bdf66768fc849c0092d9ea8c84149543461dce51bc36afcdb6911b2cff6cb847",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:29.600117+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

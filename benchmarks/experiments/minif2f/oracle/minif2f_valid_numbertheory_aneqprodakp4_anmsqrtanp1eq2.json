@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_numbertheory_aneqprodakp4_anmsqrtanp1eq2",
+  "node_proof_sources": {
+    "quadratic_recurrence": "by\n  intro n hn\n  obtain ⟨m, rfl⟩ := Nat.exists_eq_succ_of_ne_zero (by omega : n ≠ 0)\n  have hp := h₁ m\n  have hn := h₁ (m + 1)\n  rw [Finset.prod_range_succ] at hn\n  have hp' : (∏ k ∈ Finset.range (m + 1), a k) = a (m + 1) - 4 := by linarith\n  change a (m + 1 + 1) = (a (m + 1) - 2) ^ 2\n  rw [hn, hp']\n  ring",
+    "root": "by\n  intro n hn\n  rw [node_quadratic_recurrence n hn, Real.sqrt_sq (by linarith [node_uniform_lower_bound n hn])]\n  ring",
+    "uniform_lower_bound": "by\n  intro n hn\n  induction n, hn using Nat.le_induction with\n  | base =>\n      have hb := h₁ 0\n      norm_num [h₀] at hb\n      linarith\n  | succ n hn ih =>\n      rw [node_quadratic_recurrence n hn]\n      nlinarith"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

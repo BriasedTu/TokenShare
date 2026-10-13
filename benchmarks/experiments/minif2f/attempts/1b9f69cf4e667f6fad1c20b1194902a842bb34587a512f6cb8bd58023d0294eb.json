@@ -1,0 +1,31 @@
+{
+  "case_id": "test/imo_1984_p6",
+  "original_declaration": "theorem imo_1984_p6\n  (a b c d k m : ℕ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d)\n  (h₁ : Odd a ∧ Odd b ∧ Odd c ∧ Odd d)\n  (h₂ : a < b ∧ b < c ∧ c < d)\n  (h₃ : a * d = b * c)\n  (h₄ : a + d = 2^k)\n  (h₅ : b + c = 2^m) :\n  a = 1",
+  "source_file": "upstream/MiniF2F/Test/imo_1984_p6.lean",
+  "source_sha256": "725856c347bd4c36410668f314917e4d9275f5199c00ac34bb7cd59e3b496850",
+  "partial_statement": "a + d > b + c",
+  "partial_proof": "by\n  have hp : 0 < ((d : ℤ) - c) * ((d : ℤ) - b) := mul_pos (by omega) (by omega)\n  zify at h₃ ⊢\n  nlinarith",
+  "mathematical_route": "Strict ordering and ad=bc force the outer sum above the inner sum, so k>m; factor the common ratio with coprime odd numerator/denominator.",
+  "unresolved_full_proof_obligation": "The unresolved bridge is classifying odd factors of the two powers-of-two sums after the coprime ratio parametrization, in a way that forces the smallest entry to equal 1.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(a b c d k m : ℕ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d)\n  (h₁ : Odd a ∧ Odd b ∧ Odd c ∧ Odd d)\n  (h₂ : a < b ∧ b < c ∧ c < d)\n  (h₃ : a * d = b * c)\n  (h₄ : a + d = 2^k)\n  (h₅ : b + c = 2^m)",
+  "partial_start_line": 28,
+  "partial_block_sha256": "a645a0db7316500d5a85127c45270a9fd2d36372128651483fa2ede6f669c67e",
+  "partial_end_line": 39,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json",
+  "compiler_log_sha256": "d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: prime factorization of both power-of-two sums instead of ratio parametrization; the common odd factor and coprimality cancellation still need a full classification argument.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "a + d > b + c",
+      "source_sha256": "a645a0db7316500d5a85127c45270a9fd2d36372128651483fa2ede6f669c67e",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json"
+    }
+  ]
+}

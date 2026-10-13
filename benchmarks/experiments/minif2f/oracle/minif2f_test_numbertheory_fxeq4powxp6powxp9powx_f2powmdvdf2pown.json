@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_test_numbertheory_fxeq4powxp6powxp9powx_f2powmdvdf2pown",
+  "node_proof_sources": {
+    "doubling_factorization": "by\n  intro k\n  have hb : 6 ^ k ≤ 4 ^ k + 9 ^ k := by\n    have h : 6 ^ k ≤ 9 ^ k := Nat.pow_le_pow_left (by decide) k\n    exact h.trans (Nat.le_add_left _ _)\n  have he := Nat.sub_add_cancel hb\n  have he' := congrArg (fun z : ℕ => z * (4 ^ k + 6 ^ k + 9 ^ k)) he\n  have hc : 4 ^ k * 9 ^ k = (6 ^ k) ^ 2 := by\n    rw [pow_two, ← mul_pow, ← mul_pow]\n    norm_num\n  have p4 : 4 ^ (2 * k) = (4 ^ k) ^ 2 := by rw [Nat.mul_comm 2 k, pow_mul]\n  have p6 : 6 ^ (2 * k) = (6 ^ k) ^ 2 := by rw [Nat.mul_comm 2 k, pow_mul]\n  have p9 : 9 ^ (2 * k) = (9 ^ k) ^ 2 := by rw [Nat.mul_comm 2 k, pow_mul]\n  rw [h₀, h₀, p4, p6, p9]\n  nlinarith only [he', hc]",
+    "root": "by\n  have step : ∀ k : ℕ, f k ∣ f (2 * k) := by\n    intro k\n    exact ⟨4 ^ k + 9 ^ k - 6 ^ k, node_doubling_factorization k⟩\n  have iteration : ∀ r : ℕ, m ≤ r → f (2 ^ m) ∣ f (2 ^ r) := by\n    intro r hr\n    induction r, hr using Nat.le_induction with\n    | base => exact dvd_rfl\n    | succ r hr ih =>\n      have hs := step (2 ^ r)\n      have hs' : f (2 ^ r) ∣ f (2 ^ (r + 1)) := by simpa [pow_succ, Nat.mul_comm] using hs\n      exact ih.trans hs'\n  exact iteration n h₂"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

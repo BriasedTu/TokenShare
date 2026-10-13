@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "command": [
+    "L:\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\8324084600\\bridges.lean"
+  ],
+  "cwd": "L:\\project",
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\8324084600\\bridges.lean",
+  "source_sha256": "4e1abccce7f2a167c7a8896376fa87540df96e3ff6cebf1bc0735fafc1820f04",
+  "duration_seconds": 29.37365961074829,
+  "segments": [
+    {
+      "node_id": "six_disjoint_sine_root_intervals",
+      "start_line": 8,
+      "end_line": 44,
+      "proof_sha256": "1f1d10d24170862278eff8a6c13354da38232fb94fc2e1d5d5b61feb98ac4a26",
+      "segment_sha256": "0473e11f8eee104d58e96d3f59fa7ea434c1e910c382a5a17c78043442b7c738"
+    }
+  ],
+  "root_proved": false,
+  "provider_calls": 0
+}

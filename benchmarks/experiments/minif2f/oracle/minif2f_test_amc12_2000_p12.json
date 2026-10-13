@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12_2000_p12",
+  "node_proof_sources": {
+    "cubic_bound": "by\n  have hc : c ≤ 12 := by omega\n  have hcr : (c:ℝ) ≤ 12 := by exact_mod_cast hc\n  have hp := mul_nonneg (sq_nonneg ((c:ℝ)-4)) (by linarith : 0 ≤ 19-(c:ℝ))\n  nlinarith",
+    "pair_bound": "by\n  nlinarith [sq_nonneg ((a:ℝ)-m)]",
+    "root": "by\n  have hs : (a:ℝ)+m+c=12 := by exact_mod_cast h₀\n  have he : (a:ℝ)+m+2=14-(c:ℝ) := by linarith\n  have hp := mul_le_mul_of_nonneg_right node_pair_bound (by positivity : 0 ≤ (c:ℝ)+1)\n  rw [he] at hp\n  have hf : (a:ℝ)*m*c+a*m+m*c+a*c ≤ 112 := by nlinarith\n  exact_mod_cast hf"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

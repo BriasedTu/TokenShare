@@ -1,0 +1,1 @@
+'algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4' depends on axioms: [propext, Classical.choice, Quot.sound]

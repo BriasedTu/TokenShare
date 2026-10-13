@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/imo_1990_p3",
+  "original_declaration": "theorem imo_1990_p3 (n : ℕ) (h₀ : 2 ≤ n) (h₁ : n ^ 2 ∣ 2 ^ n + 1) : n = 3",
+  "source_file": "upstream/MiniF2F/Valid/imo_1990_p3.lean",
+  "source_sha256": "f68fcb7751a2b7230e17e774f1c78cacb454b54368e8add434e6b53f42a64c31",
+  "partial_statement": "n % 2 = 1",
+  "partial_proof": "by\n  by_contra hn\n  have he : 2 ∣ n := Nat.dvd_of_mod_eq_zero (by omega)\n  have hpow : 2 ∣ 2 ^ n := dvd_pow_self 2 (by omega : n ≠ 0)\n  have hn2 : 2 ∣ n ^ 2 := he.trans (dvd_pow_self n (by decide : 2 ≠ 0))\n  have hsum : 2 ∣ 2 ^ n + 1 := hn2.trans h₁\n  have hc : 2 ∣ 1 := (Nat.dvd_add_iff_right hpow).mpr hsum\n  norm_num at hc",
+  "mathematical_route": "First exclude all even n using divisibility parity. For odd n, use the smallest prime divisor and multiplicative order of 2, followed by a valuation argument.",
+  "unresolved_full_proof_obligation": "The unresolved bridge is proving that every prime divisor of n must be 3 and bounding its exponent through the stronger n² divisibility. Parity only excludes half the integers and does not establish n=3.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(n : ℕ) (h₀ : 2 ≤ n) (h₁ : n ^ 2 ∣ 2 ^ n + 1)",
+  "partial_start_line": 35,
+  "partial_block_sha256": "78eb36421e95d70dcacb7a631d0b53eec2fa401f07f87024a5544f613ed53bf2",
+  "partial_end_line": 44,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+  "compiler_log_sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: multiplicative-order divisibility followed by lifting-the-exponent, versus direct smallest-prime descent. Both need an argument excluding odd prime divisors other than 3.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "n % 2 = 1",
+      "source_sha256": "78eb36421e95d70dcacb7a631d0b53eec2fa401f07f87024a5544f613ed53bf2",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json"
+    }
+  ]
+}

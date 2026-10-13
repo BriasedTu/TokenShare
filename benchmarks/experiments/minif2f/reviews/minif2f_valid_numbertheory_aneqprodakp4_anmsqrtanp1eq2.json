@@ -1,0 +1,45 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_numbertheory_aneqprodakp4_anmsqrtanp1eq2",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:17:59.542355+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/a6b4d38e74d1401c/result.json",
+    "result_sha256": "sha256:5491d6b5aa19c120d5ee6c10c9a2770181e2a6306d828b1ef8d48d185b5a4882"
+  },
+  "mathematical_review": "Eliminate the finite product to obtain a quadratic one-step recurrence, inductively bound the sequence, and use that sign bound to take the principal square root.",
+  "node_proofs_digest": "sha256:af5d15c9a1280e9bcab48b9d9f920b85a8fb1e847070a827dd278579bf478150",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Eliminate the growing finite product to obtain a one-step quadratic recurrence.",
+      "node_id": "quadratic_recurrence"
+    },
+    {
+      "dependencies": [
+        "quadratic_recurrence"
+      ],
+      "mathematical_role": "Induction proves the sign bound needed to take the principal square root.",
+      "node_id": "uniform_lower_bound"
+    },
+    {
+      "dependencies": [
+        "quadratic_recurrence",
+        "uniform_lower_bound"
+      ],
+      "mathematical_role": "The positive square root of the recurrence square equals a n minus two.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:80c866f4123ab848a5b62143c9474094e78373eff7ebbfa8366389c5c8a82262",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:17:59.541359+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

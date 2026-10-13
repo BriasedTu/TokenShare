@@ -1,0 +1,111 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12b_2020_p21",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:50:09.399413+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "authoring_sha256": "sha256:7f3bdc428dbd9ddb812161056d63807581267411e16dd9ea4a72fdca1e1dfd5b",
+      "case_id": "test/amc12b_2020_p21",
+      "checked_segments": [
+        {
+          "end_line": 30,
+          "node_id": "necessary_memberships",
+          "payload_digest": "sha256:dcb080d5b0398e7b44909129ad718a8689d686c4c3c92d6dec9d0bf5707592fe",
+          "proof_sha256": "sha256:b085e34c8dcc96fd41c93deb0c3ccab1328a5ea1d7518255e31dffc7eb8e590f",
+          "segment_sha256": "sha256:3c79149bb9e0d75878f866e68f4be1b1abee6d1a1f7a991b9abcc52587b40469",
+          "standalone_source_sha256": "sha256:f60975006d2514aabeb0b13da76d2174e39a9ef25db5afb883b960c452152e3b",
+          "start_line": 4
+        },
+        {
+          "end_line": 53,
+          "node_id": "sufficient_memberships",
+          "payload_digest": "sha256:60a84aae54b7592fa6c765ab9de95e9bda8b5bec53102091e48b2d4d99043e47",
+          "proof_sha256": "sha256:80824a093f187c63c0c3a112435db969d59f48275b3712be45c57d4e6a737e65",
+          "segment_sha256": "sha256:c404b03b2c0bc46a26e5a8f415fd615c1ef7ef79a7193c30422eeedad115162f",
+          "standalone_source_sha256": "sha256:fa9fe319e9ba0a640dab44b14f6705770eff66d19d81ac28fffa4f88a6e3c01f",
+          "start_line": 32
+        },
+        {
+          "end_line": 71,
+          "node_id": "root",
+          "payload_digest": "sha256:55b963fe1917af06dca3be2423af59cbd01fcc670335975a48afa242f44aaf7d",
+          "proof_sha256": "sha256:2cc159dd0c486aa1d60f7de8726035358df14235b56771a26cec02b2adf1656b",
+          "segment_sha256": "sha256:7d6f6b31b0c51bbcb325b0c776544c9402d263319d34c5601c178e1556290911",
+          "standalone_source_sha256": "sha256:97f2ca5dc7909dd782c8f86b8124064ad1ddb78c9a26be407c382f7719c1890b",
+          "start_line": 55
+        },
+        {
+          "end_line": 124,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:7308466e63bc97704ceaf714f28efef34af697181b0f0857a9a22bb9f55917ad",
+          "proof_sha256": "sha256:e8f7ea8dfaef6740cc19b467fbc39fd9ed9fdde8d69d2f41e75307a01dd05d56",
+          "segment_sha256": "sha256:378cf2209aef0a869651a3ba9d2987d2e84b09ed23d3c5de8dff0507b7d068d2",
+          "standalone_source_sha256": "sha256:e0399f0f7aa0835ce01f191eff3e0082395022428df64b2b7c9fea571bc1d7c2",
+          "start_line": 73
+        }
+      ],
+      "current_plan_digest": "sha256:1aff9d205ac83ee8caa1590c15c792322eaf87e411a4e14014fe17daf62cf03c",
+      "dependency_review": "necessary_memberships proves one direction of set equality; sufficient_memberships supplies all six reverse cases through tauto. Neither direction is inferred from the other.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\f00c5d3e\\a1\\result.json",
+      "formal_result_sha256": "sha256:638de82d1473264c5ff5c4b4736a17017dae6edbd9ea2258cef72dd07da462f8",
+      "graph_digest": "sha256:fdd8af2112e525e1bb4f51bceb5929bba6b8ea36e5c6a88566868d98ff4df907",
+      "lean_source_sha256": "sha256:3cb1973e4fcb8f6afa2981d9028ea0363390b790d6272781d15cd256e0a03b72",
+      "mathematical_review": "The necessity branch turns the square-root floor equation into quadratic integer inequalities and enumerates the feasible floor values. The sufficiency branch independently proves a general square-root floor-interval criterion and applies it to all six candidates. This supplies the missing membership direction, not merely a constant cardinality witness. The root derives extensional set equality and counts it.",
+      "node_count": 3,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:153c5629cadf87c4011568840d6aa07c1362447a97d6730698862f16b4070c41",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:1aff9d205ac83ee8caa1590c15c792322eaf87e411a4e14014fe17daf62cf03c",
+      "review_scope": "Final authoring, unchanged upstream source, current isolated segments and assembled theorem, preserved compiler stdout/stderr/result hashes; no repeated Lean run.",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:ce37c18b88c26b4247ac59a7c545c6c5e7850f3aab2793b6bfdcbb80eec5bebc",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:5cd6b9c5292942afa8f139645567530ea25e6be574b434feab91d0bd08da1f05"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498.json",
+    "source_report_sha256": "sha256:b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/f00c5d3eaa7cce3f/result.json",
+    "result_sha256": "sha256:638de82d1473264c5ff5c4b4736a17017dae6edbd9ea2258cef72dd07da462f8"
+  },
+  "mathematical_review": "The necessity branch turns the square-root floor equation into quadratic integer inequalities and enumerates the feasible floor values. The sufficiency branch independently proves a general square-root floor-interval criterion and applies it to all six candidates. This supplies the missing membership direction, not merely a constant cardinality witness. The root derives extensional set equality and counts it.",
+  "node_proofs_digest": "sha256:153c5629cadf87c4011568840d6aa07c1362447a97d6730698862f16b4070c41",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Turn the floor equality into quadratic bounds on the integer floor, then enumerate its feasible values.",
+      "node_id": "necessary_memberships"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Independently verify all six proposed members through the exact square-root floor interval.",
+      "node_id": "sufficient_memberships"
+    },
+    {
+      "dependencies": [
+        "necessary_memberships",
+        "sufficient_memberships"
+      ],
+      "mathematical_role": "Combine both membership directions and count the resulting six-element finset.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:1aff9d205ac83ee8caa1590c15c792322eaf87e411a4e14014fe17daf62cf03c",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:50:09.399413+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

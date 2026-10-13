@@ -1,0 +1,40 @@
+import Mathlib
+set_option linter.unusedVariables false
+set_option autoImplicit false
+set_option maxHeartbeats 0
+set_option maxRecDepth 2048
+open BigOperators Real Nat Topology Rat
+
+example (a b c : ℝ) :
+(a * b * (a ^ 2 - b ^ 2) + b * c * (b ^ 2 - c ^ 2) + c * a * (c ^ 2 - a ^ 2) = (a + b + c) * (a - b) * ((a + b - 2 * c) ^ 2 - (a - b) ^ 2) / 4) ∧ (a ^ 2 + b ^ 2 + c ^ 2 = (a + b + c) ^ 2 / 3 + (a - b) ^ 2 / 2 + (a + b - 2 * c) ^ 2 / 6) := by
+  constructor <;> ring
+
+example (S : Finset ℕ)
+  (h₀ : ∀ x : ℕ, x ∈ S ↔ 0 < x ∧ x < 1000 ∧ x.divisors.card = 3) :
+∀ p : ℕ, (Nat.Prime p ∧ p ^ 2 < 1000) ↔ p ∈ ({2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31} : Finset ℕ) := by
+  intro p
+  constructor
+  · intro hp
+    have hb : p ≤ 31 := by nlinarith
+    interval_cases p <;> norm_num at *
+  · intro hp
+    simp only [Finset.mem_insert, Finset.mem_singleton] at hp
+    rcases hp with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> norm_num
+
+example (n : ℕ) (h₀ : 0 < n) (h₁ : Finset.card (Nat.divisors (2 * n)) = 28)
+  (h₂ : Finset.card (Nat.divisors (3 * n)) = 30) :
+∀ a b c : ℕ, 0 < c → (a + 2) * (b + 1) * c = 28 → (a + 1) * (b + 2) * c = 30 → a = 5 ∧ b = 3 ∧ c = 1 := by
+  intro a b c hc h28 h30
+  have hd : c * a = c * b + 2 := by nlinarith
+  have hab : b + 1 ≤ a := by
+    by_contra hn
+    have hh := Nat.mul_le_mul_left c (show a ≤ b by omega)
+    nlinarith
+  have hc2 : c ≤ 2 := by
+    have hh := Nat.mul_le_mul_left c hab
+    nlinarith
+  have hb : b ≤ 13 := by
+    have hh := Nat.mul_le_mul_left ((a + 2) * (b + 1)) (show 1 ≤ c by omega)
+    nlinarith [Nat.zero_le (a * b)]
+  interval_cases c <;> interval_cases b <;> norm_num at * <;> omega
+

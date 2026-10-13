@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/imo_1978_p5",
+  "original_declaration": "theorem imo_1978_p5 (n : ℕ) (a : ℕ → ℕ) (h₀ : Function.Injective a) (h₁ : a 0 = 0) (h₂ : 0 < n) :\n  (∑ k ∈ Finset.Icc 1 n, (1 : ℝ) / k) ≤ ∑ k ∈ Finset.Icc 1 n, (a k : ℝ) / k ^ 2",
+  "source_file": "upstream/MiniF2F/Valid/imo_1978_p5.lean",
+  "source_sha256": "c5bf9c0365a04e6105bacfe8ef65bacd806549d74dc7521d46cbed5595ee8d1d",
+  "partial_statement": "∀ u w : ℕ → ℝ, ∀ j : ℕ, (∑ k ∈ Finset.range (j + 1), (u (k + 1) - u k) * w (k + 1)) = u (j + 1) * w (j + 1) - u 0 * w 1 + ∑ k ∈ Finset.range j, u (k + 1) * (w (k + 1) - w (k + 2))",
+  "partial_proof": "by\n  intro u w j\n  induction j with\n  | zero => simp; ring\n  | succ j ih =>\n    rw [Finset.sum_range_succ, ih, Finset.sum_range_succ]\n    ring",
+  "mathematical_route": "The checked Abel summation identity converts weighted sums into prefix sums times nonnegative weight differences. Injectivity fixing zero should imply prefix-sum majorization by 1+…+j.",
+  "unresolved_full_proof_obligation": "Need formalize the sharp prefix-sum majorization for arbitrary injections of naturals fixing zero and align the Abel identity with real reciprocal-square weights and Icc indices.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(n : ℕ) (a : ℕ → ℕ) (h₀ : Function.Injective a) (h₁ : a 0 = 0) (h₂ : 0 < n)",
+  "partial_start_line": 40,
+  "partial_block_sha256": "193c7f9f0d7cac94b40079ef7067aab6aa302304800d4c04afa3bd39c9b0531d",
+  "partial_end_line": 48,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+  "compiler_log_sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: rearrangement by sorting the finite image instead of prefix majorization. Both approaches require a proved finite-order comparison for arbitrary injections, not a pointwise a(k)≥k claim (which is false).",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ u w : ℕ → ℝ, ∀ j : ℕ, (∑ k ∈ Finset.range (j + 1), (u (k + 1) - u k) * w (k + 1)) = u (j + 1) * w (j + 1) - u 0 * w 1 + ∑ k ∈ Finset.range j, u (k + 1) * (w (k + 1) - w (k + 2))",
+      "source_sha256": "193c7f9f0d7cac94b40079ef7067aab6aa302304800d4c04afa3bd39c9b0531d",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json"
+    }
+  ]
+}

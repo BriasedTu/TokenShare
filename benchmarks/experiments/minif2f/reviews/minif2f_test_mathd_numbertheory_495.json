@@ -1,0 +1,38 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_mathd_numbertheory_495",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/d68cdaca0dfa94e1/result.json",
+    "result_sha256": "sha256:63bc2000c29d0b56f9337fcbf61196b376038faec0c8a60647f6cd2148646feb"
+  },
+  "mathematical_review": "Decimal residues and gcd divisibility constrain the pair; the exceptional small value needs an additional conditional lower bound before the lcm bound.",
+  "node_proofs_digest": "sha256:9c1179d8958ed34a7626c0fe1385ec9a459e983805355aa9eb23a07c9e9f2102",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Combine decimal residues with divisibility by the gcd to restrict the first possible values.",
+      "node_id": "residue_bounds"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Exclude the smallest residue pair because it has gcd twelve instead of six.",
+      "node_id": "exceptional_gcd"
+    },
+    {
+      "dependencies": [
+        "residue_bounds",
+        "exceptional_gcd"
+      ],
+      "mathematical_role": "Assemble the mathematical prerequisites into the unchanged upstream conclusion.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:29d71413d95d98d60229aca155cd77302713535f11d6ef608a5f6055096b2f0e",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:08:05.320035+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

@@ -1,0 +1,87 @@
+E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction\TokenShareData\outputs\experiments\minif2f-integration-20260907\algebra\v\8c53beb8\a2\isolated_nodes_and_original_root.lean:75:2: error: linarith failed to find a contradiction
+case h
+N : ℕ
+hN : N > 0
+f : ℕ → ℝ
+h₀ : ∀ (n : ℕ), 0 < n → f n = ↑n.divisors.card / ↑n ^ (1 / 3)
+h₁ : ∀ (n : ℕ), n ≠ N → 0 < n → f n < f N
+node_two_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 8 * 2 ^ e
+node_three_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 3 * 3 ^ e
+n : ℕ
+hn : 0 < n
+hnfac : (n.factorization.prod fun x1 x2 => x1 ^ x2) = n
+hp2 : (n.factorization 2 + 1) ^ 3 ≤ 8 * 2 ^ n.factorization 2
+hp3 : (n.factorization 3 + 1) ^ 3 ≤ 3 * 3 ^ n.factorization 3
+a✝ : 1536 * n < 35 * (∏ x ∈ n.primeFactors, (n.factorization x + 1)) ^ 3
+⊢ False
+failed
+E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction\TokenShareData\outputs\experiments\minif2f-integration-20260907\algebra\v\8c53beb8\a2\isolated_nodes_and_original_root.lean:109:30: error: Tactic `rewrite` failed: Did not find an occurrence of the pattern
+  (↑2520 ^ (1 / 3)) ^ 3
+in the target expression
+  48 ^ 3 * ↑N < ↑N.divisors.card ^ 3 * (2520 ^ (1 / 3)) ^ 3
+
+case neg
+N : ℕ
+hN : N > 0
+f : ℕ → ℝ
+h₀ : ∀ (n : ℕ), 0 < n → f n = ↑n.divisors.card / ↑n ^ (1 / 3)
+h₁ : ∀ (n : ℕ), n ≠ N → 0 < n → f n < f N
+node_global_divisor_bound : ∀ (n : ℕ), 0 < n → 35 * n.divisors.card ^ 3 ≤ 1536 * n
+hg : 35 * N.divisors.card ^ 3 ≤ 1536 * N
+h2520 : f 2520 = ↑(divisors 2520).card / ↑2520 ^ (1 / 3)
+hNf : f N = ↑N.divisors.card / ↑N ^ (1 / 3)
+he : ¬N = 2520
+hc48 : (divisors 2520).card = 48
+hstrict : 48 / 2520 ^ (1 / 3) < ↑N.divisors.card / ↑N ^ (1 / 3)
+hNpos : 0 < ↑N
+htN : 0 < ↑N ^ (1 / 3)
+ht2520 : 0 < 2520 ^ (1 / 3)
+hc : 48 * ↑N ^ (1 / 3) < ↑N.divisors.card * 2520 ^ (1 / 3)
+hcube : 48 ^ 3 * ↑N < ↑N.divisors.card ^ 3 * (2520 ^ (1 / 3)) ^ 3
+hrt : ∀ (n : ℕ), (↑n ^ (1 / 3)) ^ 3 = ↑n
+⊢ (Nat.digits 10 N).sum = 9
+E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction\TokenShareData\outputs\experiments\minif2f-integration-20260907\algebra\v\8c53beb8\a2\isolated_nodes_and_original_root.lean:162:4: error: linarith failed to find a contradiction
+case h
+N : ℕ
+hN : N > 0
+f : ℕ → ℝ
+h₀ : ∀ (n : ℕ), 0 < n → f n = ↑n.divisors.card / ↑n ^ (1 / 3)
+h₁ : ∀ (n : ℕ), n ≠ N → 0 < n → f n < f N
+node_two_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 8 * 2 ^ e
+node_three_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 3 * 3 ^ e
+n : ℕ
+hn : 0 < n
+hnfac : (n.factorization.prod fun x1 x2 => x1 ^ x2) = n
+hp2 : (n.factorization 2 + 1) ^ 3 ≤ 8 * 2 ^ n.factorization 2
+hp3 : (n.factorization 3 + 1) ^ 3 ≤ 3 * 3 ^ n.factorization 3
+a✝ : 1536 * n < 35 * (∏ x ∈ n.primeFactors, (n.factorization x + 1)) ^ 3
+⊢ False
+failed
+E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction\TokenShareData\outputs\experiments\minif2f-integration-20260907\algebra\v\8c53beb8\a2\isolated_nodes_and_original_root.lean:184:32: error: Tactic `rewrite` failed: Did not find an occurrence of the pattern
+  (↑2520 ^ (1 / 3)) ^ 3
+in the target expression
+  48 ^ 3 * ↑N < ↑N.divisors.card ^ 3 * (2520 ^ (1 / 3)) ^ 3
+
+case neg
+N : ℕ
+hN : N > 0
+f : ℕ → ℝ
+h₀ : ∀ (n : ℕ), 0 < n → f n = ↑n.divisors.card / ↑n ^ (1 / 3)
+h₁ : ∀ (n : ℕ), n ≠ N → 0 < n → f n < f N
+node_two_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 8 * 2 ^ e
+node_three_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 3 * 3 ^ e
+node_global_divisor_bound : ∀ (n : ℕ), 0 < n → 35 * n.divisors.card ^ 3 ≤ 1536 * n
+hg : 35 * N.divisors.card ^ 3 ≤ 1536 * N
+h2520 : f 2520 = ↑(divisors 2520).card / ↑2520 ^ (1 / 3)
+hNf : f N = ↑N.divisors.card / ↑N ^ (1 / 3)
+he : ¬N = 2520
+hc48 : (divisors 2520).card = 48
+hstrict : 48 / 2520 ^ (1 / 3) < ↑N.divisors.card / ↑N ^ (1 / 3)
+hNpos : 0 < ↑N
+htN : 0 < ↑N ^ (1 / 3)
+ht2520 : 0 < 2520 ^ (1 / 3)
+hc : 48 * ↑N ^ (1 / 3) < ↑N.divisors.card * 2520 ^ (1 / 3)
+hcube : 48 ^ 3 * ↑N < ↑N.divisors.card ^ 3 * (2520 ^ (1 / 3)) ^ 3
+hrt : ∀ (n : ℕ), (↑n ^ (1 / 3)) ^ 3 = ↑n
+⊢ (Nat.digits 10 N).sum = 9
+'amc12a_2021_p25' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]

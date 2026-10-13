@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4",
+  "node_proof_sources": {
+    "quartic_lower_bound": "by\n  nlinarith [sq_nonneg ((x - y) ^ 2 - 4 * x * y)]",
+    "root": "by\n  have hs : 0 < x + y := add_pos h₀.1 h₀.2\n  by_contra hn\n  have hb : (x + y) ^ 2 < 16 := by nlinarith\n  nlinarith [mul_pos (sq_pos_of_pos hs) (sub_pos.mpr hb)]",
+    "squared_constraint": "by\n  have hs := congrArg (fun z : ℝ => z ^ 2) h₂\n  dsimp only at hs\n  rw [mul_pow, Real.sq_sqrt (le_of_lt (mul_pos h₀.1 h₀.2))] at hs\n  exact hs.symm"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

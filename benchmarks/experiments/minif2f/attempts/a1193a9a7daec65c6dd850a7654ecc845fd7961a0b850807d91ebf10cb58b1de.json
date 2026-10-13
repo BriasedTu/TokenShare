@@ -1,0 +1,32 @@
+{
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "command": [
+    "L:\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\59f0b441\\0622018800\\bridges.lean"
+  ],
+  "cwd": "L:\\project",
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\59f0b441\\0622018800\\bridges.lean",
+  "source_sha256": "f67c8ce3df0fd7989b3c35cd78c93b9e6f341cabee3ca1614312743e3a6d682a",
+  "duration_seconds": 30.27789306640625,
+  "segments": [
+    {
+      "node_id": "solutions_avoid_tangent_poles",
+      "start_line": 8,
+      "end_line": 22,
+      "proof_sha256": "97fd0ef364c5162dddfa9cbb87b6e30af222c5d873ba535676f08e6f2d094cbe",
+      "segment_sha256": "02e7771b207dc7e441ead95e127c27cbc944bd5da0fec948e3f27ad44fc4404f"
+    },
+    {
+      "node_id": "distinct_solutions_reverse_tangent_order",
+      "start_line": 23,
+      "end_line": 31,
+      "proof_sha256": "aa03a5882ba3edad1f7a85b3aef9026696362c70a68f5123e34bee0ac08a57ee",
+      "segment_sha256": "c96dead1f64e361c4bb3fbb5363c497019bdb19642670922780d37d4a0421b91"
+    }
+  ],
+  "root_proved": false,
+  "provider_calls": 0
+}

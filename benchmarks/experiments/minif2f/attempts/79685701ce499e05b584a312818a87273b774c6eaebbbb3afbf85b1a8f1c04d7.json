@@ -1,0 +1,51 @@
+{
+  "case_id": "valid/mathd_numbertheory_43",
+  "final_disposition": "excluded_incomplete_root",
+  "root_checked": false,
+  "partial_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "meaning": "Excluded from this admission round because no full isolated-node/assembly file has returned strict exit 0. This is not a claim that the original theorem is false.",
+  "proved_partial_nodes": [],
+  "mathematical_route": "Legendre gives v3(942!)=314+104+34+11+3+1=467 and v5(942!)=188+37+7+1=233. Construct 15^233 by coprimality; 5^234 then excludes larger exponents.",
+  "unresolved_full_proof_obligation": "The pinned compiler did not complete the closed factorial primary-capacity obligations inside the authoritative combined file. There is no accepted node-level evidence; all three nodes remain unverified despite the mathematical Legendre calculation.",
+  "alternative_route_analysis": [
+    "Direct by decide on factorial divisibility reached the full 480-second file timeout.",
+    "Replaced factorial evaluation by Nat.pow_dvd_factorial_iff and a finite Legendre sum; simp/norm_num approach did not complete.",
+    "Used the iff constructors with closed decide finite sums, then made p,n,r,b implicit arguments explicit to test expensive unification; neither completed within the controlled check.",
+    "A temporary trace-instrumented curation file also failed to complete. The Lake parent timeout left a child holding pipes; the verified task-specific Lean process was stopped and this behavior is recorded, without blaming mathematical validity or silently treating it as success."
+  ],
+  "attempts": [
+    {
+      "path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\0828861900\\result.json",
+      "sha256": "542ea2a35b2dbe7d23f49be19629c1399c8ffe5c926e533b49605a6ca38dfb4e",
+      "exit_code": 4294967295,
+      "status": "failed",
+      "duration_seconds": 371.265
+    },
+    {
+      "path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\0900652600\\result.json",
+      "sha256": "c751e3299d6a401afcb9acd0670e253bf3091b5c72293d7e3d92b142fd872248",
+      "exit_code": 4294967295,
+      "status": "failed",
+      "duration_seconds": 180.828
+    },
+    {
+      "path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\3577177000\\result.json",
+      "sha256": "c13eebec902c07f2015b3e3e5168a080b66cd89fb21119a14102115d76c9bbd3",
+      "exit_code": 4294967295,
+      "status": "failed",
+      "duration_seconds": 380.328
+    },
+    {
+      "path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\6089288600\\result.json",
+      "sha256": "6b6c7ab7dcdc6391e5b117fee6ebeb2dd5a996c7a851513e10bdf488c7410f0f",
+      "exit_code": null,
+      "status": "failed",
+      "duration_seconds": 480.203
+    }
+  ],
+  "debug_evidence": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\factorial_debug.json",
+  "last_attempt_stop": "Last explicit-argument attempt was deliberately stopped after 180.828 seconds of no completed diagnostic progress; it is recorded as nonzero exit, not mislabeled as the checker full-timeout.",
+  "compiler_command_saved": true
+}

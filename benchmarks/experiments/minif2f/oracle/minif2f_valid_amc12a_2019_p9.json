@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_amc12a_2019_p9",
+  "node_proof_sources": {
+    "rational_closed_form": "by\n  intro n\n  induction n with\n  | zero => norm_num [h₀, h₁]\n  | succ n ih =>\n      constructor\n      · convert ih.2 using 1 ; push_cast ; congr 1 ; ring\n      · have hr := h₂ (n + 1)\n        rw [ih.1, ih.2] at hr\n        have h3 : 4 * (n : ℚ) + 3 ≠ 0 := by positivity\n        have h7 : 4 * (n : ℚ) + 7 ≠ 0 := by positivity\n        have h11 : 4 * (n : ℚ) + 11 ≠ 0 := by positivity\n        change a (n + 1 + 2) = _\n        rw [hr]\n        push_cast\n        field_simp\n        ; ring_nf\n        ; field_simp\n        ; ring",
+    "root": "by\n  have hv := (node_rational_closed_form 2018).1\n  norm_num at hv\n  rw [hv]\n  norm_num"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

@@ -1,0 +1,44 @@
+import Mathlib
+set_option linter.unusedVariables false
+set_option autoImplicit false
+set_option maxHeartbeats 0
+set_option maxRecDepth 2048
+open BigOperators Real Nat Topology Rat
+
+example (p q : ℕ) (h₀ : 0 < q)
+  (h₁ : (∑ k ∈ Finset.Icc (1 : ℕ) 1319, (-1) ^ (k + 1) * ((1 : ℝ) / k)) = p / q) :
+∀ u : ℝ, 0 < u → u < 1979 → 1 / u + 1 / (1979 - u) = 1979 / (u * (1979 - u)) := by
+  intro u hu hv
+  have hn : u ≠ 0 := ne_of_gt hu
+  have hm : 1979 - u ≠ 0 := by linarith
+  field_simp
+  ring
+
+example (f : ℕ → ℕ) :
+(∀ n : ℕ, f (f n) = n + 1987) → Function.Injective f ∧ (∀ n : ℕ, f (n + 1987) = f n + 1987) := by
+  intro hf
+  constructor
+  · intro a b hab
+    have hh := congrArg f hab
+    rw [hf, hf] at hh
+    omega
+  · intro n
+    calc
+      f (n + 1987) = f (f (f n)) := by rw [hf n]
+      _ = f n + 1987 := hf (f n)
+
+example (a b : ℕ) (h₀ : 0 < a ∧ 0 < b) (h₁ : a * b + 1 ∣ a ^ 2 + b ^ 2) :
+∀ k : ℤ, (a : ℤ) ^ 2 + (b : ℤ) ^ 2 = k * ((a : ℤ) * b + 1) → ((k * a - b) ^ 2 + (a : ℤ) ^ 2 = k * ((a : ℤ) * (k * a - b) + 1)) ∧ ((b : ℤ) * (k * a - b) = (a : ℤ) ^ 2 - k) := by
+  intro k hk
+  constructor <;> nlinarith
+
+example (n : ℕ) (h₀ : 2 ≤ n) (h₁ : n ^ 2 ∣ 2 ^ n + 1) :
+n % 2 = 1 := by
+  by_contra hn
+  have he : 2 ∣ n := Nat.dvd_of_mod_eq_zero (by omega)
+  have hpow : 2 ∣ 2 ^ n := dvd_pow_self 2 (by omega : n ≠ 0)
+  have hn2 : 2 ∣ n ^ 2 := he.trans (dvd_pow_self n (by decide : 2 ≠ 0))
+  have hsum : 2 ∣ 2 ^ n + 1 := hn2.trans h₁
+  have hc : 2 ∣ 1 := (Nat.dvd_add_iff_right hpow).mpr hsum
+  norm_num at hc
+

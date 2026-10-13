@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_aime_1983_p3",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:26.881388+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/641fb47126cbf3a9/result.json",
+    "result_sha256": "sha256:e70904cd24f4d1a830363d5d91e6d65eeb6aeb4b7f78d4686fe301635b5811c5"
+  },
+  "mathematical_review": "Eliminate the radical using its sign to characterize the zero quadratic; identify its distinct roots as a set and evaluate the finite product.",
+  "node_proofs_digest": "sha256:92bd068f67b158b8868ccd65f76895fed308d523b71da08739310abe1e35fa5b",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Eliminate the nonnegative square root to identify the zero quadratic.",
+      "node_id": "zero_equivalence"
+    },
+    {
+      "dependencies": [
+        "zero_equivalence"
+      ],
+      "mathematical_role": "Factor the zero quadratic to characterize its two distinct real roots.",
+      "node_id": "zero_set"
+    },
+    {
+      "dependencies": [
+        "zero_set"
+      ],
+      "mathematical_role": "Evaluate the product over the proven two-element zero set.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:f4161de7550aaad9b64a922cc13b0323dda3cd70a74ade9ca20f2272fd6c1225",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:26.881388+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

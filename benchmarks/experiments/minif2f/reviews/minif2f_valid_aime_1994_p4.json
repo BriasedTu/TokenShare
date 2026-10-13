@@ -1,0 +1,37 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_aime_1994_p4",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:46:00.300730+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/d6752351f5158bf8/result.json",
+    "result_sha256": "sha256:5012259c13f3fb8531f0211f0f6498cbc565b0e9faddf08eb4a5d114228d4ff9"
+  },
+  "mathematical_review": "Monotonicity of the discrete cumulative binary logarithm and exact neighboring sums isolate index 312; the root transfers the original real floor sum termwise. The mechanical logarithm translation is folded into the root.",
+  "node_proofs_digest": "sha256:9604fa806421bffca151f807eef7fcbdcd8d944ef7c0730a5d71cd7802839ad4",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Monotonicity and exact neighboring cumulative binary-log sums isolate the only possible index.",
+      "node_id": "discrete_threshold"
+    },
+    {
+      "dependencies": [
+        "discrete_threshold"
+      ],
+      "mathematical_role": "Translate the original real-floor sum locally and apply the discrete monotonic threshold characterization.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:fe678682ff9f9e5cb2d42fb2047738d9d978b7412ca04f47ae80fc6c6a6a621d",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:46:00.299728+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

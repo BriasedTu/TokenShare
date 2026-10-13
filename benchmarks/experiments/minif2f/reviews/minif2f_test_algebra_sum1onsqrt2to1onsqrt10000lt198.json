@@ -1,0 +1,111 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_algebra_sum1onsqrt2to1onsqrt10000lt198",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:50:09.261798+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "authoring_sha256": "sha256:7b4ae69d58fb70ea19060b32657e3164a695a5979906f0c1085d25224830cfcc",
+      "case_id": "test/algebra_sum1onsqrt2to1onsqrt10000lt198",
+      "checked_segments": [
+        {
+          "end_line": 22,
+          "node_id": "pointwise_telescope_bound",
+          "payload_digest": "sha256:560c926cb2e5e951b2cfe62f84a1746da294512e963a3ad95fadf2255ded64c3",
+          "proof_sha256": "sha256:07413e5de1698707f54a8767e1a0f2087791af72800475a404d537cc0ebf5f89",
+          "segment_sha256": "sha256:aaf7bf4c33cbdcb712d31220a62761aa7a7718a8fb52114fe60c9a24741e87c9",
+          "standalone_source_sha256": "sha256:27f4a8ad5397581c60347387dabc7c5ed713fb5822e79da395c41a80a9df3b90",
+          "start_line": 4
+        },
+        {
+          "end_line": 40,
+          "node_id": "telescoping_sum",
+          "payload_digest": "sha256:f42a8661de42af740d881516ac602f78f889ca091662470998b51dcf707fad53",
+          "proof_sha256": "sha256:591446e9af6f422a11d92d576d2f4667e5db87bc49583a57de086f75c615960d",
+          "segment_sha256": "sha256:83a091ae1db316fb3c5ecd2e9c555fe83a3d125c2e55480b5b1b7efa34cd95cb",
+          "standalone_source_sha256": "sha256:90588e4a8672d34d4499d306a0e4e5aab306135240cbe426efc384c9dc9eb45d",
+          "start_line": 24
+        },
+        {
+          "end_line": 53,
+          "node_id": "root",
+          "payload_digest": "sha256:1401977146e36c81ad9f2f7ede0139140afa032118def49e78324cef5dea3c62",
+          "proof_sha256": "sha256:a7a92c93826b69166e74b01d96e5400cd55e3ea7068a5ba8cb37cd2f52856d86",
+          "segment_sha256": "sha256:382d08494ff4e29a3b43750a6d31b66cbd559e7ae8e9c7d1c3f5f2247f460908",
+          "standalone_source_sha256": "sha256:867539315123c67ab54ee877a67e1c39f4aa1ee0ac442606c300d0ae7baa31cf",
+          "start_line": 42
+        },
+        {
+          "end_line": 90,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:686ad7699255d2334eea315c102e18be031436f7423f7c5207c2b4084e9f91b3",
+          "proof_sha256": "sha256:157d136cce508dc3193fff88b197bc8a37204f10d52a25aa33b27c8da47b3a58",
+          "segment_sha256": "sha256:1ae466f6bd236066f3dabd4d8064a17e4067ee88fef4fa71cd6a741b309374a3",
+          "standalone_source_sha256": "sha256:7ffd458fbde5e4b304839cc485cf618171cbac17c4043a53bfeed6f13e0f03b0",
+          "start_line": 55
+        }
+      ],
+      "current_plan_digest": "sha256:bcf9bfe24354ec77a6a12111974d77af8d03e4eb16f9633f67871c23eba60228",
+      "dependency_review": "Both independent branches are explicitly used by the root; the strict witness k=2 is built locally rather than counted as another node.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\facc7827\\a3\\result.json",
+      "formal_result_sha256": "sha256:6897e532a99df26d3455742070e0f3f834f49a88d3b106e6821373b38e95acbc",
+      "graph_digest": "sha256:d1027bd0de683d4bebb4a0a236d6de316041d67c61aab958769163d2098bb802",
+      "lean_source_sha256": "sha256:d1a0b8b55c2ae1539f6335530284923cb079318c03d5418ee33a91ac9470cf74",
+      "mathematical_review": "A strict pointwise analytic inequality follows from the squared difference of consecutive square roots. An independent induction evaluates the telescoping sum. The root combines a strict finite-sum comparison with the exact endpoint. These are distinct analytic and summation obligations.",
+      "node_count": 3,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:f4a8ac4eb31a96f7b2e0d5462bad593859cbbfa07b7b5f89a6b74c289a054a32",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:bcf9bfe24354ec77a6a12111974d77af8d03e4eb16f9633f67871c23eba60228",
+      "review_scope": "Final authoring, unchanged upstream source, current isolated segments and assembled theorem, preserved compiler stdout/stderr/result hashes; no repeated Lean run.",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:811ce07af457f0d225819e526ced2578e9147d62daf9abd52d2f649d43fc54f3",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:7a57faba2b801872f711e5185007be9601be12b00a3da9eed75d9e1f67e97fa7"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498.json",
+    "source_report_sha256": "sha256:b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/facc78273be5a18c/result.json",
+    "result_sha256": "sha256:6897e532a99df26d3455742070e0f3f834f49a88d3b106e6821373b38e95acbc"
+  },
+  "mathematical_review": "A strict pointwise analytic inequality follows from the squared difference of consecutive square roots. An independent induction evaluates the telescoping sum. The root combines a strict finite-sum comparison with the exact endpoint. These are distinct analytic and summation obligations.",
+  "node_proofs_digest": "sha256:f4a8ac4eb31a96f7b2e0d5462bad593859cbbfa07b7b5f89a6b74c289a054a32",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Each reciprocal square root is strictly bounded by a consecutive square-root difference.",
+      "node_id": "pointwise_telescope_bound"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Evaluate the independent consecutive-difference sum by induction.",
+      "node_id": "telescoping_sum"
+    },
+    {
+      "dependencies": [
+        "pointwise_telescope_bound",
+        "telescoping_sum"
+      ],
+      "mathematical_role": "Sum the strict pointwise bound and substitute the exact telescoping endpoint.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:bcf9bfe24354ec77a6a12111974d77af8d03e4eb16f9633f67871c23eba60228",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:50:09.260799+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

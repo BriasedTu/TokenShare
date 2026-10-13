@@ -1,0 +1,15 @@
+{
+  "exit_code": null,
+  "timed_out": true,
+  "stdout": "",
+  "stderr": "",
+  "command": [
+    "L:/lean-4.24.0-windows/bin/lake.exe",
+    "env",
+    "lean",
+    "-DwarningAsError=true",
+    "M:/numbertheory/investigations/factorial_debug.lean"
+  ],
+  "file_sha256": "2e9be0f43094d7c59ff815f964d2affe780b3d21e9bbf63870aeea95ff5f8c9a",
+  "duration": 214.64914512634277
+}

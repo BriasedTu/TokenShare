@@ -1,0 +1,215 @@
+{
+  "case_id": "test/amc12a_2021_p25",
+  "kind": "bounded_mathematical_investigation",
+  "status": "excluded_incomplete_bridge",
+  "original_declaration": "theorem amc12a_2021_p25\n  (N : ℕ)\n  (hN : N > 0)\n  (f : ℕ → ℝ)\n  (h₀ : ∀ n, 0 < n → f n = ((Nat.divisors n).card)/(n^((1:ℝ)/3)))\n  (h₁ : ∀ n ≠ N, 0 < n → f n < f N) :\n  (Nat.digits 10 N).sum = 9",
+  "source_provenance": {
+    "repository": "https://github.com/yangky11/miniF2F-lean4",
+    "commit": "5746b7d6c47855ce1294bed87329618ff7f1bc31",
+    "relative_file": "MiniF2F/Test/amc12a_2021_p25.lean",
+    "file_sha256": "7dc728c0c21a913d6fe40019bc2bfcd928412ed1044bac094de3e120ca3612ee",
+    "original_declaration": "theorem amc12a_2021_p25\n  (N : ℕ)\n  (hN : N > 0)\n  (f : ℕ → ℝ)\n  (h₀ : ∀ n, 0 < n → f n = ((Nat.divisors n).card)/(n^((1:ℝ)/3)))\n  (h₁ : ∀ n ≠ N, 0 < n → f n < f N) :\n  (Nat.digits 10 N).sum = 9",
+    "source_split": "test",
+    "reference_proof_path": null,
+    "reference_proof_sha256": null
+  },
+  "authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\authoring.json",
+  "authoring_sha256": "4a569435cdbf2d61224ad3db7bd970c8d01913002b04480fe4adc9c3c1522053",
+  "reason": "Excluded in this round because the pointwise prime-two and prime-three inequalities have not been aggregated into the global divisor-product bound over every prime factor. The final strict Lean run fails only at global_divisor_bound and its copy in the original theorem assembly; this is not evidence that the original theorem is false.",
+  "mathematical_route": [
+    "Prime-power contribution to cubed ratio is (e+1)^3/p^e; local maximizers have e2=3,e3=2,e5=e7=1 and all larger-prime exponents zero, suggesting N=2520 with divisor count48 and digit sum9.",
+    "Proved the polynomial induction steps behind (e+1)^3≤8*2^e and (e+1)^3≤3*3^e. Final compiler emitted no diagnostic for those independent examples.",
+    "Rewrote Nat.card_divisors into the product over primeFactors and exposed Nat.factorization_prod_pow_eq_self; nlinarith correctly cannot deduce the missing all-primes product inequality from the two special-prime hypotheses.",
+    "Repaired the downstream original-root comparison: assuming global bound35*d(n)^3≤1536*n, use strict maximality at2520, clear positive real-cube-root denominators, cube, and contradict the global bound. Final compiler emitted no diagnostic for the conditional root example."
+  ],
+  "unclosed_obligation": "For every positive n, 35*(∏p∈n.primeFactors,(n.factorization p+1))^3≤1536*n. Requires verified prime-five/seven bounds, the p≥11 geometric bound, and a multiplicative aggregation that handles exceptional primes absent from n.primeFactors.",
+  "repair_history": [
+    "Attempt1 exposed generic pow_succ rewriting the degree-three polynomial instead of the exponential factor; made pow_succ arguments explicit.",
+    "Attempt2 closed both local induction proofs and the integer digits/divisor-count evaluation; remaining root repair normalized the Nat cast of2520 in the rpow cube identity.",
+    "Attempt3 has only the global aggregation error at the isolated global node and its assembled copy. No unmodified passed theorem was recompiled."
+  ],
+  "attempts": [
+    {
+      "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\validation-1.json",
+      "validation_sha256": "51b46901aa6f87801d5def214134e43e61996acd5abf8016c816c824823bb176",
+      "formal_result_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a1\\result.json",
+      "formal_result_sha256": "1e56f54cb96910eee83c7eb1159355c226d1a3ab8f914bf0822eca0114b39a24",
+      "status": "failed",
+      "checks": [
+        {
+          "node_id": "two_power_divisor_bound",
+          "payload_digest": "sha256:b6cb8dc45b23044a580abb572b5544efdeb5995c285338f208097b2c0554484b",
+          "proof_sha256": "sha256:e0fa0b9dce1d9512256ce84a3f6d051adcd0b25cfe6a89becc680ed04f08a4e8",
+          "standalone_source_sha256": "sha256:b8793c89b7ddfc993cfc52c6db954d8cbf8bdde497bb91dc69de070e0200bfd2",
+          "segment_sha256": "sha256:20e624ccd4153918cea372af3063168ddd70d9ec706340a21165e1e3cf82cc13",
+          "start_line": 4,
+          "end_line": 29,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "three_power_divisor_bound",
+          "payload_digest": "sha256:a57cee0a717e1437197be522322865e693dfac12d8b873e956dec5ef7bf44e9d",
+          "proof_sha256": "sha256:0c05e87d13b95ea13d1fc5edb565a1215084dee99040f532a9d7cac220038383",
+          "standalone_source_sha256": "sha256:f884cdbb1745373643a9ee885d39944b39b797636ede1b5492e3a4adf58642ac",
+          "segment_sha256": "sha256:38d9dcf578b3e6db3b9c0a34925e7359b7dea3077d039128bb16ff8fb5f19067",
+          "start_line": 31,
+          "end_line": 56,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "global_divisor_bound",
+          "payload_digest": "sha256:b0876af34649bf217989fe0af7c56dd34f0fdb1724c8334e6bffe9bb05730537",
+          "proof_sha256": "sha256:0683478955dedf80adb9ff48e00f80b6d61e78ee06f3ba9a0725de8d1e871590",
+          "standalone_source_sha256": "sha256:40ec13f87175fa6a0267e4adda1ab14850abe388029d9e561b606d63994ca344",
+          "segment_sha256": "sha256:17f6dac5f4e96433ad620909561012ea948647d2a9642ffa5f7f89ac4da628cb",
+          "start_line": 58,
+          "end_line": 76,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "root",
+          "payload_digest": "sha256:dfee21b36bf0f076ab2d77923944e8d3c62f7e1ced863244ef5de910438f428b",
+          "proof_sha256": "sha256:6f6dff5e46d1619bc0cd801154174b050b8c703fb02fe5b153e8f9b59049b688",
+          "standalone_source_sha256": "sha256:c904ce42127f1e07fa7487200095068639f4f92a2f6bdead967c0b26b253262e",
+          "segment_sha256": "sha256:e0bc8ae352b60fce74c31c2fa84cf3a408e4761a08a7f54603453ad86948b1ac",
+          "start_line": 78,
+          "end_line": 99,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:7d6943596d351a5e5ae5094ec39fb47003d74fabe90d9b51ee1ce138977214f4",
+          "proof_sha256": "sha256:7e3cb0689615a937712918a36e993876a70bff5b349e0934cb449971125f3190",
+          "standalone_source_sha256": "sha256:ac5180167c138627bf46880b9c45914c36f3624c5208497a48fa7ae7339f7d38",
+          "segment_sha256": "sha256:014134015234942428884d166355b80647209fdd27e4f58d91cffc04225acb4d",
+          "start_line": 101,
+          "end_line": 162,
+          "status": "not_verified"
+        }
+      ]
+    },
+    {
+      "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\validation-2.json",
+      "validation_sha256": "df5d99156de03f06598e1c8ccf13ee858088400697247720a550b36a8742dc22",
+      "formal_result_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a2\\result.json",
+      "formal_result_sha256": "d6d8da77fcb8686e134f4a54c57303babb310056df580646bf92144a96adf29b",
+      "status": "failed",
+      "checks": [
+        {
+          "node_id": "two_power_divisor_bound",
+          "payload_digest": "sha256:b6cb8dc45b23044a580abb572b5544efdeb5995c285338f208097b2c0554484b",
+          "proof_sha256": "sha256:ca13cd87fc3707647100741702b2cf1af8cee7d746bb3e25716868c89c709713",
+          "standalone_source_sha256": "sha256:66c4f5a31eb4b0e013e2d66f64cd715fd365fe9a8aab6495099b17a2192d3225",
+          "segment_sha256": "sha256:a25f7eb34267567df4bc75752041d30930cfc269bf0657834918f8f933f12a25",
+          "start_line": 4,
+          "end_line": 29,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "three_power_divisor_bound",
+          "payload_digest": "sha256:a57cee0a717e1437197be522322865e693dfac12d8b873e956dec5ef7bf44e9d",
+          "proof_sha256": "sha256:cde4b8482dcb429e1419f30c6822bc316bbdb419f52fb525ef077c9430e09b3d",
+          "standalone_source_sha256": "sha256:2de6cee41bb10163bcbfc3ff32c70a2a08428285985c1c0708a3e08a0e119eb9",
+          "segment_sha256": "sha256:7390daac8a3a4c64800d05c04f2709b958c8a1d83b1cf67ca79e8490205d31a4",
+          "start_line": 31,
+          "end_line": 56,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "global_divisor_bound",
+          "payload_digest": "sha256:b0876af34649bf217989fe0af7c56dd34f0fdb1724c8334e6bffe9bb05730537",
+          "proof_sha256": "sha256:d2d95035a427f61260632e51e3a6c9cee586890fb08cd9b8919816a3bd647afb",
+          "standalone_source_sha256": "sha256:5bb95e590a5043bbd1113bf8dd12358798a13f195ebc17af49a771bd7a570788",
+          "segment_sha256": "sha256:297d352204961dd32ac9948d45fc2d2411bc85975b1e363c784d2eb3e1959438",
+          "start_line": 58,
+          "end_line": 75,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "root",
+          "payload_digest": "sha256:dfee21b36bf0f076ab2d77923944e8d3c62f7e1ced863244ef5de910438f428b",
+          "proof_sha256": "sha256:a0f926f2c30cfc2f676d1c127b49082343ab4de434c5e513237e3844030e3f0c",
+          "standalone_source_sha256": "sha256:c0cee178a3de9e0e06010c62935aa5da0bc97451416fde04881de1d0f3e8a65e",
+          "segment_sha256": "sha256:173c7d29bf5ece871984ad5068b157fb457e9fc07b836712d2e3948c21b40877",
+          "start_line": 77,
+          "end_line": 112,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:7d6943596d351a5e5ae5094ec39fb47003d74fabe90d9b51ee1ce138977214f4",
+          "proof_sha256": "sha256:678b134b85ebd30bb519567b76eb98905ed5173b2c8fecb6fd61af069fd85379",
+          "standalone_source_sha256": "sha256:1c89aae699f690f1de01456691e4fdd7b87dd8cedf06fa782ed3f3ba81144b4c",
+          "segment_sha256": "sha256:81818e4c80558cb1596ee4eec02b1888b4940ee6469beb563a0a20f37fa5a9ef",
+          "start_line": 114,
+          "end_line": 188,
+          "status": "not_verified"
+        }
+      ]
+    },
+    {
+      "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\validation-3.json",
+      "validation_sha256": "d118fbaf1135b1c6b3cbeabc1d5014ee72daf174c0977ad3eb672b48a61efa1c",
+      "formal_result_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\result.json",
+      "formal_result_sha256": "9e23cc574c91b9cc669dd3669628b0374f95757e0a6fd2e794beb9294aa5440f",
+      "status": "failed",
+      "checks": [
+        {
+          "node_id": "two_power_divisor_bound",
+          "payload_digest": "sha256:b6cb8dc45b23044a580abb572b5544efdeb5995c285338f208097b2c0554484b",
+          "proof_sha256": "sha256:ca13cd87fc3707647100741702b2cf1af8cee7d746bb3e25716868c89c709713",
+          "standalone_source_sha256": "sha256:66c4f5a31eb4b0e013e2d66f64cd715fd365fe9a8aab6495099b17a2192d3225",
+          "segment_sha256": "sha256:a25f7eb34267567df4bc75752041d30930cfc269bf0657834918f8f933f12a25",
+          "start_line": 4,
+          "end_line": 29,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "three_power_divisor_bound",
+          "payload_digest": "sha256:a57cee0a717e1437197be522322865e693dfac12d8b873e956dec5ef7bf44e9d",
+          "proof_sha256": "sha256:cde4b8482dcb429e1419f30c6822bc316bbdb419f52fb525ef077c9430e09b3d",
+          "standalone_source_sha256": "sha256:2de6cee41bb10163bcbfc3ff32c70a2a08428285985c1c0708a3e08a0e119eb9",
+          "segment_sha256": "sha256:7390daac8a3a4c64800d05c04f2709b958c8a1d83b1cf67ca79e8490205d31a4",
+          "start_line": 31,
+          "end_line": 56,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "global_divisor_bound",
+          "payload_digest": "sha256:b0876af34649bf217989fe0af7c56dd34f0fdb1724c8334e6bffe9bb05730537",
+          "proof_sha256": "sha256:d2d95035a427f61260632e51e3a6c9cee586890fb08cd9b8919816a3bd647afb",
+          "standalone_source_sha256": "sha256:5bb95e590a5043bbd1113bf8dd12358798a13f195ebc17af49a771bd7a570788",
+          "segment_sha256": "sha256:297d352204961dd32ac9948d45fc2d2411bc85975b1e363c784d2eb3e1959438",
+          "start_line": 58,
+          "end_line": 75,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "root",
+          "payload_digest": "sha256:dfee21b36bf0f076ab2d77923944e8d3c62f7e1ced863244ef5de910438f428b",
+          "proof_sha256": "sha256:d8b6bac37526b3de420ae3ff995c73f3567efa25dbeb75d61a0d37b8ed959e8e",
+          "standalone_source_sha256": "sha256:6dc2e31bf912646966870d8cf09a28e05fa888773494de47fe57c9df65c7b977",
+          "segment_sha256": "sha256:3decd30fb1936d44c6212e84604bf567cb72924834e02561986dbebd785943a5",
+          "start_line": 77,
+          "end_line": 114,
+          "status": "not_verified"
+        },
+        {
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:7d6943596d351a5e5ae5094ec39fb47003d74fabe90d9b51ee1ce138977214f4",
+          "proof_sha256": "sha256:8b5a51dfc8c33f3e7d928234e8a0bba0454cf4325ab0a1f8abfdd9239c3f6b7e",
+          "standalone_source_sha256": "sha256:92a0eeadf124c9a68884302e9c91859260cb757107607d90ac6a8edac97f1dcd",
+          "segment_sha256": "sha256:de503f51bf85b5691d015d1294985a7acba56459f0862595dfbb96511605d2a3",
+          "start_line": 116,
+          "end_line": 192,
+          "status": "not_verified"
+        }
+      ]
+    }
+  ],
+  "full_root_proved": false,
+  "root_compilation_attempted": true,
+  "standalone_partial_certificate": false,
+  "partial_evidence_limit": "Local examples and the conditional root have no errors in the final failed bundle, but the complete file has exit1 and is not an accepted proof certificate.",
+  "provider_call_count": 0
+}

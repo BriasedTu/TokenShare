@@ -1,0 +1,39 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_imo_1981_p6",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/ff36fab19c56c15f/result.json",
+    "result_sha256": "sha256:5e88196080a6aafb39e2efdf42fe6f0d16afdeafd7de27016e758cdcb0709f11"
+  },
+  "mathematical_review": "Prove two lower linear recursion levels uniformly, then the exact shifted exponential level, before aligning the fourth level with the tower recursion.",
+  "node_proofs_digest": "sha256:0cd3f73ad74070d09b3bd839df4df3057abfed515eab3540fb70b6b3033065a7",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Identify the two lower growth levels uniformly, so they can be used at arbitrary nested recursive arguments.",
+      "node_id": "linear_levels"
+    },
+    {
+      "dependencies": [
+        "linear_levels"
+      ],
+      "mathematical_role": "Convert the third recursive level to exact exponential growth, using a shifted value to avoid truncated subtraction.",
+      "node_id": "exponential_level"
+    },
+    {
+      "dependencies": [
+        "exponential_level"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:866344195db632fa72f81c6f9e36094dc210f78ddcd09bf6d8cee18f04f0a7b7",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:05:58.409030+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

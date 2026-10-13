@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_imo_1974_p5",
+  "node_proof_sources": {
+    "root": "by\n  exact ⟨node_strict_lower_bound, node_strict_upper_bound⟩",
+    "strict_lower_bound": "by\n  rcases h₀ with ⟨ha, hb, hc, hd⟩\n  have hT : 0 < a + b + c + d := by linarith\n  have hA : a / (a + b + c + d) < a / (a + b + d) := div_lt_div_of_pos_left ha (by linarith) (by linarith)\n  have hB : b / (a + b + c + d) < b / (a + b + c) := div_lt_div_of_pos_left hb (by linarith) (by linarith)\n  have hC : c / (a + b + c + d) < c / (b + c + d) := div_lt_div_of_pos_left hc (by linarith) (by linarith)\n  have hD : d / (a + b + c + d) < d / (a + c + d) := div_lt_div_of_pos_left hd (by linarith) (by linarith)\n  have ht : a / (a + b + c + d) + b / (a + b + c + d) + c / (a + b + c + d) + d / (a + b + c + d) = 1 := by\n    field_simp\n  linarith",
+    "strict_upper_bound": "by\n  rcases h₀ with ⟨ha, hb, hc, hd⟩\n  have hA : a / (a + b + d) < a / (a + d) := div_lt_div_of_pos_left ha (by linarith) (by linarith)\n  have hD : d / (a + c + d) < d / (a + d) := div_lt_div_of_pos_left hd (by linarith) (by linarith)\n  have hB : b / (a + b + c) < b / (b + c) := div_lt_div_of_pos_left hb (by linarith) (by linarith)\n  have hC : c / (b + c + d) < c / (b + c) := div_lt_div_of_pos_left hc (by linarith) (by linarith)\n  have hAD : a / (a + d) + d / (a + d) = 1 := by field_simp\n  have hBC : b / (b + c) + c / (b + c) = 1 := by field_simp\n  linarith"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

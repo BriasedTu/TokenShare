@@ -1,0 +1,38 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_imo_1974_p5",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/2394a68978b0a465/result.json",
+    "result_sha256": "sha256:b8e810afab118ffc3eeb2814afe36bbc7ee64ee3b5814bf382566a8696c25833"
+  },
+  "mathematical_review": "Independent denominator comparisons with the total and complementary pairs give strict lower and upper bounds, combined in the unchanged conjunctive root.",
+  "node_proofs_digest": "sha256:f3b0cc654c4e33d166bf07d9959de19fda43322a651ff1a602e0ebc5c66e2d84",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Compare each positive numerator with the common total denominator to obtain a strict total lower bound.",
+      "node_id": "strict_lower_bound"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Use the two complementary numerator pairs to obtain two strict bounds by one and combine them.",
+      "node_id": "strict_upper_bound"
+    },
+    {
+      "dependencies": [
+        "strict_lower_bound",
+        "strict_upper_bound"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:5b797f2b092d91256d341c82d49dbc8e21fc5e3d1af862f0a106217b20709998",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:10:01.863082+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

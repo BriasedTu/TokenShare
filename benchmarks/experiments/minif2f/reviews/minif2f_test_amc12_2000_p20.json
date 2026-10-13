@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12_2000_p20",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.276622+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/30c740e6c5c4391e/result.json",
+    "result_sha256": "sha256:28836b557d021aa0cf3723ccbfdcb5c77ae774e6a1eec88d94ff2905d03784a1"
+  },
+  "mathematical_review": "Eliminate the common triple product, use the resulting linear relation to force a repeated quadratic root, and recover the remaining coordinates.",
+  "node_proofs_digest": "sha256:ea45f5000ae71cb7ab46f0995ba96e6ea0f8a975a3c6b00143db034b4faf445a",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Eliminate the common xyz term after clearing the three positive denominators.",
+      "node_id": "eliminated_relation"
+    },
+    {
+      "dependencies": [
+        "eliminated_relation"
+      ],
+      "mathematical_role": "The eliminated relation forces a repeated quadratic root for x.",
+      "node_id": "first_coordinate"
+    },
+    {
+      "dependencies": [
+        "first_coordinate"
+      ],
+      "mathematical_role": "Recover the other two coordinates and evaluate the product.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:92b34bc61f79500d0a581267e6cbfad6d3b53e4aa8a2b8f45ef4c12041ff8003",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.276622+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

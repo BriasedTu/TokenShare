@@ -1,0 +1,2420 @@
+{
+  "admitted_count": 81,
+  "admitted_node_count": 223,
+  "all_original_statement_and_reference_hashes_unchanged": true,
+  "candidate_count": 102,
+  "case_identities_sha256": "57524ed5ac0131972c16450cfc340cff0a01195b9492cf1f7c63e362468dd2d4",
+  "cases": [
+    {
+      "author": "author_algebra",
+      "case_id": "test/aime_1983_p3",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/641fb47126cbf3a9/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_aime_1983_p3.json",
+      "node_count": 3,
+      "original_statement_sha256": "286270380c5ca3e829f65f4f086c3245a6038eba09bc5b57b3cf5792dcac73c4",
+      "reason": "Eliminate the radical using its sign to characterize the zero quadratic; identify its distinct roots as a set and evaluate the finite product.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "21aae861eccbe9835e53adfe41313abbfc2d7ac00d587cf9f30656bf4af637a5",
+      "root_checked": true,
+      "root_id": "minif2f_test_aime_1983_p3",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/aime_1984_p7",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/8826d504703f97f6/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_aime_1984_p7.json",
+      "node_count": 3,
+      "original_statement_sha256": "a271681919403a9d83692c1b070dc2d50ba0fd2466ef4c40ed4810a8f722a005",
+      "reason": "Establish the closed two-value recursion cycle, propagate a uniform formula below the threshold by strong induction, then evaluate the requested argument.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "f607452b66ffee656b4c878011b5be5c543dec16c8b9dd2bf48bfcf3bd36d0dc",
+      "root_checked": true,
+      "root_id": "minif2f_test_aime_1984_p7",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/aime_1987_p5",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/1129578315963714/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_aime_1987_p5.json",
+      "node_count": 3,
+      "original_statement_sha256": "c19117377b451e62a5dc717ffd38e4f002421657548143f26b631c51c2317445",
+      "reason": "Integer-square discreteness bounds the second variable away from zero, which yields a finite bound on the first variable before exact Diophantine exclusion.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "1a927a3df21abacbea6b72962a22729d42a8ad7ee73fd316b5db084c99756f7c",
+      "root_checked": true,
+      "root_id": "minif2f_test_aime_1987_p5",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/aime_1991_p9",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/0a994bdf53ab9854/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_aime_1991_p9.json",
+      "node_count": 3,
+      "original_statement_sha256": "ad627c303271423081b2f64008afa442be4d03eb81d85289f81ed656dc6577db",
+      "reason": "The secant-tangent equation and unit circle determine sine and cosine after excluding a zero denominator; transfer the second expression to an exact rational before reducing numerator and denominator.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "04085017a18a0df81e24357324269137b94875b5ea8b14e9d1ff0c3c15724859",
+      "root_checked": true,
+      "root_id": "minif2f_test_aime_1991_p9",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/aime_1995_p7",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/13c343c99a52b4ca/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_aime_1995_p7.json",
+      "node_count": 3,
+      "original_statement_sha256": "0baef49e6acd6965036cfb9dce9316422b6b184bcc2be8bdc5bad91cf1fe0faa",
+      "reason": "The first branch uses the unit circle and the given product to isolate a signed radical expression. Irrationality of square root ten then separates the rational part and the integer radicand. The root uses the original coprimality to recover the reduced numerator and denominator, rather than assuming them from a numerical approximation.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_test_aime_1995_p7",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/aime_1997_p9",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/67741dc3729ca3f1/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_aime_1997_p9.json",
+      "node_count": 3,
+      "original_statement_sha256": "8ed10e1ad5cce1a5ecdff731b8fae93ede15c888f4b835d0b5022045c3892a73",
+      "reason": "Determine the two floor values, eliminate the reciprocal to obtain the positive quadratic relation, then reduce the twelfth power by that relation.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "ec4a4a675f1100425a1b34e998b4f521f9ce939987478f9b404664db045a27d6",
+      "root_checked": true,
+      "root_id": "minif2f_test_aime_1997_p9",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/aime_1999_p11",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/03880589e65bfe5e/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_aime_1999_p11.json",
+      "node_count": 2,
+      "original_statement_sha256": "ba0b6bf79f45d29181a7f78772d95c670eb590e1cd8012b16e5a2b01bb497dec",
+      "reason": "The retained intermediate proves the finite sine-sum formula by induction and cancellation of consecutive odd-angle cosines. The root evaluates its endpoints locally, recognizes a complementary tangent, and uses tangent injectivity on the original acute-angle interval to recover the rational value and numerator-denominator sum. The former endpoint-specialization node has been folded into the root.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "665a11c03b621dc9af400e819ec0919d5fe40566e884b63c5ab7f0d17407651e",
+      "root_checked": true,
+      "root_id": "minif2f_test_aime_1999_p11",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_abpbcpcageq3_sumaonsqrtapbgeq3onsqrt2",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/5f3699bc44f51847/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_abpbcpcageq3_sumaonsqrtapbgeq3onsqrt2.json",
+      "node_count": 4,
+      "original_statement_sha256": "6b0e4b2b013a24942b0412a0e5a767414762b8593b0940a9b58192d1985aeb81",
+      "reason": "Two independent Cauchy-Schwarz inequalities connect the reciprocal-root objective with a weighted-root companion and then bound that companion using the total sum and pair products. A third polynomial inequality uses the pair-product lower bound and an explicit nonnegative cubic factor. The root combines all three estimates with positivity to obtain the sharp constant.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "c94b107053e24fed525b02e43dccec1a2e5d05121e9e172907357644140e0163",
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_abpbcpcageq3_sumaonsqrtapbgeq3onsqrt2",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_absapbon1pabsapbleqsumabsaon1pabsa",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/d86ae7ad480fb90d/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_absapbon1pabsapbleqsumabsaon1pabsa.json",
+      "node_count": 3,
+      "original_statement_sha256": "b543f4cbab32cae740bda370c43339e36f373576acb81fda31692cd2fa76d8dc",
+      "reason": "Triangle monotonicity and independent positive-denominator comparisons give two genuine estimates, composed at the original root.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "555a4dd812c1b1cac95c935cda034e90d307e8f155dd28512a5dd571b442114d",
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_absapbon1pabsapbleqsumabsaon1pabsa",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_amgm_sum1toneqn_prod1tonleq1",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/9ce911cccf68f17f/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_amgm_sum1toneqn_prod1tonleq1.json",
+      "node_count": 2,
+      "original_statement_sha256": "7512c3ec27350608bdefcc44a265e70028256b49e442af3dbfd69d1e4746ebe7",
+      "reason": "The revised intermediate uses Cauchy-Schwarz to control the sum of square roots from the prescribed sum of nonnegative factors. The root applies the logarithm tangent inequality to those square roots, sums the resulting inequalities, and converts the logarithmic bound to the product bound, handling zero factors locally. This controls a distinct intermediate quantity instead of merely taking logarithms of the requested product conclusion.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "80dddb1a44c12dfb37375152690b5e43dd153ae938eaea04102fecd6edabe3aa",
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_amgm_sum1toneqn_prod1tonleq1",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_apbmpcneq0_aeq0anbeq0anceq0",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/64abb4b6945cabe7/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_apbmpcneq0_aeq0anbeq0anceq0.json",
+      "node_count": 3,
+      "original_statement_sha256": "09ce74b6b6bd8d56506da96bdb6fa04c13b872c9465340e10fac406599068ecf",
+      "reason": "One branch identifies the positive cube root of four with the square of the positive cube root of two. A separate rational-root integrality argument proves the latter irrational. The root eliminates the quadratic term, uses irrationality to force a rational determinant to vanish, and derives coefficient vanishing from a nonnegative quadratic form.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_apbmpcneq0_aeq0anbeq0anceq0",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_apbon2pownleqapownpbpowon2",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/473a1eec72faa13c/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_apbon2pownleqapownpbpowon2.json",
+      "node_count": 2,
+      "original_statement_sha256": "85050f4adcbfb738c7ef9a2640ee969a50bfc4dd467cb29c3e8d2c05dbb2512e",
+      "reason": "The sign of a power difference is a substantive monotonicity certificate, and the root proves the power-mean estimate by induction. The initially separate mixed_moment_bound was exactly the polynomial expansion 2(a^(k+1)+b^(k+1))-(a^k+b^k)(a+b)=(a-b)(a^k-b^k). The author folded this equivalent rewrite into the root after independent review. The current two-node graph counts only the sign certificate and the inductive root, and its new necessary compilation evidence matches.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "24d8323ed7b1775bd7877f699387e9f4e63dfcaa1a398711ed36536d75d28de4",
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_apbon2pownleqapownpbpowon2",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_apbpceq2_abpbcpcaeq1_aleq1on3anbleq1ancleq4on3",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/5da266aa6e2d1bdc/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_apbpceq2_abpbcpcaeq1_aleq1on3anbleq1ancleq4on3.json",
+      "node_count": 4,
+      "original_statement_sha256": "fc240e2eb7f58adea02d60cec6f8cf36c6f83b065131a0ebf7e8abad7f1e3bd2",
+      "reason": "Three independent endpoint estimates exploit square nonnegativity and order; the root combines them and deduces the middle-coordinate bounds.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "7066066340775c7769532a7e00623f1e28a5b6f7f1d0eec00d52f01a3f0114e2",
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_apbpceq2_abpbcpcaeq1_aleq1on3anbleq1ancleq4on3",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_others_exirrpowirrrat",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/f39238f67d6c1594/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_others_exirrpowirrrat.json",
+      "node_count": 2,
+      "original_statement_sha256": "4a2cba2314e73847ed6a92222954c504e49726a7e98aec5c37b341cfaa14a910",
+      "reason": "The iterated irrational-power identity establishes the concrete mechanism behind the existence construction. The root makes a classical case split on the irrationality of the first power and selects different witnesses in the two cases. The identity is not the existential root restated and no witness-only node is counted.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "7bbac6daa94584b6a427206b01e04f52074c9cb8e61ff83de17ae858b59db884",
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_others_exirrpowirrrat",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/algebra_sum1onsqrt2to1onsqrt10000lt198",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/facc78273be5a18c/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_algebra_sum1onsqrt2to1onsqrt10000lt198.json",
+      "node_count": 3,
+      "original_statement_sha256": "811ce07af457f0d225819e526ced2578e9147d62daf9abd52d2f649d43fc54f3",
+      "reason": "A strict pointwise analytic inequality follows from the squared difference of consecutive square roots. An independent induction evaluates the telescoping sum. The root combines a strict finite-sum comparison with the exact endpoint. These are distinct analytic and summation obligations.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "00da9aa0505358f90a2915590f57a90c20ed51ab1997274319892e3e5bd3730c",
+      "root_checked": true,
+      "root_id": "minif2f_test_algebra_sum1onsqrt2to1onsqrt10000lt198",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12_2000_p12",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/466cc83bdcee092d/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12_2000_p12.json",
+      "node_count": 3,
+      "original_statement_sha256": "ab3bc66aa3c5ce93ced1fb2573a856d0b93570de94b0f9c231bee8c6be03d6f9",
+      "reason": "An independent two-variable square bound and a sharp cubic square certificate control the shifted product; the root subtracts the known linear sum.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "2c541827c023016e0fe4c8757500d6f38e548f0efc205ce6a60b6c6eaba65347",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12_2000_p12",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12_2000_p20",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/30c740e6c5c4391e/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12_2000_p20.json",
+      "node_count": 3,
+      "original_statement_sha256": "5204e015acf3881ea2613b44edb89fd88ba42779594e10ccd44f35f50ca29c66",
+      "reason": "Eliminate the common triple product, use the resulting linear relation to force a repeated quadratic root, and recover the remaining coordinates.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "5d27f23493795f9b51a8d00243bb3bd8c314fefaeb7b21878c02db635bd2af83",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12_2000_p20",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12_2001_p21",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/4e5e2e0be4f1d784/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12_2001_p21.json",
+      "node_count": 3,
+      "original_statement_sha256": "752263f6d42c89c36529bb97729654258e16f2251e3477a64552cae64de4fddb",
+      "reason": "The shifted common factor divides a fixed gcd, which bounds the candidate middle values; the factorial constraint selects the valid branch.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "405ec59db6fba93d65543e082fab749dddc82d15a853757fed5c10bbf110b459",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12_2001_p21",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12_2001_p5",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/eda3b92b662aafe2/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12_2001_p5.json",
+      "node_count": 3,
+      "original_statement_sha256": "d893591246b588e9e12a9ff66decb87cc3ee2cd1635cf199135917cd823af5b9",
+      "reason": "A parity-constrained finite product is reindexed by a proved bijection with odd numbers. Independently, induction partitions the factorial into adjacent even-odd pairs and collects the powers of two. The root combines these two domain and factorization facts before positive natural-number division.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "bf451f50cd2cd04bb67a6946a2c1193d66408c5c288edf95c8cd873d704fae61",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12_2001_p5",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2003_p23",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/9c69afc30b4f4590/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12a_2003_p23.json",
+      "node_count": 2,
+      "original_statement_sha256": "2b76311e701df4687f0be6a7218f2e77c93df8a7ffeca4415f8f7c777f4ce671",
+      "reason": "The retained intermediate proves, uniformly for positive k, that the square-divisor condition is equivalent to dividing the integer with halved prime exponents. It computes the factorial product locally and proves the factorization inequalities in both directions. The root identifies the original finset with that divisor set and counts it using coprime products and prime-power divisor counts. Closed constant computations are folded into their consumers.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12a_2003_p23",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2008_p25",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/0594161ac1761512/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12a_2008_p25.json",
+      "node_count": 3,
+      "original_statement_sha256": "21952f1247484c3f0fa8a1174b24a87d3055959573ca9041871278cbb156a4ea",
+      "reason": "Three coupled steps give a scaled quarter-turn; induction gives arbitrary six-step scaling; both transport the known large-index data to index one.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "e1efe1b3e9c9b7ae61e22df512222a2c45e9ab59733942800d22062ab7536ff5",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12a_2008_p25",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2020_p15",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/c2665cb319544b36/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12a_2020_p15.json",
+      "node_count": 3,
+      "original_statement_sha256": "9e9d8743cd3bf07123d419816dd4ff6fdc41977e2b8a56302ba23253f84b01fa",
+      "reason": "The first cubic gives a fixed norm and a sharp lower bound on the real part. The second cubic factors into a distant root and a small-radius branch. The root uses squared-distance geometry for b=8 and a triangle bound for the other branch. The two polynomial classifications are independent and materially different from the final distance bound.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "330d50a5bcc4ec11aa6fe378142cea1616f905f1f8c562194cffbcba794a43b7",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12a_2020_p15",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12a_2020_p9.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/9da4050b9a79d0b1ed1d205ecc4944a8098442f226b6a3458338f89d41f025a2.json",
+          "sha256": "9da4050b9a79d0b1ed1d205ecc4944a8098442f226b6a3458338f89d41f025a2"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\59f0b441\\0622018800\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/a1193a9a7daec65c6dd850a7654ecc845fd7961a0b850807d91ebf10cb58b1de.json",
+          "sha256": "a1193a9a7daec65c6dd850a7654ecc845fd7961a0b850807d91ebf10cb58b1de"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\amc12a_2020_p9.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/a87a548c90eee7acc12841f7d3b3f49e341b9fd79319c0e1cbf90cb141f6594b.lean.txt",
+          "sha256": "a87a548c90eee7acc12841f7d3b3f49e341b9fd79319c0e1cbf90cb141f6594b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2020_p9\\partial-authoring.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/dfa20491f782ab50dfb11746fb8594ffc3f58f1d74649d21d4761a72c9a426f3.json",
+          "sha256": "dfa20491f782ab50dfb11746fb8594ffc3f58f1d74649d21d4761a72c9a426f3"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\59f0b441\\0622018800\\bridges.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/f67c8ce3df0fd7989b3c35cd78c93b9e6f341cabee3ca1614312743e3a6d682a.lean.txt",
+          "sha256": "f67c8ce3df0fd7989b3c35cd78c93b9e6f341cabee3ca1614312743e3a6d682a"
+        }
+      ],
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2020_p9",
+      "contributor": "author_numbertheory",
+      "exclusion_review": {
+        "case_review": {
+          "all_current_partial_proofs_and_segments_match": true,
+          "author": "author_algebra",
+          "author_disposition": {
+            "assistance_status": "completed_partial_bridges_verified",
+            "canonical_owner": "author_algebra",
+            "case_id": "test/amc12a_2020_p9",
+            "contributor": "author_numbertheory",
+            "exclusion_does_not_claim_original_false": true,
+            "investigation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2020_p9\\partial-authoring.json",
+            "investigation_sha256": "dfa20491f782ab50dfb11746fb8594ffc3f58f1d74649d21d4761a72c9a426f3",
+            "partial_authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2020_p9\\partial-authoring.json",
+            "partial_nodes_status": "strict_lean_passed",
+            "reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: Need establish strict monotonicity of tan(2x) separately on the five shifted branches with verified interval bounds.; Need IVT existence from endpoint signs or finite interior points near each pole, then identify S with the five roots and prove its cardinality.",
+            "root_checked": false,
+            "root_status": "not_proved_not_compiled",
+            "source_sha256": "a87a548c90eee7acc12841f7d3b3f49e341b9fd79319c0e1cbf90cb141f6594b",
+            "status": "excluded_incomplete_bridge",
+            "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\59f0b441\\0622018800\\compiler.json"
+          },
+          "canonical_partial_authoring_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2020_p9\\partial-authoring.json",
+          "canonical_partial_authoring_sha256": "sha256:dfa20491f782ab50dfb11746fb8594ffc3f58f1d74649d21d4761a72c9a426f3",
+          "case_id": "test/amc12a_2020_p9",
+          "contributor": "author_numbertheory",
+          "current_plan_digest": null,
+          "exclusion_is_not_a_claim_that_the_theorem_is_false": true,
+          "exclusion_reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: Need establish strict monotonicity of tan(2x) separately on the five shifted branches with verified interval bounds.; Need IVT existence from endpoint signs or finite interior points near each pole, then identify S with the five roots and prove its cardinality.",
+          "full_plan_unavailable_reason": "Only partial anonymous bridge examples exist; no complete root DAG is asserted.",
+          "graph_digest": "sha256:54afeb436445e28ebed1a204d19a8ec1e1b4b4e59ffa574a3ec69419688ebc22",
+          "mathematical_review": "The checked bridges correctly exclude totalized tangent poles and show that distinct solutions reverse the order of their tangent values. They do not prove tangent monotonicity on each shifted branch, existence on all five branches, or a five-element finite-set classification. These are explicit remaining cardinality obligations, so partial success does not prove the original root.",
+          "partial_authoring_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12a_2020_p9.json",
+          "partial_authoring_sha256": "sha256:9da4050b9a79d0b1ed1d205ecc4944a8098442f226b6a3458338f89d41f025a2",
+          "partial_compiler_evidence": [
+            {
+              "compiler_log_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\59f0b441\\0622018800\\compiler.json",
+              "compiler_log_sha256": "sha256:a1193a9a7daec65c6dd850a7654ecc845fd7961a0b850807d91ebf10cb58b1de",
+              "lean_source_sha256": "sha256:f67c8ce3df0fd7989b3c35cd78c93b9e6f341cabee3ca1614312743e3a6d682a",
+              "segments": [
+                {
+                  "end_line": 22,
+                  "node_id": "solutions_avoid_tangent_poles",
+                  "proof_sha256": "97fd0ef364c5162dddfa9cbb87b6e30af222c5d873ba535676f08e6f2d094cbe",
+                  "segment_sha256": "02e7771b207dc7e441ead95e127c27cbc944bd5da0fec948e3f27ad44fc4404f",
+                  "start_line": 8
+                },
+                {
+                  "end_line": 31,
+                  "node_id": "distinct_solutions_reverse_tangent_order",
+                  "proof_sha256": "aa03a5882ba3edad1f7a85b3aef9026696362c70a68f5123e34bee0ac08a57ee",
+                  "segment_sha256": "c96dead1f64e361c4bb3fbb5363c497019bdb19642670922780d37d4a0421b91",
+                  "start_line": 23
+                }
+              ]
+            }
+          ],
+          "partial_node_count": 2,
+          "partial_nodes_are_not_admitted_ai_units": true,
+          "proof_digest": "sha256:6afd88513a5bbd5ef9ed93362c89d8e4b78cbbce331e8d4387d5909f63caecce",
+          "reviewer": "lean_environment",
+          "root_compilation_attempted": false,
+          "root_proved": false,
+          "source_sha256": "sha256:a87a548c90eee7acc12841f7d3b3f49e341b9fd79319c0e1cbf90cb141f6594b",
+          "status": "exclusion_reviewed",
+          "strict_warning_as_error_command_verified": true,
+          "unclosed_root_obligations": [
+            "Need establish strict monotonicity of tan(2x) separately on the five shifted branches with verified interval bounds.",
+            "Need IVT existence from endpoint signs or finite interior points near each pole, then identify S with the five roots and prove its cardinality."
+          ]
+        },
+        "report_path": "benchmarks/experiments/minif2f/independent_reports/79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9.json",
+        "report_sha256": "79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9",
+        "reviewer": "lean_environment"
+      },
+      "original_disposition": "excluded_incomplete_bridge",
+      "original_statement_sha256": "a87a548c90eee7acc12841f7d3b3f49e341b9fd79319c0e1cbf90cb141f6594b",
+      "reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: Need establish strict monotonicity of tan(2x) separately on the five shifted branches with verified interval bounds.; Need IVT existence from endpoint signs or finite interior points near each pole, then identify S with the five roots and prove its cardinality.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\amc12a_2021_p12.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/111e0ddac6284b5b2709b8f37100caa2c124fee2c02cd5d09fa0ab9a27c3a859.lean.txt",
+          "sha256": "111e0ddac6284b5b2709b8f37100caa2c124fee2c02cd5d09fa0ab9a27c3a859"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\d90491ff\\7599902700\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/19ca0ec33b88c24e7fa01ee83e3f935dd4db4b2a912966da8e3603bfda50559a.json",
+          "sha256": "19ca0ec33b88c24e7fa01ee83e3f935dd4db4b2a912966da8e3603bfda50559a"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12a_2021_p12.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/2a7c99d483439cc8da39055ace1c9000ab257dce14615b88fc515f9abcd6f700.json",
+          "sha256": "2a7c99d483439cc8da39055ace1c9000ab257dce14615b88fc515f9abcd6f700"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\d90491ff\\7599902700\\bridges.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/2ae3a8b58d3e81c18f3389ab26eae2e2a3a7ff7fec4b16d7824d6994631e14d2.lean.txt",
+          "sha256": "2ae3a8b58d3e81c18f3389ab26eae2e2a3a7ff7fec4b16d7824d6994631e14d2"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p12\\partial-authoring.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/833f57c690dde10f061e2123e7751dd67dce8b4d152da19e8b529d89a8fc9f8a.json",
+          "sha256": "833f57c690dde10f061e2123e7751dd67dce8b4d152da19e8b529d89a8fc9f8a"
+        }
+      ],
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2021_p12",
+      "contributor": "author_numbertheory",
+      "exclusion_review": {
+        "case_review": {
+          "all_current_partial_proofs_and_segments_match": true,
+          "author": "author_algebra",
+          "author_disposition": {
+            "assistance_status": "completed_partial_bridges_verified",
+            "canonical_owner": "author_algebra",
+            "case_id": "test/amc12a_2021_p12",
+            "contributor": "author_numbertheory",
+            "exclusion_does_not_claim_original_false": true,
+            "investigation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p12\\partial-authoring.json",
+            "investigation_sha256": "833f57c690dde10f061e2123e7751dd67dce8b4d152da19e8b529d89a8fc9f8a",
+            "partial_authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p12\\partial-authoring.json",
+            "partial_nodes_status": "strict_lean_passed",
+            "reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The remaining formal bridge must define the complex polynomial and prove monic/natDegree6/eval=f, then use FTA and multiset roots with multiplicity.; Connect Polynomial.nextCoeff_eq_neg_sum_roots_of_monic_of_splits and Polynomial.coeff_zero_eq_prod_roots_of_monic_of_splits to a sorted six-tuple of positive naturals; mere enumeration of the distinct zero set is insufficient.; Use Polynomial.eq_prod_roots_of_monic_of_splits_id for factorization, then coefficient comparison or four real-part evaluations to conclude b=−88.",
+            "root_checked": false,
+            "root_status": "not_proved_not_compiled",
+            "source_sha256": "111e0ddac6284b5b2709b8f37100caa2c124fee2c02cd5d09fa0ab9a27c3a859",
+            "status": "excluded_incomplete_bridge",
+            "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\d90491ff\\7599902700\\compiler.json"
+          },
+          "canonical_partial_authoring_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p12\\partial-authoring.json",
+          "canonical_partial_authoring_sha256": "sha256:833f57c690dde10f061e2123e7751dd67dce8b4d152da19e8b529d89a8fc9f8a",
+          "case_id": "test/amc12a_2021_p12",
+          "contributor": "author_numbertheory",
+          "current_plan_digest": null,
+          "exclusion_is_not_a_claim_that_the_theorem_is_false": true,
+          "exclusion_reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The remaining formal bridge must define the complex polynomial and prove monic/natDegree6/eval=f, then use FTA and multiset roots with multiplicity.; Connect Polynomial.nextCoeff_eq_neg_sum_roots_of_monic_of_splits and Polynomial.coeff_zero_eq_prod_roots_of_monic_of_splits to a sorted six-tuple of positive naturals; mere enumeration of the distinct zero set is insufficient.; Use Polynomial.eq_prod_roots_of_monic_of_splits_id for factorization, then coefficient comparison or four real-part evaluations to conclude b=−88.",
+          "full_plan_unavailable_reason": "Only partial anonymous bridge examples exist; no complete root DAG is asserted.",
+          "graph_digest": "sha256:0f780887dcd751624858ae8706792d184147732afdb6c4fd82881695e42b7367",
+          "mathematical_review": "The original floor predicate has been converted to positive natural roots, and a substantive ordered six-tuple classification proves that positive integer roots with sum ten and product sixteen must be [1,1,2,2,2,2]. The missing complex-polynomial splitting, multiplicity-aware Vieta bridge, and coefficient recovery are essential. The predicate conversion alone would be folded into that bridge if a full DAG is admitted; the current partial result is not b=-88.",
+          "partial_authoring_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12a_2021_p12.json",
+          "partial_authoring_sha256": "sha256:2a7c99d483439cc8da39055ace1c9000ab257dce14615b88fc515f9abcd6f700",
+          "partial_compiler_evidence": [
+            {
+              "compiler_log_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\d90491ff\\7599902700\\compiler.json",
+              "compiler_log_sha256": "sha256:19ca0ec33b88c24e7fa01ee83e3f935dd4db4b2a912966da8e3603bfda50559a",
+              "lean_source_sha256": "sha256:2ae3a8b58d3e81c18f3389ab26eae2e2a3a7ff7fec4b16d7824d6994631e14d2",
+              "segments": [
+                {
+                  "end_line": 28,
+                  "node_id": "complex_roots_are_positive_naturals",
+                  "proof_sha256": "48dd2709fb741d6947b695830273608b28b7ef5a862d9143297014da9d9cfe1c",
+                  "segment_sha256": "6eec499c4be7adc668890c4d71f8f94920b4bcf7d30d69676951b42ab6d0c034",
+                  "start_line": 8
+                },
+                {
+                  "end_line": 58,
+                  "node_id": "ordered_six_root_classification",
+                  "proof_sha256": "61c64f7aeb77a7f1d2dc259d6c59a2eae27f863c93d77ac64875d1ec6aca2456",
+                  "segment_sha256": "d62f41f1a1eef36e7f51158f51f2e73d8b162e320dfa3a40930c256f918da7cb",
+                  "start_line": 29
+                }
+              ]
+            }
+          ],
+          "partial_node_count": 2,
+          "partial_nodes_are_not_admitted_ai_units": true,
+          "proof_digest": "sha256:b2b68c357d3804951388b2831ae7c93495be6bc18c5c2d2e6806572b81477669",
+          "reviewer": "lean_environment",
+          "root_compilation_attempted": false,
+          "root_proved": false,
+          "source_sha256": "sha256:111e0ddac6284b5b2709b8f37100caa2c124fee2c02cd5d09fa0ab9a27c3a859",
+          "status": "exclusion_reviewed",
+          "strict_warning_as_error_command_verified": true,
+          "unclosed_root_obligations": [
+            "The remaining formal bridge must define the complex polynomial and prove monic/natDegree6/eval=f, then use FTA and multiset roots with multiplicity.",
+            "Connect Polynomial.nextCoeff_eq_neg_sum_roots_of_monic_of_splits and Polynomial.coeff_zero_eq_prod_roots_of_monic_of_splits to a sorted six-tuple of positive naturals; mere enumeration of the distinct zero set is insufficient.",
+            "Use Polynomial.eq_prod_roots_of_monic_of_splits_id for factorization, then coefficient comparison or four real-part evaluations to conclude b=−88."
+          ]
+        },
+        "report_path": "benchmarks/experiments/minif2f/independent_reports/79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9.json",
+        "report_sha256": "79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9",
+        "reviewer": "lean_environment"
+      },
+      "original_disposition": "excluded_incomplete_bridge",
+      "original_statement_sha256": "111e0ddac6284b5b2709b8f37100caa2c124fee2c02cd5d09fa0ab9a27c3a859",
+      "reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The remaining formal bridge must define the complex polynomial and prove monic/natDegree6/eval=f, then use FTA and multiset roots with multiplicity.; Connect Polynomial.nextCoeff_eq_neg_sum_roots_of_monic_of_splits and Polynomial.coeff_zero_eq_prod_roots_of_monic_of_splits to a sorted six-tuple of positive naturals; mere enumeration of the distinct zero set is insufficient.; Use Polynomial.eq_prod_roots_of_monic_of_splits_id for factorization, then coefficient comparison or four real-part evaluations to conclude b=−88.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2021_p19",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/75bfb9812d6a9a96/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12a_2021_p19.json",
+      "node_count": 3,
+      "original_statement_sha256": "dde4d731aec2f183a0687f2247551688a8c3b6a5496e36ba487d2315f788e1a1",
+      "reason": "Sine injectivity on the bounded half-period removes the outer trigonometric functions. Independently the unit-circle identity and cosine injectivity classify the resulting angle equation on [0, pi]. The root transfers these results through the original membership biconditional and counts two distinct points.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "6deaa5a15d39214336ec91d5adbba62aa509b524e81ec1dcedecd43d2bc3608c",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12a_2021_p19",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2021_p22",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/104fa7b8d335247e/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12a_2021_p22.json",
+      "node_count": 3,
+      "original_statement_sha256": "51a117316194ae9e790c032b843c5122050ab97cbb2c1e1a9445b1900a9e807d",
+      "reason": "Trigonometric multiple-angle identities derive a cubic satisfied by the three seventh-circle cosines. An independent monotonicity argument proves those roots distinct. The root compares the prescribed monic cubic with that cubic and eliminates a quadratic difference at three distinct points to recover its coefficients.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "39c8cf0ec82072941e6fb5bc5387fe0abf8fd6ce45c45272ec7894c5ac083a37",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12a_2021_p22",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a1\\result.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/1e56f54cb96910eee83c7eb1159355c226d1a3ab8f914bf0822eca0114b39a24.json",
+          "sha256": "1e56f54cb96910eee83c7eb1159355c226d1a3ab8f914bf0822eca0114b39a24"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\authoring.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/4a569435cdbf2d61224ad3db7bd970c8d01913002b04480fe4adc9c3c1522053.json",
+          "sha256": "4a569435cdbf2d61224ad3db7bd970c8d01913002b04480fe4adc9c3c1522053"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\stdout.txt",
+          "public_path": "benchmarks/experiments/minif2f/attempts/4a9372ae655b51039f34663d5ea37b519a97a04a780e187b43e50de2ed9a21cd.txt",
+          "sha256": "4a9372ae655b51039f34663d5ea37b519a97a04a780e187b43e50de2ed9a21cd"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a1\\isolated_nodes_and_original_root.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/4c7b65100336841cf93005cff3b7cf4503d19376f06a67449af8e9d2629740d6.lean.txt",
+          "sha256": "4c7b65100336841cf93005cff3b7cf4503d19376f06a67449af8e9d2629740d6"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\validation-1.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/51b46901aa6f87801d5def214134e43e61996acd5abf8016c816c824823bb176.json",
+          "sha256": "51b46901aa6f87801d5def214134e43e61996acd5abf8016c816c824823bb176"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\isolated_nodes_and_original_root.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/679457d2b6065a54fd974d224bb981c6ba754c6f2e31b85b6423fdeb8be8196c.lean.txt",
+          "sha256": "679457d2b6065a54fd974d224bb981c6ba754c6f2e31b85b6423fdeb8be8196c"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\amc12a_2021_p25.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/7dc728c0c21a913d6fe40019bc2bfcd928412ed1044bac094de3e120ca3612ee.lean.txt",
+          "sha256": "7dc728c0c21a913d6fe40019bc2bfcd928412ed1044bac094de3e120ca3612ee"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\investigation.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/80e72ce5617a2b0d47a09bd7152fa2e50c4783b6df3ba290256dd28d36b31945.json",
+          "sha256": "80e72ce5617a2b0d47a09bd7152fa2e50c4783b6df3ba290256dd28d36b31945"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a2\\stdout.txt",
+          "public_path": "benchmarks/experiments/minif2f/attempts/929c7aa49ffb603efdc7a1fdaea60b840360f0e357d056867ab9d6944da1a4f4.txt",
+          "sha256": "929c7aa49ffb603efdc7a1fdaea60b840360f0e357d056867ab9d6944da1a4f4"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\result.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/9e23cc574c91b9cc669dd3669628b0374f95757e0a6fd2e794beb9294aa5440f.json",
+          "sha256": "9e23cc574c91b9cc669dd3669628b0374f95757e0a6fd2e794beb9294aa5440f"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\validation-3.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/d118fbaf1135b1c6b3cbeabc1d5014ee72daf174c0977ad3eb672b48a61efa1c.json",
+          "sha256": "d118fbaf1135b1c6b3cbeabc1d5014ee72daf174c0977ad3eb672b48a61efa1c"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a2\\result.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/d6d8da77fcb8686e134f4a54c57303babb310056df580646bf92144a96adf29b.json",
+          "sha256": "d6d8da77fcb8686e134f4a54c57303babb310056df580646bf92144a96adf29b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a1\\stdout.txt",
+          "public_path": "benchmarks/experiments/minif2f/attempts/db7c52fb9b39f822540eb15eb1ee2a5fb7768aef914f5d8ef0084dbf51574413.txt",
+          "sha256": "db7c52fb9b39f822540eb15eb1ee2a5fb7768aef914f5d8ef0084dbf51574413"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\validation-2.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/df5d99156de03f06598e1c8ccf13ee858088400697247720a550b36a8742dc22.json",
+          "sha256": "df5d99156de03f06598e1c8ccf13ee858088400697247720a550b36a8742dc22"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\stderr.txt",
+          "public_path": "benchmarks/experiments/minif2f/attempts/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.txt",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a2\\isolated_nodes_and_original_root.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/fe34c625978268b478bf859d64940997423e10b1f08a625918df1e142fee5fbf.lean.txt",
+          "sha256": "fe34c625978268b478bf859d64940997423e10b1f08a625918df1e142fee5fbf"
+        }
+      ],
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2021_p25",
+      "exclusion_review": {
+        "case_review": {
+          "all_current_proofs_and_segments_match_formal_evidence": true,
+          "author": "author_algebra",
+          "author_disposition": {
+            "authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\authoring.json",
+            "batch": "batch10",
+            "case_id": "test/amc12a_2021_p25",
+            "exclusion_does_not_claim_original_false": true,
+            "formal_preflight_result": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\result.json",
+            "full_file_lean_status": "failed",
+            "investigation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\investigation.json",
+            "investigation_sha256": "80e72ce5617a2b0d47a09bd7152fa2e50c4783b6df3ba290256dd28d36b31945",
+            "reason": "Excluded in this round because the pointwise prime-two and prime-three inequalities have not been aggregated into the global divisor-product bound over every prime factor. The final strict Lean run fails only at global_divisor_bound and its copy in the original theorem assembly; this is not evidence that the original theorem is false.",
+            "root_checked": false,
+            "root_compilation_attempted": true,
+            "source_sha256": "7dc728c0c21a913d6fe40019bc2bfcd928412ed1044bac094de3e120ca3612ee",
+            "status": "excluded_incomplete_bridge",
+            "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\validation-3.json"
+          },
+          "authoring_sha256": "sha256:4a569435cdbf2d61224ad3db7bd970c8d01913002b04480fe4adc9c3c1522053",
+          "case_id": "test/amc12a_2021_p25",
+          "checked_segments": [
+            {
+              "end_line": 29,
+              "node_id": "two_power_divisor_bound",
+              "payload_digest": "sha256:b6cb8dc45b23044a580abb572b5544efdeb5995c285338f208097b2c0554484b",
+              "proof_sha256": "sha256:ca13cd87fc3707647100741702b2cf1af8cee7d746bb3e25716868c89c709713",
+              "segment_sha256": "sha256:a25f7eb34267567df4bc75752041d30930cfc269bf0657834918f8f933f12a25",
+              "standalone_source_sha256": "sha256:66c4f5a31eb4b0e013e2d66f64cd715fd365fe9a8aab6495099b17a2192d3225",
+              "start_line": 4
+            },
+            {
+              "end_line": 56,
+              "node_id": "three_power_divisor_bound",
+              "payload_digest": "sha256:a57cee0a717e1437197be522322865e693dfac12d8b873e956dec5ef7bf44e9d",
+              "proof_sha256": "sha256:cde4b8482dcb429e1419f30c6822bc316bbdb419f52fb525ef077c9430e09b3d",
+              "segment_sha256": "sha256:7390daac8a3a4c64800d05c04f2709b958c8a1d83b1cf67ca79e8490205d31a4",
+              "standalone_source_sha256": "sha256:2de6cee41bb10163bcbfc3ff32c70a2a08428285985c1c0708a3e08a0e119eb9",
+              "start_line": 31
+            },
+            {
+              "end_line": 75,
+              "node_id": "global_divisor_bound",
+              "payload_digest": "sha256:b0876af34649bf217989fe0af7c56dd34f0fdb1724c8334e6bffe9bb05730537",
+              "proof_sha256": "sha256:d2d95035a427f61260632e51e3a6c9cee586890fb08cd9b8919816a3bd647afb",
+              "segment_sha256": "sha256:297d352204961dd32ac9948d45fc2d2411bc85975b1e363c784d2eb3e1959438",
+              "standalone_source_sha256": "sha256:5bb95e590a5043bbd1113bf8dd12358798a13f195ebc17af49a771bd7a570788",
+              "start_line": 58
+            },
+            {
+              "end_line": 114,
+              "node_id": "root",
+              "payload_digest": "sha256:dfee21b36bf0f076ab2d77923944e8d3c62f7e1ced863244ef5de910438f428b",
+              "proof_sha256": "sha256:d8b6bac37526b3de420ae3ff995c73f3567efa25dbeb75d61a0d37b8ed959e8e",
+              "segment_sha256": "sha256:3decd30fb1936d44c6212e84604bf567cb72924834e02561986dbebd785943a5",
+              "standalone_source_sha256": "sha256:6dc2e31bf912646966870d8cf09a28e05fa888773494de47fe57c9df65c7b977",
+              "start_line": 77
+            },
+            {
+              "end_line": 192,
+              "node_id": "original_root_recheck",
+              "payload_digest": "sha256:7d6943596d351a5e5ae5094ec39fb47003d74fabe90d9b51ee1ce138977214f4",
+              "proof_sha256": "sha256:8b5a51dfc8c33f3e7d928234e8a0bba0454cf4325ab0a1f8abfdd9239c3f6b7e",
+              "segment_sha256": "sha256:de503f51bf85b5691d015d1294985a7acba56459f0862595dfbb96511605d2a3",
+              "standalone_source_sha256": "sha256:92a0eeadf124c9a68884302e9c91859260cb757107607d90ac6a8edac97f1dcd",
+              "start_line": 116
+            }
+          ],
+          "current_plan_digest": "sha256:a39ea335dd21d303c184f6ff6f978b2c5b23d430c6429c74073e95bb122cf23a",
+          "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+          "exclusion_is_not_a_claim_that_the_theorem_is_false": true,
+          "exclusion_reason": "Excluded in this round because the pointwise prime-two and prime-three inequalities have not been aggregated into the global divisor-product bound over every prime factor. The final strict Lean run fails only at global_divisor_bound and its copy in the original theorem assembly; this is not evidence that the original theorem is false.",
+          "final_error_node_ids": [
+            "global_divisor_bound",
+            "original_root_recheck"
+          ],
+          "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\result.json",
+          "formal_result_sha256": "sha256:9e23cc574c91b9cc669dd3669628b0374f95757e0a6fd2e794beb9294aa5440f",
+          "formal_result_status": "failed",
+          "full_root_proved": false,
+          "graph_digest": "sha256:dd570d26ce98d01e4e7718de3b3fed12ad26296704bf75a78fbb117f7edca92d",
+          "investigation_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2021_p25\\investigation.json",
+          "investigation_sha256": "sha256:80e72ce5617a2b0d47a09bd7152fa2e50c4783b6df3ba290256dd28d36b31945",
+          "latest_record_is_not_an_acceptance": true,
+          "latest_recorded_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\8c53beb8\\a3\\result.json",
+          "latest_recorded_result_sha256": "sha256:9e23cc574c91b9cc669dd3669628b0374f95757e0a6fd2e794beb9294aa5440f",
+          "latest_recorded_result_status": "failed",
+          "lean_source_sha256": "sha256:679457d2b6065a54fd974d224bb981c6ba754c6f2e31b85b6423fdeb8be8196c",
+          "mathematical_review": "The candidate correctly identifies the prime-power objective (e+1)^3/p^e and the proposed optimizer 2520. Local bounds for primes two and three are insufficient to prove the stated global divisor-product bound: primes five and seven, all primes at least eleven, and missing exceptional primes require a multiplicative argument. The final source contains the attempted aggregation and conditional maximality comparison, but strict Lean still reports errors in the global node and its assembled copy. Exclusion is supported by three persisted attempts and a precise unresolved mathematical bridge; no statement that the original theorem is false is made.",
+          "no_individual_nodes_certified_from_failed_bundle": true,
+          "node_count": 4,
+          "original_declaration_context_imports_match": true,
+          "plan_metadata_rebinding_needed": false,
+          "proof_digest": "sha256:0870d8132e57ae885be9c40e38200372cfb483c10de893010d82ce80a1ad43e9",
+          "provider_call_count": 0,
+          "recorded_plan_digest": "sha256:a39ea335dd21d303c184f6ff6f978b2c5b23d430c6429c74073e95bb122cf23a",
+          "reviewer": "lean_environment",
+          "root_compilation_attempted": true,
+          "root_proved": false,
+          "source_sha256": "sha256:7dc728c0c21a913d6fe40019bc2bfcd928412ed1044bac094de3e120ca3612ee",
+          "status": "exclusion_reviewed",
+          "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "sha256:4a9372ae655b51039f34663d5ea37b519a97a04a780e187b43e50de2ed9a21cd",
+          "strict_warning_as_error_command_verified": true,
+          "unclosed_root_obligations": [
+            "For every positive n, 35*(∏p∈n.primeFactors,(n.factorization p+1))^3≤1536*n. Requires verified prime-five/seven bounds, the p≥11 geometric bound, and a multiplicative aggregation that handles exceptional primes absent from n.primeFactors."
+          ]
+        },
+        "report_path": "benchmarks/experiments/minif2f/independent_reports/79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9.json",
+        "report_sha256": "79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9",
+        "reviewer": "lean_environment"
+      },
+      "original_disposition": "excluded_incomplete_bridge",
+      "original_statement_sha256": "7dc728c0c21a913d6fe40019bc2bfcd928412ed1044bac094de3e120ca3612ee",
+      "reason": "Excluded in this round because the pointwise prime-two and prime-three inequalities have not been aggregated into the global divisor-product bound over every prime factor. The final strict Lean run fails only at global_divisor_bound and its copy in the original theorem assembly; this is not evidence that the original theorem is false.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12a_2021_p8",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/32b688f60049474e/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12a_2021_p8.json",
+      "node_count": 3,
+      "original_statement_sha256": "f823c110a51bbf1fe8939ac3d273994c4009b6b6b103a3feba9f517eff1e891a",
+      "reason": "Eliminate recurrence terms to obtain seven-step parity periodicity; strong descent reduces all indices before the root evaluates the required large-index parities.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "ac26b6f09d3aed43805593c8dc28d91a2724ab7286eaecfebddfd6a193375d57",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12a_2021_p8",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12b_2020_p13",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/3e570a403ca5f1a3/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12b_2020_p13.json",
+      "node_count": 2,
+      "original_statement_sha256": "56b15466aac201d1b0f293e597e899fba8259c60b9f025d5774064668bd98fc7",
+      "reason": "The positive logarithmic ratios give a reciprocal radical product. The root independently expands log six, proves the outer radicand nonnegative, and compares squares to obtain the requested sum of radicals. The intermediate product identifies the cross term and does not state the radical-sum conclusion.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "e57085b6e71d006a286cae017432a70537e632613f21db4462e536aa6d105391",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12b_2020_p13",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12b_2020_p21",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/f00c5d3eaa7cce3f/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12b_2020_p21.json",
+      "node_count": 3,
+      "original_statement_sha256": "ce37c18b88c26b4247ac59a7c545c6c5e7850f3aab2793b6bfdcbb80eec5bebc",
+      "reason": "The necessity branch turns the square-root floor equation into quadratic integer inequalities and enumerates the feasible floor values. The sufficiency branch independently proves a general square-root floor-interval criterion and applies it to all six candidates. This supplies the missing membership direction, not merely a constant cardinality witness. The root derives extensional set equality and counts it.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "34650d288f28f27e7d7e5a2da47d1d050dddfd3b79ab86b41272a853e88f14d4",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12b_2020_p21",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\4458335800\\bridges.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/26fb44f35703baa2cdce2d5682e6b1a8376fd7b237d1d48286241d5def785fd1.lean.txt",
+          "sha256": "26fb44f35703baa2cdce2d5682e6b1a8376fd7b237d1d48286241d5def785fd1"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\amc12b_2021_p13.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/4d1b6c85b77dfb605222d3ad1bfc007f4a9cbf686c6e8fc60af6174869c0b416.lean.txt",
+          "sha256": "4d1b6c85b77dfb605222d3ad1bfc007f4a9cbf686c6e8fc60af6174869c0b416"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\8324084600\\bridges.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/4e1abccce7f2a167c7a8896376fa87540df96e3ff6cebf1bc0735fafc1820f04.lean.txt",
+          "sha256": "4e1abccce7f2a167c7a8896376fa87540df96e3ff6cebf1bc0735fafc1820f04"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\4458335800\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/597e3a0a7bd174267092fd7e8115918148256428e7107ba8287b1cc7c9a9efcf.json",
+          "sha256": "597e3a0a7bd174267092fd7e8115918148256428e7107ba8287b1cc7c9a9efcf"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\8324084600\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/837db6cb83e839de2b5fc4967c4aa0e72060f69b4c5f0bc699359b83eaef4349.json",
+          "sha256": "837db6cb83e839de2b5fc4967c4aa0e72060f69b4c5f0bc699359b83eaef4349"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12b_2021_p13\\partial-authoring.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/b094e6530121c5147a7b7f22079bfb4135c2e483bf722f385023031caa65ca2f.json",
+          "sha256": "b094e6530121c5147a7b7f22079bfb4135c2e483bf722f385023031caa65ca2f"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12b_2021_p13.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/f1fb2d9a23776e128fa1c30444b5cf63b79c04ad3f3211bcc494217c5bdf5b07.json",
+          "sha256": "f1fb2d9a23776e128fa1c30444b5cf63b79c04ad3f3211bcc494217c5bdf5b07"
+        }
+      ],
+      "author": "author_algebra",
+      "case_id": "test/amc12b_2021_p13",
+      "contributor": "author_numbertheory",
+      "exclusion_review": {
+        "case_review": {
+          "all_current_partial_proofs_and_segments_match": true,
+          "author": "author_algebra",
+          "author_disposition": {
+            "assistance_status": "completed_partial_bridges_verified",
+            "canonical_owner": "author_algebra",
+            "case_id": "test/amc12b_2021_p13",
+            "contributor": "author_numbertheory",
+            "exclusion_does_not_claim_original_false": true,
+            "investigation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12b_2021_p13\\partial-authoring.json",
+            "investigation_sha256": "b094e6530121c5147a7b7f22079bfb4135c2e483bf722f385023031caa65ca2f",
+            "partial_authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12b_2021_p13\\partial-authoring.json",
+            "partial_nodes_status": "strict_lean_passed",
+            "reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The six disjoint real root intervals are now covered by a separately checked IVT bridge; no assumption that the sextic merely has six roots is used.; Still need define c=(3s−1)/(5(1−4s²)), prove c²+s²=1 and construct an angle in (0,2pi] with this cosine and sine; then use the signed relation to restore the original triple-angle equation.; Finally need the Finset bijection/cardinality argument with at-most-six sextic roots and endpoint exclusions. These original-root steps have not been compiled and must not be labeled Lean failures.",
+            "root_checked": false,
+            "root_status": "not_proved_not_compiled",
+            "source_sha256": "4d1b6c85b77dfb605222d3ad1bfc007f4a9cbf686c6e8fc60af6174869c0b416",
+            "status": "excluded_incomplete_bridge",
+            "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\4458335800\\compiler.json"
+          },
+          "canonical_partial_authoring_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12b_2021_p13\\partial-authoring.json",
+          "canonical_partial_authoring_sha256": "sha256:b094e6530121c5147a7b7f22079bfb4135c2e483bf722f385023031caa65ca2f",
+          "case_id": "test/amc12b_2021_p13",
+          "contributor": "author_numbertheory",
+          "current_plan_digest": null,
+          "exclusion_is_not_a_claim_that_the_theorem_is_false": true,
+          "exclusion_reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The six disjoint real root intervals are now covered by a separately checked IVT bridge; no assumption that the sextic merely has six roots is used.; Still need define c=(3s−1)/(5(1−4s²)), prove c²+s²=1 and construct an angle in (0,2pi] with this cosine and sine; then use the signed relation to restore the original triple-angle equation.; Finally need the Finset bijection/cardinality argument with at-most-six sextic roots and endpoint exclusions. These original-root steps have not been compiled and must not be labeled Lean failures.",
+          "full_plan_unavailable_reason": "Only partial anonymous bridge examples exist; no complete root DAG is asserted.",
+          "graph_digest": "sha256:be50d241690e219247a0f8efc75859f170ff822fdee5e89dbd1661cb5e4f4bb7",
+          "mathematical_review": "The signed cosine relation and necessary sextic equation are correctly derived. The second bridge shows that a sine value determines the cosine at a solution, addressing the extraneous-sign risk introduced by squaring. A separately checked IVT bridge now constructs six polynomial roots in disjoint rational intervals. The original root still needs signed cosine/angle reconstruction, the injective angle-to-polynomial-root map and the final finite-set cardinality argument; a necessary sextic equation and polynomial-root existence do not establish that correspondence.",
+          "partial_authoring_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\test__amc12b_2021_p13.json",
+          "partial_authoring_sha256": "sha256:f1fb2d9a23776e128fa1c30444b5cf63b79c04ad3f3211bcc494217c5bdf5b07",
+          "partial_compiler_evidence": [
+            {
+              "compiler_log_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\4458335800\\compiler.json",
+              "compiler_log_sha256": "sha256:597e3a0a7bd174267092fd7e8115918148256428e7107ba8287b1cc7c9a9efcf",
+              "lean_source_sha256": "sha256:26fb44f35703baa2cdce2d5682e6b1a8376fd7b237d1d48286241d5def785fd1",
+              "segments": [
+                {
+                  "end_line": 21,
+                  "node_id": "sine_elimination",
+                  "proof_sha256": "e60fc9728569410f46dcb215a21248452c0e70a358ffa05f94d1d89618a89790",
+                  "segment_sha256": "3b94c4886ba44ac8d737dd540fde4d9bd35858f05ca9b05383686dd0eac785d8",
+                  "start_line": 8
+                },
+                {
+                  "end_line": 36,
+                  "node_id": "same_sine_recovers_same_cosine",
+                  "proof_sha256": "a2c206fe43ba66ce872306deba932a018284fc0e53f667743f7622c344611cf3",
+                  "segment_sha256": "e366167d1c9643c0d1bd0bcb58303d1a35be289c442077b6f03fa5dba9dc25a2",
+                  "start_line": 22
+                }
+              ]
+            },
+            {
+              "compiler_log_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\06d98e41\\8324084600\\compiler.json",
+              "compiler_log_sha256": "sha256:837db6cb83e839de2b5fc4967c4aa0e72060f69b4c5f0bc699359b83eaef4349",
+              "lean_source_sha256": "sha256:4e1abccce7f2a167c7a8896376fa87540df96e3ff6cebf1bc0735fafc1820f04",
+              "segments": [
+                {
+                  "end_line": 44,
+                  "node_id": "six_disjoint_sine_root_intervals",
+                  "proof_sha256": "1f1d10d24170862278eff8a6c13354da38232fb94fc2e1d5d5b61feb98ac4a26",
+                  "segment_sha256": "0473e11f8eee104d58e96d3f59fa7ea434c1e910c382a5a17c78043442b7c738",
+                  "start_line": 8
+                }
+              ]
+            }
+          ],
+          "partial_node_count": 3,
+          "partial_nodes_are_not_admitted_ai_units": true,
+          "proof_digest": "sha256:47bb9ca26357d155711cfc715a697f1cf8acf0769077c57ef3c5443e5c3cad5a",
+          "reviewer": "lean_environment",
+          "root_compilation_attempted": false,
+          "root_proved": false,
+          "source_sha256": "sha256:4d1b6c85b77dfb605222d3ad1bfc007f4a9cbf686c6e8fc60af6174869c0b416",
+          "status": "exclusion_reviewed",
+          "strict_warning_as_error_command_verified": true,
+          "unclosed_root_obligations": [
+            "The six disjoint real root intervals are now covered by a separately checked IVT bridge; no assumption that the sextic merely has six roots is used.",
+            "Still need define c=(3s−1)/(5(1−4s²)), prove c²+s²=1 and construct an angle in (0,2pi] with this cosine and sine; then use the signed relation to restore the original triple-angle equation.",
+            "Finally need the Finset bijection/cardinality argument with at-most-six sextic roots and endpoint exclusions. These original-root steps have not been compiled and must not be labeled Lean failures."
+          ]
+        },
+        "report_path": "benchmarks/experiments/minif2f/independent_reports/79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9.json",
+        "report_sha256": "79f41ae5d28968a206b6174333318771f1082bb2eaf4419b2cb71905be096ad9",
+        "reviewer": "lean_environment"
+      },
+      "original_disposition": "excluded_incomplete_bridge",
+      "original_statement_sha256": "4d1b6c85b77dfb605222d3ad1bfc007f4a9cbf686c6e8fc60af6174869c0b416",
+      "reason": "The demonstrated local bridges are Lean-verified, but this round did not close the mathematical link to the original root: The six disjoint real root intervals are now covered by a separately checked IVT bridge; no assumption that the sextic merely has six roots is used.; Still need define c=(3s−1)/(5(1−4s²)), prove c²+s²=1 and construct an angle in (0,2pi] with this cosine and sine; then use the signed relation to restore the original triple-angle equation.; Finally need the Finset bijection/cardinality argument with at-most-six sextic roots and endpoint exclusions. These original-root steps have not been compiled and must not be labeled Lean failures.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/amc12b_2021_p18",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/7a10a787ae70ec1e/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_amc12b_2021_p18.json",
+      "node_count": 3,
+      "original_statement_sha256": "b019d4a377fbd7785c0b7bfd3dd5593cf05ca2e077551ac239ce902f63e504ea",
+      "reason": "Nonnegative-square constraints independently determine the real part and squared modulus; together they justify nonzero cancellation and the original reciprocal identity.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "c181b48e7c11beab75f9be64d23694b32a8623d27674cd0d2da82580ba01acdf",
+      "root_checked": true,
+      "root_id": "minif2f_test_amc12b_2021_p18",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1965_p2",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/189bc10117909b62/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_imo_1965_p2.json",
+      "node_count": 2,
+      "original_statement_sha256": "b8d6dd5089aff6302f6cbadbb962a88fc5ae649a8019fadf75150c16220bf68c",
+      "reason": "A signed maximum principle for arbitrary solutions follows from row dominance and negative off-diagonal entries; apply it to both a solution and its negation to force all coordinates to zero.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "a8ecca257bbca698a5505599f543c82d8699c89d8da47e3b99e21f7ae7bf6051",
+      "root_checked": true,
+      "root_id": "minif2f_test_imo_1965_p2",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1968_p5_1",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/2eca6dbeb57a3abb/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_imo_1968_p5_1.json",
+      "node_count": 3,
+      "original_statement_sha256": "0fc6d24a59313b087d966f84f9d6a28d1770d00e2dba671418832746ed7e0030",
+      "reason": "Translation gives a global range bound, legitimizing square-root squaring and the composed radicand identity; these establish a nonzero period.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "acc7afc885ca2c100c9ea218f5140d526fcc7f2d80a5cea2b44e13617ae80a77",
+      "root_checked": true,
+      "root_id": "minif2f_test_imo_1968_p5_1",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913.lean.txt",
+          "sha256": "2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\imo_1969_p2.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/99abef4185c6b2a12876da9a8137bb724681971923f409a44270de5833b9271e.lean.txt",
+          "sha256": "99abef4185c6b2a12876da9a8137bb724681971923f409a44270de5833b9271e"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b.json",
+          "sha256": "d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\test__imo_1969_p2.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/dd8a2881d52e180fc78841852b750019aaa0a87d0cc02ce848ff9a4aca178059.json",
+          "sha256": "dd8a2881d52e180fc78841852b750019aaa0a87d0cc02ce848ff9a4aca178059"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1969_p2",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "99abef4185c6b2a12876da9a8137bb724681971923f409a44270de5833b9271e",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need prove the finite weighted phasor amplitude is nonzero from the leading term of modulus 1 and strictly smaller geometric tail, and connect the finite trigonometric sum to those coefficients.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1977_p6",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/e152a81e9757fd79/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_imo_1977_p6.json",
+      "node_count": 3,
+      "original_statement_sha256": "c3f48ab31d2660ba45fb3372a04e2de9980699c996a7ad9e17d0fd2d5940e89a",
+      "reason": "Induction on inverse sublevel sets gives the global lower bound, which implies monotonicity on positive integers and the final functional identity.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_test_imo_1977_p6",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1981_p6",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/ff36fab19c56c15f/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_imo_1981_p6.json",
+      "node_count": 3,
+      "original_statement_sha256": "c365d726583a6b16d0b7e2730871145754c7e58e1971e46880a31d9b7bc1016f",
+      "reason": "Prove two lower linear recursion levels uniformly, then the exact shifted exponential level, before aligning the fourth level with the tower recursion.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "88ce5906d02ea709b836014310e61353f40b54c8cd53518a8d995620970675b4",
+      "root_checked": true,
+      "root_id": "minif2f_test_imo_1981_p6",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1983_p6",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/a1bb0ab1d0da358e/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_imo_1983_p6.json",
+      "node_count": 2,
+      "original_statement_sha256": "b6f4637a346182d0ab7fbee3fe38a9e9bc640f79af0d9b26d686b2ab01998610",
+      "reason": "The weighted sum-of-squares polynomial identity exposes the mathematical certificate; triangle excess nonnegativity proves the original inequality.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "8e3717d9ba927217c59386db4c81a2cd59b3ff40f51a7d0dcf2dcea629030784",
+      "root_checked": true,
+      "root_id": "minif2f_test_imo_1983_p6",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\test__imo_1984_p6.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/1b9f69cf4e667f6fad1c20b1194902a842bb34587a512f6cb8bd58023d0294eb.json",
+          "sha256": "1b9f69cf4e667f6fad1c20b1194902a842bb34587a512f6cb8bd58023d0294eb"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913.lean.txt",
+          "sha256": "2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\imo_1984_p6.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/725856c347bd4c36410668f314917e4d9275f5199c00ac34bb7cd59e3b496850.lean.txt",
+          "sha256": "725856c347bd4c36410668f314917e4d9275f5199c00ac34bb7cd59e3b496850"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b.json",
+          "sha256": "d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1984_p6",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "725856c347bd4c36410668f314917e4d9275f5199c00ac34bb7cd59e3b496850",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: The unresolved bridge is classifying odd factors of the two powers-of-two sums after the coprime ratio parametrization, in a way that forces the smallest entry to equal 1.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\test__imo_1985_p6.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/24a1e45c8dfe492f1c58570170aea04bd29775838bc9df256c13b0bc16fbbd5b.json",
+          "sha256": "24a1e45c8dfe492f1c58570170aea04bd29775838bc9df256c13b0bc16fbbd5b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913.lean.txt",
+          "sha256": "2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b.json",
+          "sha256": "d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\imo_1985_p6.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/ff49b91be958c712a65897e57780f41ab25a061bfa5e6392baba93e4a04089a7.lean.txt",
+          "sha256": "ff49b91be958c712a65897e57780f41ab25a061bfa5e6392baba93e4a04089a7"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1985_p6",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "ff49b91be958c712a65897e57780f41ab25a061bfa5e6392baba93e4a04089a7",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Existence still needs an infinite nested-interval or compactness construction with strict inequalities; uniqueness needs quantitative separation of two bounded increasing trajectories. Finite induction alone does not establish either.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1992_p1",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/6ff2596100e6e19f/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_imo_1992_p1.json",
+      "node_count": 2,
+      "original_statement_sha256": "0bdc91688d462f6350b425d67baf6e9f3050d1673f45e5f871038340681bebcf",
+      "reason": "Positive shifted-product bounds restrict the integral quotient to two or three and the smallest factor to two or three; the root classifies the resulting finite branches without changing the original ordered-triple assertion.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "87ac22a72014465ec7ef5139d8f957b7a352d40b5aef671b2bf2f30327c9088c",
+      "root_checked": true,
+      "root_id": "minif2f_test_imo_1992_p1",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\imo_1997_p5.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/128b2f6c0661e7d5908d32e59b4123481b9f89634b98e1449d871bcfc1593895.lean.txt",
+          "sha256": "128b2f6c0661e7d5908d32e59b4123481b9f89634b98e1449d871bcfc1593895"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913.lean.txt",
+          "sha256": "2995cb75ed3354becf663adcbf930e0bcca75c9b6c3b03aa2e08205435307913"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\test__imo_1997_p5.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/94e712e3aa63f4a21116901b1d8dda67112c26b6368d796fbae099f31f497785.json",
+          "sha256": "94e712e3aa63f4a21116901b1d8dda67112c26b6368d796fbae099f31f497785"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b.json",
+          "sha256": "d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "test/imo_1997_p5",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "128b2f6c0661e7d5908d32e59b4123481b9f89634b98e1449d871bcfc1593895",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: The unresolved step is extracting and solving the common-base integer exponent system from equality of powers. The real logarithmic relation by itself admits a continuum and cannot justify the three integer solutions.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/imo_2019_p1",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/fbafa226413b3ea4/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_imo_2019_p1.json",
+      "node_count": 3,
+      "original_statement_sha256": "996986c6c4ddee3ff2c2b2f8d3992254516008fa765f7c13c1dfa2a3f719a651",
+      "reason": "Two independent conditional lemmas establish shifted additivity and classify integer affine maps; the root checks both directions of the original functional equivalence.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_test_imo_2019_p1",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/induction_pprime_pdvdapowpma",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/6492f4913bb46285/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_induction_pprime_pdvdapowpma.json",
+      "node_count": 2,
+      "original_statement_sha256": "8d3da29556a6c79205b68540ee08f4792710065e922c46af543877e48f434c98",
+      "reason": "Transfer prime-characteristic Frobenius to a successor congruence, then induct on the natural input and convert the congruence to natural subtraction divisibility.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "36fb8a90a9af5bbe82993d301a6dd51814853761434aff51b0f45fcf030081e6",
+      "root_checked": true,
+      "root_id": "minif2f_test_induction_pprime_pdvdapowpma",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/mathd_algebra_17",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/47eef98e176b6804/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_mathd_algebra_17.json",
+      "node_count": 3,
+      "original_statement_sha256": "07e263a66bbb4e4f5794e1771dcb414d1ce47add41aca33fdb6e41e9353a7aa3",
+      "reason": "Normalize nested radicals with nonnegativity obligations, determine the inner radical, then square to recover the original unknown.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "2aca4b9e9b2445576b32236aabdd6e743d2c2e94d34f2ab8ed01932bbb3d6211",
+      "root_checked": true,
+      "root_id": "minif2f_test_mathd_algebra_17",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "test/mathd_algebra_320",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/a7a4080f3d74adef/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_mathd_algebra_320.json",
+      "node_count": 3,
+      "original_statement_sha256": "ce5d5910b6dd5ac98f7266c8f4bf4763427c915890a021f3564591e12c9965e1",
+      "reason": "The first branch obtains finite integer bounds from positivity and the quadratic root. The second eliminates the radical into an integer polynomial constraint by squaring. The root classifies the bounded integer candidates using that constraint. Bounds alone and the eliminant alone do not provide the root equality, so both branches are substantive.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "ae30461baf6c5312435f4c5255ea54410e6a9d20dbf5f28279c3ca644168939f",
+      "root_checked": true,
+      "root_id": "minif2f_test_mathd_algebra_320",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\test__mathd_numbertheory_451.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/4fef422fb855a9c4a7446db0d65a87973d4edf07a8bf04468a455c647a338462.json",
+          "sha256": "4fef422fb855a9c4a7446db0d65a87973d4edf07a8bf04468a455c647a338462"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\mathd_numbertheory_451.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/b79c1fe026a04fadb7301bdac90aa6d4e1a071949ebfbe697097fdc201a6d04d.lean.txt",
+          "sha256": "b79c1fe026a04fadb7301bdac90aa6d4e1a071949ebfbe697097fdc201a6d04d"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd.json",
+          "sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0.lean.txt",
+          "sha256": "c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "test/mathd_numbertheory_451",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "b79c1fe026a04fadb7301bdac90aa6d4e1a071949ebfbe697097fdc201a6d04d",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need a generic four-divisor classification, the distinct-prime product divisor-sum formula, and the full interval exclusion. The prime-cube branch alone cannot identify S.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/mathd_numbertheory_483",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/ddab709ab18aabb5/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_mathd_numbertheory_483.json",
+      "node_count": 3,
+      "original_statement_sha256": "635b888d2b743ed4cde8acaa3f79e39925ad6e5f1be36883d07b366b1dabc016",
+      "reason": "Derive a six-step recurrence transfer, reduce it modulo four to a genuine period, and use that period with checked initial values.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "497f6a9565e9caeae9f0bb587d1de21dfb632275ae7992906df7f2b8d9207e58",
+      "root_checked": true,
+      "root_id": "minif2f_test_mathd_numbertheory_483",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/mathd_numbertheory_495",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/d68cdaca0dfa94e1/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_mathd_numbertheory_495.json",
+      "node_count": 3,
+      "original_statement_sha256": "83c1b593ab55f976da6be2c997ac5513597c5a6ef78cad133e577a0c43b449a2",
+      "reason": "Decimal residues and gcd divisibility constrain the pair; the exceptional small value needs an additional conditional lower bound before the lcm bound.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "106a78070d885685483910117cb508b1b49f59ba45ebfa2307ca9c7c0301649a",
+      "root_checked": true,
+      "root_id": "minif2f_test_mathd_numbertheory_495",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/mathd_numbertheory_618",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/e0bb2bf8fcead800/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_mathd_numbertheory_618.json",
+      "node_count": 2,
+      "original_statement_sha256": "af30ad11b57f01b66a800e33b6b5dcda91ca96f49356e0db2a531d8900601fec",
+      "reason": "The polynomial first difference gives a Euclidean gcd reduction, which makes the finite small-index exclusion tractable.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "bb5600df0cfe887944ac691509275211f274054a6a6294b12ffdb60594064b97",
+      "root_checked": true,
+      "root_id": "minif2f_test_mathd_numbertheory_618",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/numbertheory_2pownm1prime_nprime",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/e41072d4d74ec0de/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_numbertheory_2pownm1prime_nprime.json",
+      "node_count": 3,
+      "original_statement_sha256": "1d7253f175acfd840e9f986fb6224d3777e0bc6bff9af562a47ae6b1746dee1c",
+      "reason": "Exponent divisibility and proper-factor bounds are independent prerequisites for the prime-factor contradiction.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "e8ff68caea4ef637d6ae7382221f0db566b88508045fbdc434d13fee30ac0970",
+      "root_checked": true,
+      "root_id": "minif2f_test_numbertheory_2pownm1prime_nprime",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/numbertheory_3pow2pownm1mod2pownp3eq2pownp2",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/47cee030699a4111/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_numbertheory_3pow2pownm1mod2pownp3eq2pownp2.json",
+      "node_count": 2,
+      "original_statement_sha256": "9b0be138c32c5392a2367a2e8af67ae4a77f5c39bcdfeb5bb1d405c635ad4d68",
+      "reason": "A constructive quotient formula lifts a power-of-two congruence through squaring; induction applies the lift to the exponential sequence before taking the final remainder.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "c40e0f6a72575813d85431996ea574718549f9f7fd5934aa86902e355e55463d",
+      "root_checked": true,
+      "root_id": "minif2f_test_numbertheory_3pow2pownm1mod2pownp3eq2pownp2",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\test__numbertheory_exk2powkeqapb2mulbpa2_aeq1.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/06f5d465d0f95d841645f821a86b0b7a897e7d2941af1362e4b01aae9d7a2048.json",
+          "sha256": "06f5d465d0f95d841645f821a86b0b7a897e7d2941af1362e4b01aae9d7a2048"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Test\\numbertheory_exk2powkeqapb2mulbpa2_aeq1.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/5401ff4c266e39fe9e0f7ba4463053fadee02be6094bd3095065e17cb2a80bcb.lean.txt",
+          "sha256": "5401ff4c266e39fe9e0f7ba4463053fadee02be6094bd3095065e17cb2a80bcb"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd.json",
+          "sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0.lean.txt",
+          "sha256": "c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "test/numbertheory_exk2powkeqapb2mulbpa2_aeq1",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "5401ff4c266e39fe9e0f7ba4463053fadee02be6094bd3095065e17cb2a80bcb",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: The remaining positive-integer classification of a+b²=2^u and b+a²=2^v is unresolved. Merely knowing both factors have no odd prime divisor does not exclude a,b>1.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/numbertheory_fxeq4powxp6powxp9powx_f2powmdvdf2pown",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/71e1788f19c431e2/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_numbertheory_fxeq4powxp6powxp9powx_f2powmdvdf2pown.json",
+      "node_count": 2,
+      "original_statement_sha256": "78dce7922509723b4910651bbcc6392285e82b71e3dd5842d8155553be2cb6aa",
+      "reason": "Factor the doubled-exponent sum with a justified natural subtraction witness, then iterate divisibility along powers of two.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "72054c5b53b67a792e1289e2c428de0c4fdeb8e33eda024d7af8b3a61c1dfeb3",
+      "root_checked": true,
+      "root_id": "minif2f_test_numbertheory_fxeq4powxp6powxp9powx_f2powmdvdf2pown",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "test/numbertheory_x5neqy2p4",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/9c52e18a185a5a3f/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_test_numbertheory_x5neqy2p4.json",
+      "node_count": 3,
+      "original_statement_sha256": "ca7d6b243faf77bf398577aae1d1cd7122a98f813a8110d311fef9ef86593d60",
+      "reason": "Independent classifications of fifth powers and translated squares modulo eleven give disjoint residue sets at the original root.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "d841a0e3d644d8d1cbf2f39d84306c473f3ac340bfebc3fd908ca07515d07afc",
+      "root_checked": true,
+      "root_id": "minif2f_test_numbertheory_x5neqy2p4",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "valid/aimeII_2001_p3",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/3a345d20fc298572/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_aimeII_2001_p3.json",
+      "node_count": 3,
+      "original_statement_sha256": "ccec65472d2eaf2708c9dca0690312c51ee499b1881a53d68119aaf810b7dba5",
+      "reason": "Consecutive recurrence equations yield an anti-period of five by cancellation. A separate induction proves all multiples of the derived period ten, and the root reduces three large indices to initial data. The induction adds a universally iterated recurrence property rather than merely renaming one index.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "991f36c47ec2ae31a30f4aa5bf11bf6f83c2b0fa5854341c99d781d0e6e406af",
+      "root_checked": true,
+      "root_id": "minif2f_valid_aimeII_2001_p3",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/aimeII_2020_p6",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/8eb3d98d76c850a6/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_aimeII_2020_p6.json",
+      "node_count": 3,
+      "original_statement_sha256": "8df162b83ff2ad8c4907f08e6cdba75d0a35e8f36e76fc09300d394d01fab4aa",
+      "reason": "Compute a complete five-step rational cycle and verify the repeated consecutive pair; propagate it through the recurrence and reduce the requested large index.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "6e0ace43eac5a5cadbb5e6c8455ca4ac953042900c3c238a0f3b16e2ccee911d",
+      "root_checked": true,
+      "root_id": "minif2f_valid_aimeII_2020_p6",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/aime_1987_p8",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/f75fb1700d1b331f/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_aime_1987_p8.json",
+      "node_count": 3,
+      "original_statement_sha256": "07f164ede90d63216f9ba650489fa28d4989f776434562939a0ebedf74b5e164",
+      "reason": "Positive denominator elimination gives a strict integer interval; an independent explicit construction supplies two distinct integers above the threshold, while the root checks uniqueness at 112.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "54a2534f99147ddc014ade92d4beb7d694fde8e945dd90caa9827f8913f0aedc",
+      "root_checked": true,
+      "root_id": "minif2f_valid_aime_1987_p8",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "valid/aime_1991_p1",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/0b81154a37119118/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_aime_1991_p1.json",
+      "node_count": 3,
+      "original_statement_sha256": "999a6434a226604ab300159ff1d2b26e471a25e9ef6958a53f235575e6df5d1c",
+      "reason": "Positive integer bounds eliminate the extraneous quadratic root for the sum; determine sum and product before evaluating the square sum.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "f577ad14ca61f44bdab00c2514ed2a8d1db909dd79227aeefa72a2e3a9f76537",
+      "root_checked": true,
+      "root_id": "minif2f_valid_aime_1991_p1",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/aime_1991_p6",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/6492b76f02630e7b/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_aime_1991_p6.json",
+      "node_count": 3,
+      "original_statement_sha256": "8cc1d0b58f54a8324314fd1c139a29abc994f1b3c9f4d4156bd46e81f2e46dff",
+      "reason": "Independent sharp lower and upper floor-sum comparisons isolate r between 7.43 and 7.44; the root applies the defining floor interval.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "ea1b9a844d08ff2d3c8f0b6f8cf5dc71646ee48648b0ac92715bd4b1ed3681e1",
+      "root_checked": true,
+      "root_id": "minif2f_valid_aime_1991_p6",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/aime_1994_p4",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/d6752351f5158bf8/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_aime_1994_p4.json",
+      "node_count": 2,
+      "original_statement_sha256": "e5ccb012c7444336e60497e7c126271ef14219f694c9a293cddf03107c1efa2d",
+      "reason": "Monotonicity of the discrete cumulative binary logarithm and exact neighboring sums isolate index 312; the root transfers the original real floor sum termwise. The mechanical logarithm translation is folded into the root.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_valid_aime_1994_p4",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/aime_1997_p11",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/acf1e2d0dc5392e4/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_aime_1997_p11.json",
+      "node_count": 3,
+      "original_statement_sha256": "dda45f999b5c322ff781c815b50d2a171345dc37d14728209b53584f5f5329a3",
+      "reason": "A reflection bijection and the complementary-angle identity relate the sine and cosine sums; an independent angle-domain proof makes the sine sum strictly positive, permitting cancellation and an exact final floor bound.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "77b8ff2f967f4548d12774ba6f20f7fdd446e7d2e10c3ebbe0536fad4da62008",
+      "root_checked": true,
+      "root_id": "minif2f_valid_aime_1997_p11",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/algebra_amgm_prod1toneq1_sum1tongeqn",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/89a66a611b9dfdd4/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_algebra_amgm_prod1toneq1_sum1tongeqn.json",
+      "node_count": 4,
+      "original_statement_sha256": "77e5b3b5807d04c4f0acaee8e6fc698a7617a3d683cfe803a30ae9004e9a9213",
+      "reason": "The product-one constraint forces positive factors; independent logarithmic conservation and a summed tangent inequality then give the original arithmetic-sum bound. The former normalized-root restatement was replaced by these substantive prerequisites.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_valid_algebra_amgm_prod1toneq1_sum1tongeqn",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/1a46f50061cca025/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4.json",
+      "node_count": 3,
+      "original_statement_sha256": "6d272d03a6eb18669435819e76edcec9abb91dc693be1f920d96856b0160ab9c",
+      "reason": "Square the positive radical constraint, derive a genuine quartic lower bound using a square difference, and exclude the zero/small branches by positivity.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "8ab7b8f36fa3fbe21ab94b864cd081914c2c30afa4052f507384e2e3ac98652a",
+      "root_checked": true,
+      "root_id": "minif2f_valid_algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "valid/algebra_apb4leq8ta4pb4",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/fb16516c63c428a2/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_algebra_apb4leq8ta4pb4.json",
+      "node_count": 3,
+      "original_statement_sha256": "a4c1661dea498423e0ddb5193c9ccefe59c40f1ce1239a5d0d760eb4d0d4868b",
+      "reason": "Two quadratic Cauchy bounds on the original variables and their squares provide distinct bounds needed for the quartic conclusion.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "6ee6df45584259c6f0c6932b7a417568bb91338ad039c525bf9623936f719361",
+      "root_checked": true,
+      "root_id": "minif2f_valid_algebra_apb4leq8ta4pb4",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "valid/amc12a_2002_p12",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/bb60a1f0b592e467/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2002_p12.json",
+      "node_count": 3,
+      "original_statement_sha256": "61d2bc6eb8ac913efaedeb77cbd8248c1dc0ceb257be011196b172939620db37",
+      "reason": "Distinct-root elimination gives an odd prime sum; primality parity forces the pair before recovering the coefficient.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "c9bdf994d60e33ae7d550127e1a149c9a959f57eca2d7a3039c5d0684c649dc2",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2002_p12",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12a_2003_p24",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/e0ae66eac0dfc3a3/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2003_p24.json",
+      "node_count": 2,
+      "original_statement_sha256": "85c66e6007b6a9ec3271c79307223f65c06f9aa862074e1cf0009695c99ea045",
+      "reason": "Express the objective as a negative square over positive logarithms; the root supplies the equal-base witness and the greatest-element assertion. The mechanical constant witness is not a separate AI unit.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "2f1b6d4fbd0745bcf649638035275313d1c059be24474576a3c6701c5012754a",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2003_p24",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12a_2008_p15",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/3bbaab13ab2f7310/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2008_p15.json",
+      "node_count": 3,
+      "original_statement_sha256": "2f62e5a0d4baef5b3a8391786ae2f337ca6000a297b388920e125c0cbf0aca0d",
+      "reason": "An inductively proved last-digit power cycle gives the exponent congruences, which the root combines with the square residue without evaluating the enormous power.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "15d5e9c322e09c7482ac492064daaffc9c3eab35336fa46579dafa0ddbbcb477",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2008_p15",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12a_2009_p15",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/98a6ac797614b95f/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2009_p15.json",
+      "node_count": 3,
+      "original_statement_sha256": "4d139664815861e4dd5470ec429cb63c13cf658de748c7cacddb6850678b09b3",
+      "reason": "Inductively derive a weighted complex geometric sum, take its squared norm to eliminate the unit phase, and select the nonnegative root of the resulting quadratic.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "5f857def31ea6aec2c4451bc586d0e1f676d08b43da049d40334843fa2aac2f7",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2009_p15",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12a_2009_p25",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/a086b2c78c4f112b/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2009_p25.json",
+      "node_count": 3,
+      "original_statement_sha256": "5440029141fb29af1382811960ffb04236652ba132e07985c644445ecffac5b8",
+      "reason": "An exact algebraic orbit over Q(sqrt 3) checks all intermediate denominators and the repeated initial pair; paired induction extends its period and the root reduces index 2009 to the verified zero.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2009_p25",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12a_2010_p11",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/ddf2beef29397ce8/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2010_p11.json",
+      "node_count": 3,
+      "original_statement_sha256": "14de811263ea8f61f6ad85feb0f573bdb368b1620a711ff32d9cc2f29781ea7d",
+      "reason": "Logarithms of the exponential equation determine a nonzero exponent; the logarithm-base equation excludes the singular base and gives a second product identity, allowing cancellation and logarithm injectivity at the root.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "15ee731ca2dcdf6096d71025bafe00f603fd94109cbf8d13ca13c03af2a55b7e",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2010_p11",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12a_2019_p21",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/a08145a4b6f1d580/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2019_p21.json",
+      "node_count": 4,
+      "original_statement_sha256": "2fff0c55e61e03fdebd88bb9bf5cc516a2f58dd9df7c519144f46572d222330d",
+      "reason": "Normalize the square of the specified complex number, then independently evaluate the forward and reciprocal quadratic-exponent sums by residues modulo eight before multiplying them.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "d6829d993771064aee7e51642e4be8d61e8665505df4331a8010a2fb8978e752",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2019_p21",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12a_2019_p9",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/b144b49bf3ae04a1/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12a_2019_p9.json",
+      "node_count": 2,
+      "original_statement_sha256": "b0a0f098210d97bacfee44a91761a94a83ab9baa2e3881c7b307ef2806851c65",
+      "reason": "Prove the paired closed form for consecutive rational recurrence terms with all denominator obligations, then specialize and compute the reduced rational data.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "24dc89326dd41ff0018cd22e0277ee7fec156868cb56757a12178d4d477d2f51",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12a_2019_p9",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/amc12b_2002_p11",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/7dd296c19ff5c2f9/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_amc12b_2002_p11.json",
+      "node_count": 3,
+      "original_statement_sha256": "3bab0e8592f23ba7c29ed7a225ceb2718bd950410aa103150933b68fc2707616",
+      "reason": "Parity determines the even prime; divisibility by three among the three adjacent odd candidates fixes the other prime; evaluate the unchanged original expression.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "13f7e57f633c2a998eb27fe2f9c6b5cb2f7a0b432e00331cbc4dd78fac4df9eb",
+      "root_checked": true,
+      "root_id": "minif2f_valid_amc12b_2002_p11",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra_extra\\valid__amc12b_2021_p21\\mathematical_attempt.md",
+          "public_path": "benchmarks/experiments/minif2f/attempts/5ab5153949d272dcff2c8dc3be424edee195af761fa4429a0c5bc0a9dc872fd0.md",
+          "sha256": "5ab5153949d272dcff2c8dc3be424edee195af761fa4429a0c5bc0a9dc872fd0"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\amc12b_2021_p21.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/6c30204b4587edd31e93574cb016275f24122bbbdbf826b43d31888466d39b56.lean.txt",
+          "sha256": "6c30204b4587edd31e93574cb016275f24122bbbdbf826b43d31888466d39b56"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra_extra\\valid__amc12b_2021_p21\\disposition.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/f77ef63d89d3b3155f6dcdc5099f43b08db79bbf90d7e799f5ebf9b484106ef7.json",
+          "sha256": "f77ef63d89d3b3155f6dcdc5099f43b08db79bbf90d7e799f5ebf9b484106ef7"
+        }
+      ],
+      "author": "lean_environment",
+      "case_id": "valid/amc12b_2021_p21",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "rejected_unclosed_formal_obligations",
+      "original_statement_sha256": "6c30204b4587edd31e93574cb016275f24122bbbdbf826b43d31888466d39b56",
+      "reason": "The analytic root-count/strict-IVT/Finset-enumeration obligations have not been closed in Lean; no substantive fixed DAG with accepted node bodies is available.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1966_p4",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/562432e44f5605fe/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_imo_1966_p4.json",
+      "node_count": 2,
+      "original_statement_sha256": "c4537ced407fb2f30ac2ba5cc6e98a053e00187f6f2cecdf372fa4cbaefca920",
+      "reason": "The doubled-angle reciprocal-sine identity gives a cotangent difference, including zero-denominator conventions; induction telescopes the finite interval sum.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "590b9530c593addf8787700aba0ab7f2c57039933548c3ceec07ff5bf52860e0",
+      "root_checked": true,
+      "root_id": "minif2f_valid_imo_1966_p4",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1966_p5",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/0fc1a1bf499ee90e/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_imo_1966_p5.json",
+      "node_count": 2,
+      "original_statement_sha256": "bb8eda8ae1e57bf01f6cf2780229d53e23cdae5f6bb19ae89423476ff7d0c0fe",
+      "reason": "Subtract adjacent distance-matrix equations and cancel nonzero coefficient gaps; solve the coefficient-free constraints and use an original row for normalization.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "4a1e4a4e4fa303e33268989b1122fb4e84d8d3247cb234ae104d816b94ee338f",
+      "root_checked": true,
+      "root_id": "minif2f_valid_imo_1966_p5",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\imo_1967_p3.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/5b5f1596cd8ec8a7ad2ab50317b82268eb3121c2788c471316c4dc88d24351a0.lean.txt",
+          "sha256": "5b5f1596cd8ec8a7ad2ab50317b82268eb3121c2788c471316c4dc88d24351a0"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\valid__imo_1967_p3.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/5c29fad0e89c21d44132d74c6a86203f330c59d51623702d5987625c6df710c5.json",
+          "sha256": "5c29fad0e89c21d44132d74c6a86203f330c59d51623702d5987625c6df710c5"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd.json",
+          "sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0.lean.txt",
+          "sha256": "c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1967_p3",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "5b5f1596cd8ec8a7ad2ab50317b82268eb3121c2788c471316c4dc88d24351a0",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need prove divisibility of the entire product by n!(n+1)!, using primality of k+m+1 to justify cancellation of the needed denominator factors. Pointwise factorization alone does not establish this global divisibility.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1973_p3",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/a63171e893727f6a/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_imo_1973_p3.json",
+      "node_count": 3,
+      "original_statement_sha256": "cdb375ecc6217e4eac6ccf83d6bfd80277b5948a4a882dd77a330930be372564",
+      "reason": "Reciprocal substitution reduces the quartic to a quadratic with a domain bound; a separate coefficient Cauchy estimate yields the required lower bound.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "61b22b81e5f8651144a4315b3b6aa83274e80f049875c7b920d795f8a040b267",
+      "root_checked": true,
+      "root_id": "minif2f_valid_imo_1973_p3",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1974_p5",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/2394a68978b0a465/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_imo_1974_p5.json",
+      "node_count": 3,
+      "original_statement_sha256": "cd7ccbf7b6096bf85823123125618b292282218bd02b95c9cb480e7a56d181f1",
+      "reason": "Independent denominator comparisons with the total and complementary pairs give strict lower and upper bounds, combined in the unchanged conjunctive root.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "281fd1fa1ba4d460917368e0aab3c3d1eb37d1f193d99f2508e9a7d15e9435cf",
+      "root_checked": true,
+      "root_id": "minif2f_valid_imo_1974_p5",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1977_p5",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/06426c59d235a5d9/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_imo_1977_p5.json",
+      "node_count": 2,
+      "original_statement_sha256": "7f337b2af4ee937f3e1e427ed94eca272ae6a29164c880656e423e5e911b6bfc",
+      "reason": "A Cauchy sum bound together with quotient-remainder constraints determines q; the root bounds and classifies the remaining finite integer pairs.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "15372b8f489b72ce974b005efe098399fc44861f555b5bf82e2511a025c67741",
+      "root_checked": true,
+      "root_id": "minif2f_valid_imo_1977_p5",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\valid__imo_1978_p5.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/ae3396023ff2f65559cfa039732103ad0c80f4f648fc88d2ab8e52490e1c5749.json",
+          "sha256": "ae3396023ff2f65559cfa039732103ad0c80f4f648fc88d2ab8e52490e1c5749"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd.json",
+          "sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\imo_1978_p5.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c5bf9c0365a04e6105bacfe8ef65bacd806549d74dc7521d46cbed5595ee8d1d.lean.txt",
+          "sha256": "c5bf9c0365a04e6105bacfe8ef65bacd806549d74dc7521d46cbed5595ee8d1d"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0.lean.txt",
+          "sha256": "c9f7d3f3df9c10eccc25a5b51016d8c02bb95a7d844909d76ad6702249f548e0"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1978_p5",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "c5bf9c0365a04e6105bacfe8ef65bacd806549d74dc7521d46cbed5595ee8d1d",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need formalize the sharp prefix-sum majorization for arbitrary injections of naturals fixing zero and align the Abel identity with real reciprocal-square weights and Icc indices.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\imo_1979_p1.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/6213296c7d95fb9e2948386c9bc5955de274c13d4dd6fbf770be8468c9548eb4.lean.txt",
+          "sha256": "6213296c7d95fb9e2948386c9bc5955de274c13d4dd6fbf770be8468c9548eb4"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\valid__imo_1979_p1.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/70fa128ec283de6a7e5e267ba4e8910d6260e01a6538926a72267a230aa5707b.json",
+          "sha256": "70fa128ec283de6a7e5e267ba4e8910d6260e01a6538926a72267a230aa5707b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850.lean.txt",
+          "sha256": "8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff.json",
+          "sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1979_p1",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "6213296c7d95fb9e2948386c9bc5955de274c13d4dd6fbf770be8468c9548eb4",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need the exact finite-sum reindexing and a rational denominator-coprimality proof to transfer the modular numerator property through the given real equality p/q. Direct floating-point or real decimal evaluation would not establish integer divisibility.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1984_p2",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/7362cf3f91221a46/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_imo_1984_p2.json",
+      "node_count": 2,
+      "original_statement_sha256": "9c582453280c183c7fe0250fe72a497e57348332e7dd6e1586b98d9ee9443052",
+      "reason": "Factor the seventh-power difference and cancel one power of seven; the resulting divisibility excludes every positive pair below the claimed bound.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "9acfd98076b86260b1ac569e410d8be70cda3a7779399b9d7f977154f05a4b23",
+      "root_checked": true,
+      "root_id": "minif2f_valid_imo_1984_p2",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\imo_1987_p4.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/66c580e0d9ed9bb0d712468a9fdf749a704420c2f3a6de313841b2e4f38b3dcf.lean.txt",
+          "sha256": "66c580e0d9ed9bb0d712468a9fdf749a704420c2f3a6de313841b2e4f38b3dcf"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850.lean.txt",
+          "sha256": "8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\valid__imo_1987_p4.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/cd84b923dfe0d5cf5f970de3afe0607c4067fc0fc8dfbfc766c2142f95022d03.json",
+          "sha256": "cd84b923dfe0d5cf5f970de3afe0607c4067fc0fc8dfbfc766c2142f95022d03"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff.json",
+          "sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1987_p4",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "66c580e0d9ed9bb0d712468a9fdf749a704420c2f3a6de313841b2e4f38b3dcf",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need construct the induced finite permutation and prove the fixed-point parity step; lifting its fixed point then contradicts the odd shift. A search found group-specific fixed-point-free involution lemmas, not a directly applicable arbitrary finite permutation result.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\imo_1988_p6.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/557ec42d3f6cba44762554eb0f28e687c6ed8e056ce981dbb610bf69e089187b.lean.txt",
+          "sha256": "557ec42d3f6cba44762554eb0f28e687c6ed8e056ce981dbb610bf69e089187b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850.lean.txt",
+          "sha256": "8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\valid__imo_1988_p6.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c0282b927a6070a2952f39c4a8efad55ee7748d36744bb2279490109320eb1ca.json",
+          "sha256": "c0282b927a6070a2952f39c4a8efad55ee7748d36744bb2279490109320eb1ca"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff.json",
+          "sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1988_p6",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "557ec42d3f6cba44762554eb0f28e687c6ed8e056ce981dbb610bf69e089187b",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need a well-founded descent showing that for a non-square quotient the conjugate is a positive integer strictly smaller than the larger original variable, including boundary cases. The algebraic transform alone cannot justify minimal-counterexample descent.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\valid__imo_1990_p3.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/08cb942d81b8970cfed86719763e8a64ea901dca5fe8e087586645b95e6018dd.json",
+          "sha256": "08cb942d81b8970cfed86719763e8a64ea901dca5fe8e087586645b95e6018dd"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850.lean.txt",
+          "sha256": "8b6449ccb57377292c8aca80268e0f54123a33f0e8983eac76135395625a4850"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\imo_1990_p3.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/f68fcb7751a2b7230e17e774f1c78cacb454b54368e8add434e6b53f42a64c31.lean.txt",
+          "sha256": "f68fcb7751a2b7230e17e774f1c78cacb454b54368e8add434e6b53f42a64c31"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch13\\4731900000\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff.json",
+          "sha256": "ff1470c7773baa1e3cacbaad333b55cb4fff244713fc0df3e1be41acfff76bff"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_1990_p3",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "f68fcb7751a2b7230e17e774f1c78cacb454b54368e8add434e6b53f42a64c31",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: The unresolved bridge is proving that every prime divisor of n must be 3 and bounding its exponent through the stronger n² divisibility. Parity only excludes half the integers and does not establish n=3.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\imo_2006_p3.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/187df0eab2e1c06cd487473a9e42729d382b31f31c84be1983d46c56e60fcea5.lean.txt",
+          "sha256": "187df0eab2e1c06cd487473a9e42729d382b31f31c84be1983d46c56e60fcea5"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a.json",
+          "sha256": "8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\valid__imo_2006_p3.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/a9d2462bb00811b2f0e0048bf07a18d321254b025bcd3de97f49f8d878bc040b.json",
+          "sha256": "a9d2462bb00811b2f0e0048bf07a18d321254b025bcd3de97f49f8d878bc040b"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/f9b0bcd6527dbf4a3603c7c2be3a1839303d139d9cb687f95960928e15c5a3da.lean.txt",
+          "sha256": "f9b0bcd6527dbf4a3603c7c2be3a1839303d139d9cb687f95960928e15c5a3da"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/imo_2006_p3",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "187df0eab2e1c06cd487473a9e42729d382b31f31c84be1983d46c56e60fcea5",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need the sharp homogeneous inequality relating this transformed quartic to (s²/3+u²/2+v²/6)² with coefficient 9√2/32. Considered polar optimization in the (u,v) plane and a sum-of-squares certificate; neither certificate is formalized here.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "valid/mathd_algebra_206",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/dd5fd80a1569d779/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_algebra_206.json",
+      "node_count": 3,
+      "original_statement_sha256": "78c9fbe6140b8f05b91f897384b900155ac1c2d37f4b08cc0fc108138bf03b9b",
+      "reason": "Distinct-root subtraction determines the Vieta sum; the zero-root exclusion then pins the coefficient; root consumes both results.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "7b30b48291e3e6b134bbb671cca54ca1460bd643b3c366a41e5bc6fa7784ab39",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_algebra_206",
+      "status": "admitted"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/mathd_algebra_31",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/b25f474ecf5bf3bb/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_algebra_31.json",
+      "node_count": 2,
+      "original_statement_sha256": "2292223b4e44e057c5a36b2bb0326c12b382a022739ab944bb2f1f31baa1abdb",
+      "reason": "Continuity transports the nonlinear recurrence limit; the root combines it with the locally shifted original sequence and uniqueness. The index-shift restatement was removed as a separate unit.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "8414020bd521ed4c56fc146dd95f406afda2ed2e70c276a5d476439b5bb8702a",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_algebra_31",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "valid/mathd_algebra_482",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/1e37687531f61764/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_algebra_482.json",
+      "node_count": 3,
+      "original_statement_sha256": "29ded8b2bc9d48cb251665eb041130f6e1e1c667ed9dcba0fc07e35e957c4fe9",
+      "reason": "Distinct prime roots give their sum, which bounds and classifies the prime pair; substitute that pair into the original polynomial.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "22bec85c40373eacbf786659b05be452b1099449c7a170fb6da901ac455fb70c",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_algebra_482",
+      "status": "admitted"
+    },
+    {
+      "author": "author_algebra",
+      "case_id": "valid/mathd_algebra_77",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/faa1765545473d70/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_algebra_77.json",
+      "node_count": 3,
+      "original_statement_sha256": "704c6f6914cc7c2ab469a342d4312682ddc885fe8ebfb8f4f60946762259687f",
+      "reason": "Distinct-root subtraction and the product equation supply separate coefficient restrictions; nonzero hypotheses permit cancellation at the root.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "522f1d05218d61a5e2805b8d6e8f55a0982fbe38726124f5a96857b0243c136d",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_algebra_77",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/mathd_numbertheory_13",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/94b886535ae9b8c0/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_numbertheory_13.json",
+      "node_count": 2,
+      "original_statement_sha256": "585432c71bc71a8c73c77302755c808365e2a63c2c755fef9b7e93ea543df21a",
+      "reason": "Solve the linear congruence into its canonical residue progression; original minimality hypotheses then identify the first two admissible elements.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "c8a2c34aa8a0936d52d56c0b79006428b28d2fff864147af216742fda1173805",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_numbertheory_13",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\mathd_numbertheory_221.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/34d12246cc4527e972da94f82273ce128469bd1a36a0d3b116d67202b7811600.lean.txt",
+          "sha256": "34d12246cc4527e972da94f82273ce128469bd1a36a0d3b116d67202b7811600"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\valid__mathd_numbertheory_221.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/3e6ab57b82a758b91ad8d9ec4dbbb9c93fa418408f5a9018189dfb69ff20184a.json",
+          "sha256": "3e6ab57b82a758b91ad8d9ec4dbbb9c93fa418408f5a9018189dfb69ff20184a"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a.json",
+          "sha256": "8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/f9b0bcd6527dbf4a3603c7c2be3a1839303d139d9cb687f95960928e15c5a3da.lean.txt",
+          "sha256": "f9b0bcd6527dbf4a3603c7c2be3a1839303d139d9cb687f95960928e15c5a3da"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/mathd_numbertheory_221",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "34d12246cc4527e972da94f82273ce128469bd1a36a0d3b116d67202b7811600",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need prove x.divisors.card=3 iff x is a prime square for positive x, and establish the square-image cardinality. Enumerating all x<1000 could decide the bounded root but would bypass the intended substantive divisor-structure node; the retained partial does not claim S.card.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "bada439ddc6de08efe907ac2afb24f70e53cea6f1a619071454abf0f898a59f3",
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/mathd_numbertheory_405",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/ab24dbca52db37a9/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_numbertheory_405.json",
+      "node_count": 3,
+      "original_statement_sha256": "fb223c6297c20cacca1356c8368ff82ddc200c280b64c9385f7ac071f0342ccc",
+      "reason": "An exact sixteen-step recurrence transfer yields a modular period; strong descent and the given residue classes determine the original modular expression.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "35c1ca81e69ecd60848ba5fe04aa17ee6d8cc080682256130fd15b4c0f1689bf",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_numbertheory_405",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/mathd_numbertheory_42",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/a6a9ea48d47564b8/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_numbertheory_42.json",
+      "node_count": 2,
+      "original_statement_sha256": "60595f10ee82251698bc470cb7a749cf6f82e5ee2a60f050d15888727847522a",
+      "reason": "Solve the linear congruence into its canonical residue progression; original minimality hypotheses then identify the first two admissible elements.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "d25ef7d0006c2d2663b98a7e5b039aeb487f0f2034d99011c0cf93f6b43077c6",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_numbertheory_42",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\factorial_debug.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/2e9be0f43094d7c59ff815f964d2affe780b3d21e9bbf63870aeea95ff5f8c9a.lean.txt",
+          "sha256": "2e9be0f43094d7c59ff815f964d2affe780b3d21e9bbf63870aeea95ff5f8c9a"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\mathd_numbertheory_43.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/467e6e8b8ec35330904a49ee177a1bec3cb77c7e8d09b02f0231612bdca2e639.lean.txt",
+          "sha256": "467e6e8b8ec35330904a49ee177a1bec3cb77c7e8d09b02f0231612bdca2e639"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\0828861900\\result.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/542ea2a35b2dbe7d23f49be19629c1399c8ffe5c926e533b49605a6ca38dfb4e.json",
+          "sha256": "542ea2a35b2dbe7d23f49be19629c1399c8ffe5c926e533b49605a6ca38dfb4e"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\6089288600\\result.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/6b6c7ab7dcdc6391e5b117fee6ebeb2dd5a996c7a851513e10bdf488c7410f0f.json",
+          "sha256": "6b6c7ab7dcdc6391e5b117fee6ebeb2dd5a996c7a851513e10bdf488c7410f0f"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\6089288600\\stderr.txt",
+          "public_path": "benchmarks/experiments/minif2f/attempts/733307d0fac89132926e7a0ef4acb4b0925a31748d27645d9710e3fd82c0319e.txt",
+          "sha256": "733307d0fac89132926e7a0ef4acb4b0925a31748d27645d9710e3fd82c0319e"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\6089288600\\isolated_nodes_and_original_root.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/758b64867a635ee7a0b30d76015907adf01051e5fdbc190964a3a849fd5f7ca9.lean.txt",
+          "sha256": "758b64867a635ee7a0b30d76015907adf01051e5fdbc190964a3a849fd5f7ca9"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\factorial_debug.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/78d835516c247113e060f75a807e474267344922f45d4dfd2fed499877dafbdc.json",
+          "sha256": "78d835516c247113e060f75a807e474267344922f45d4dfd2fed499877dafbdc"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\mathd43_final.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/79685701ce499e05b584a312818a87273b774c6eaebbbb3afbf85b1a8f1c04d7.json",
+          "sha256": "79685701ce499e05b584a312818a87273b774c6eaebbbb3afbf85b1a8f1c04d7"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\0828861900\\isolated_nodes_and_original_root.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/893fe75402cf098bea84a971f8dbe4616faaaa35ead890afee1a16e98aaf9248.lean.txt",
+          "sha256": "893fe75402cf098bea84a971f8dbe4616faaaa35ead890afee1a16e98aaf9248"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\3577177000\\isolated_nodes_and_original_root.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/9be63465f63b7e08911c283d153f1fe257203a37bab140b023d776ae7825d8eb.lean.txt",
+          "sha256": "9be63465f63b7e08911c283d153f1fe257203a37bab140b023d776ae7825d8eb"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\0900652600\\isolated_nodes_and_original_root.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/a414efd10981e3db32b149b105bb20f0d446fc8168ec1c8091ffc214789abba4.lean.txt",
+          "sha256": "a414efd10981e3db32b149b105bb20f0d446fc8168ec1c8091ffc214789abba4"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\3577177000\\result.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c13eebec902c07f2015b3e3e5168a080b66cd89fb21119a14102115d76c9bbd3.json",
+          "sha256": "c13eebec902c07f2015b3e3e5168a080b66cd89fb21119a14102115d76c9bbd3"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\authoring\\valid__mathd_numbertheory_43.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c6a73ef4e8b497ac97a675143dd556632b984e16516249e70f6be1e44fd9133e.json",
+          "sha256": "c6a73ef4e8b497ac97a675143dd556632b984e16516249e70f6be1e44fd9133e"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\0900652600\\result.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/c751e3299d6a401afcb9acd0670e253bf3091b5c72293d7e3d92b142fd872248.json",
+          "sha256": "c751e3299d6a401afcb9acd0670e253bf3091b5c72293d7e3d92b142fd872248"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\64236a641e\\0900652600\\stderr.txt",
+          "public_path": "benchmarks/experiments/minif2f/attempts/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.txt",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/mathd_numbertheory_43",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "467e6e8b8ec35330904a49ee177a1bec3cb77c7e8d09b02f0231612bdca2e639",
+      "reason": "Excluded from this admission round because no full isolated-node/assembly file has returned strict exit 0. This is not a claim that the original theorem is false. The pinned compiler did not complete the closed factorial primary-capacity obligations inside the authoritative combined file. There is no accepted node-level evidence; all three nodes remain unverified despite the mathematical Legendre calculation.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "0aa648ff5b7ed76bd339e558c21afb3a041d8100ed049a634a40d2ae10af166f",
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/mathd_numbertheory_530",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/31939924fccc75fd/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_mathd_numbertheory_530.json",
+      "node_count": 3,
+      "original_statement_sha256": "fca0e71a65f8c30052cf029d2d88f25359d776e7372e8f526696b54e7ebabbad",
+      "reason": "An independent discrete ratio bound constrains any reduced pair, while gcd extraction transports the original ratio; combine with the gcd-lcm product identity.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "17cb475649c9975eb101f2acdcdd62f197f7443f44612b033700ca1391eda98d",
+      "root_checked": true,
+      "root_id": "minif2f_valid_mathd_numbertheory_530",
+      "status": "admitted"
+    },
+    {
+      "attempt_evidence": [
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\valid__mathd_numbertheory_709.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/6bae65a324314839145ee7755f8ab73391603d957ea829f2682f5f88e4e32166.json",
+          "sha256": "6bae65a324314839145ee7755f8ab73391603d957ea829f2682f5f88e4e32166"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json",
+          "public_path": "benchmarks/experiments/minif2f/attempts/8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a.json",
+          "sha256": "8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-curation-20260907\\upstream\\MiniF2F\\Valid\\mathd_numbertheory_709.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/d4c154bf855341308fc4c0a21c9bb54d50bf3fb6bdc4d8d74dc73be4ba131ba3.lean.txt",
+          "sha256": "d4c154bf855341308fc4c0a21c9bb54d50bf3fb6bdc4d8d74dc73be4ba131ba3"
+        },
+        {
+          "original_path": "TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\partial_obligations.lean",
+          "public_path": "benchmarks/experiments/minif2f/attempts/f9b0bcd6527dbf4a3603c7c2be3a1839303d139d9cb687f95960928e15c5a3da.lean.txt",
+          "sha256": "f9b0bcd6527dbf4a3603c7c2be3a1839303d139d9cb687f95960928e15c5a3da"
+        }
+      ],
+      "author": "author_numbertheory",
+      "case_id": "valid/mathd_numbertheory_709",
+      "exclusion_review": {
+        "reviewer": "root_independent_review",
+        "scope": "Read the concrete mathematical route, checked-partial or failed-file evidence, and the stated missing original-root obligation; no full-root acceptance claimed.",
+        "status": "exclusion_confirmed"
+      },
+      "original_disposition": "excluded_incomplete_root",
+      "original_statement_sha256": "d4c154bf855341308fc4c0a21c9bb54d50bf3fb6bdc4d8d74dc73be4ba131ba3",
+      "reason": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false. Unclosed obligation: Need derive the two divisor-count equations and the output count from the prime factorization of arbitrary n, using multiplicativity and primary exponents. The arithmetic classification is conditional and cannot replace that missing connection to Nat.divisors.",
+      "reference_proof_available": false,
+      "reference_proof_sha256": null,
+      "root_checked": false,
+      "status": "excluded_incomplete_root"
+    },
+    {
+      "author": "lean_environment",
+      "case_id": "valid/numbertheory_aneqprodakp4_anmsqrtanp1eq2",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/a6b4d38e74d1401c/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_numbertheory_aneqprodakp4_anmsqrtanp1eq2.json",
+      "node_count": 3,
+      "original_statement_sha256": "6ad0e3d623c5c8140f448ca65350e7c7fca8a54ef0bf15b9a1a38b7587debcbd",
+      "reason": "Eliminate the finite product to obtain a quadratic one-step recurrence, inductively bound the sequence, and use that sign bound to take the principal square root.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "1406dc5a16d18d8a3a8b59207ea4d9aa1498702880e254e3d64c9fd4539422f5",
+      "root_checked": true,
+      "root_id": "minif2f_valid_numbertheory_aneqprodakp4_anmsqrtanp1eq2",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/numbertheory_sumkmulnckeqnmul2pownm1",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/87aff18f7f297cdd/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_numbertheory_sumkmulnckeqnmul2pownm1.json",
+      "node_count": 2,
+      "original_statement_sha256": "df67b9eafead9626c93f7f703631863fef3f84902ffd9c32d90f3b93b9234071",
+      "reason": "The marked-member counting identity removes the factor k and lowers the binomial row; the root supplies the actual interval-to-range bijection and evaluates the complete row. The separate library-row restatement was removed.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "fcb2b6526c7ffae8c67dc4da9e798581fc28858bf73aed1bbc05a6affa089716",
+      "root_checked": true,
+      "root_id": "minif2f_valid_numbertheory_sumkmulnckeqnmul2pownm1",
+      "status": "admitted"
+    },
+    {
+      "author": "author_numbertheory",
+      "case_id": "valid/numbertheory_xsqpysqintdenomeq",
+      "compiler_result_path": "benchmarks/experiments/minif2f/checks/23081715348437fa/result.json",
+      "independent_review_path": "benchmarks/experiments/minif2f/reviews/minif2f_valid_numbertheory_xsqpysqintdenomeq.json",
+      "node_count": 3,
+      "original_statement_sha256": "c3f43dbe3eba95938d9f849344ee49d0008792522e0bd6324b54c3f55aba9649",
+      "reason": "The denominator divisibility law applied in both subtraction directions gives independent mutual divisibilities of squared denominators; antisymmetry and positivity give equality.",
+      "reference_proof_available": true,
+      "reference_proof_sha256": "a9146f3dc9ebb5aefa9ee96b9d5853ec34f1b43eff0461653eb955ebdbb8d0e2",
+      "root_checked": true,
+      "root_id": "minif2f_valid_numbertheory_xsqpysqintdenomeq",
+      "status": "admitted"
+    }
+  ],
+  "excluded_count": 21,
+  "exclusion_meaning": "Admission requires both a fully checked original theorem and a substantive mathematical DAG. An incomplete proof or a graph consisting of equivalent restatements is excluded, with those reasons distinguished. No exclusion claims the theorem is false.",
+  "exclusions_by_category": {
+    "excluded_incomplete_root": 21
+  },
+  "real_provider_call_count": 0,
+  "schema_version": "tokenshare.minif2f.curation.v1",
+  "source_catalog_sha256": "93919fff35437887682cebad909a3ab95eac16127dd80d58920ab8a263e357b9",
+  "source_commit": "5746b7d6c47855ce1294bed87329618ff7f1bc31",
+  "source_repository": "https://github.com/yangky11/miniF2F-lean4"
+}

@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_aime_1995_p7",
+  "node_proof_sources": {
+    "rational_and_radical_identification": "by\n  have hn : (n:ℝ) ≠ 0 := by exact_mod_cast h₀.2.2.ne'\n  let q : ℚ := (m:ℚ)/n-13/4\n  have hq : (q:ℝ)=(m:ℝ)/n-13/4 := by dsimp [q]; push_cast; rfl\n  have hr : Real.sqrt k=Real.sqrt 10+(q:ℝ) := by linarith [h₃]\n  have hs := Real.sq_sqrt (by positivity : 0 ≤ (k:ℝ))\n  have hs10 := Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 10)\n  rw [hr] at hs\n  have hi : Irrational (Real.sqrt 10) := by norm_num\n  have hq0 : q=0 := by\n    by_contra hqne\n    have hqr : (q:ℝ) ≠ 0 := by exact_mod_cast hqne\n    apply hi.ne_rat (((k:ℚ)-10-q^2)/(2*q))\n    push_cast\n    apply (eq_div_iff (mul_ne_zero (by norm_num) hqr)).2\n    nlinarith only [hs,hs10]\n  have hqr : (q:ℝ)=0 := by exact_mod_cast hq0\n  constructor\n  · linarith\n  · have hk : (k:ℝ)=10 := by rw [hqr] at hs; nlinarith only [hs,hs10]\n    exact_mod_cast hk",
+    "root": "by\n  have hn : (n:ℝ) ≠ 0 := by exact_mod_cast h₀.2.2.ne'\n  have he : 4*(m:ℝ)=13*n := by have := node_rational_and_radical_identification.1; field_simp at this; linarith\n  have hei : 4*m=13*n := by exact_mod_cast he\n  have hcop : Nat.Coprime n m := (show Nat.Coprime m n from h₁).symm\n  have hd : n ∣ 4 := hcop.dvd_of_dvd_mul_right ⟨13, by nlinarith [hei]⟩\n  have hb : n ≤ 4 := Nat.le_of_dvd (by norm_num) hd\n  interval_cases n <;> norm_num at * <;> omega",
+    "trigonometric_radical_value": "by\n  have hs := Real.sin_sq_add_cos_sq t\n  have hp : Real.sin t*Real.cos t ≤ 1/2 := by nlinarith [sq_nonneg (Real.sin t-Real.cos t)]\n  have he : (2*(Real.sin t+Real.cos t+1))^2=10 := by nlinarith [h₂]\n  have hn : 0 ≤ 2*(Real.sin t+Real.cos t+1) := by nlinarith [h₂]\n  have hr : 2*(Real.sin t+Real.cos t+1)=Real.sqrt 10 := by nlinarith [Real.sqrt_nonneg 10, Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 10)]\n  nlinarith [h₂]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

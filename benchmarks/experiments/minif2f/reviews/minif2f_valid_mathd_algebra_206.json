@@ -1,0 +1,40 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_valid_mathd_algebra_206",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/dd5fd80a1569d779/result.json",
+    "result_sha256": "sha256:8f456ebc0d0d1ce050906f2632cc58c491b3c5103e6dfd10a1d7644d233cdedd"
+  },
+  "mathematical_review": "Distinct-root subtraction determines the Vieta sum; the zero-root exclusion then pins the coefficient; root consumes both results.",
+  "node_proofs_digest": "sha256:0cba1ca20b4b9a7c9b7e9ceccd0ccb47459ec5653bb22dc70f1fb9e640fd478c",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Subtract the two root equations and cancel their nonzero difference to obtain Vieta’s sum relation.",
+      "node_id": "root_sum"
+    },
+    {
+      "dependencies": [
+        "root_sum"
+      ],
+      "mathematical_role": "Use a root equation plus distinctness to discard the zero branch and solve the coefficient.",
+      "node_id": "first_coefficient"
+    },
+    {
+      "dependencies": [
+        "root_sum",
+        "first_coefficient"
+      ],
+      "mathematical_role": "Recover the requested coefficient sum from the root relation and the nonzero branch.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:febe1d176d2170cf955d3cb9f8156d4c89d0e90196400a0e8fed1e76fc4a886a",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:02:18.099296+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

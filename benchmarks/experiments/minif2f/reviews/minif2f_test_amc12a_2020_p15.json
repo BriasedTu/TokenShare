@@ -1,0 +1,111 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12a_2020_p15",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:50:09.341345+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "authoring_sha256": "sha256:c1f3df14a904bf5e0a7aa7e5c7e8fd8e8bb09e22a41d80c78c54e0dbb51a99cd",
+      "case_id": "test/amc12a_2020_p15",
+      "checked_segments": [
+        {
+          "end_line": 29,
+          "node_id": "first_root_geometry",
+          "payload_digest": "sha256:8e34058d9372119c5dc2ee278e4ca167bbc3ca1af71a041e3542a6f0910492e0",
+          "proof_sha256": "sha256:396a456c359a94415d46a9239a76ae6eda2c5cf8c9f68f7f03dabd1ce1a012a3",
+          "segment_sha256": "sha256:2a422fe2c9873efc31dc746519cb3cbd99736989cc1ede9040d808cef291e196",
+          "standalone_source_sha256": "sha256:5536fd6a287fd2b73703d6e0d6a4e3c51ba806856afe77d0ed65187b141a4032",
+          "start_line": 4
+        },
+        {
+          "end_line": 48,
+          "node_id": "second_root_classification",
+          "payload_digest": "sha256:ab0e0e5f1d5391764e16d152ec9604c0a0e9ce742b1a58aa1dc8f578e0a7bb2c",
+          "proof_sha256": "sha256:14debae26aa8a728724a0e4b5ca8ebacc1551a63c54e7da783803ac95fd19b25",
+          "segment_sha256": "sha256:2db997b8c826d12391153caa56dd3b0afa55d46f19b41866b142bd59eb83530b",
+          "standalone_source_sha256": "sha256:d641abee237e46bdc3f00c1c7b41bdce2ac6b46a950c01305dae2aa332d31873",
+          "start_line": 31
+        },
+        {
+          "end_line": 70,
+          "node_id": "root",
+          "payload_digest": "sha256:ee886768cc334bb2f0d766fc7b6fe7a9762c7c4f79905bb66e7ce8f9e1aff9bb",
+          "proof_sha256": "sha256:14f07737068fdf58b0caf87d48706af5dfb9ff3e8af79f20a3c8a87874fc3181",
+          "segment_sha256": "sha256:80887aed8e17a990e9952feb9c1ae7cd31e0faf6dc695c609010abb327edc588",
+          "standalone_source_sha256": "sha256:c0c37353517fd20f53515924677148090b74de0c92954dff63250978942fe4b2",
+          "start_line": 50
+        },
+        {
+          "end_line": 120,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:ebb9c438db5d99f4b2875ee68cbe19b1e1bf5e644913d9fbd335d38f000db1e0",
+          "proof_sha256": "sha256:f6a3d0c4c0f5cdc5c8e77cc6bd3e9166b1319bdc087caf70fe5d247cd8d8d479",
+          "segment_sha256": "sha256:e837c2b022ef1098798db0aab72558611a0a420604e8ecacb4d343085110e2d2",
+          "standalone_source_sha256": "sha256:8e2466cbdee0853797e3bedfcbc4457e790918cf07e9f2de9c191d26d54cdee5",
+          "start_line": 72
+        }
+      ],
+      "current_plan_digest": "sha256:eefb40dd6c41181aefcd2eb764061e60936dde2c21baa3130a117362242f20cb",
+      "dependency_review": "Both first-root geometry components are used in the sharp branch; the radius component and second-root classification also handle the small-radius branch.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\c2665cb3\\a2\\result.json",
+      "formal_result_sha256": "sha256:a619a920d0aade82228dfdaf16e165d72468dd92bd7a1f4f2f975765d7479a64",
+      "graph_digest": "sha256:2516d5384ef6b42573db46bb651ca63f1df9ae0e1ece1e9a98d32b24cba96a13",
+      "lean_source_sha256": "sha256:50f99cb603e236cd734c0367d674e72ea58e376b59ea5ea118532dc3f59d7894",
+      "mathematical_review": "The first cubic gives a fixed norm and a sharp lower bound on the real part. The second cubic factors into a distant root and a small-radius branch. The root uses squared-distance geometry for b=8 and a triangle bound for the other branch. The two polynomial classifications are independent and materially different from the final distance bound.",
+      "node_count": 3,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:115a27ff280a904bd4a4e0796b5762212bb5c971a31c3c637c09aff3b29dd53e",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:eefb40dd6c41181aefcd2eb764061e60936dde2c21baa3130a117362242f20cb",
+      "review_scope": "Final authoring, unchanged upstream source, current isolated segments and assembled theorem, preserved compiler stdout/stderr/result hashes; no repeated Lean run.",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:9e9d8743cd3bf07123d419816dd4ff6fdc41977e2b8a56302ba23253f84b01fa",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:4ea0e0fd61e70be3d33dbb53755490f84b6e7e1d77a2b69fa2d756a7cb344e9c"
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498.json",
+    "source_report_sha256": "sha256:b6d405a8b2a7fc6b2bf9ee07021bd962dad551b578d4909b781bce1504719498"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/c2665cb319544b36/result.json",
+    "result_sha256": "sha256:a619a920d0aade82228dfdaf16e165d72468dd92bd7a1f4f2f975765d7479a64"
+  },
+  "mathematical_review": "The first cubic gives a fixed norm and a sharp lower bound on the real part. The second cubic factors into a distant root and a small-radius branch. The root uses squared-distance geometry for b=8 and a triangle bound for the other branch. The two polynomial classifications are independent and materially different from the final distance bound.",
+  "node_proofs_digest": "sha256:115a27ff280a904bd4a4e0796b5762212bb5c971a31c3c637c09aff3b29dd53e",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Derive the common radius and the sharp lower bound on the real part of a cubic root.",
+      "node_id": "first_root_geometry"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Factor the second cubic into the distant real root and a bounded-radius branch.",
+      "node_id": "second_root_classification"
+    },
+    {
+      "dependencies": [
+        "first_root_geometry",
+        "second_root_classification"
+      ],
+      "mathematical_role": "Use the sharp real-part geometry for b=8 and the triangle inequality for the small-radius branch.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:eefb40dd6c41181aefcd2eb764061e60936dde2c21baa3130a117362242f20cb",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:50:09.341345+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

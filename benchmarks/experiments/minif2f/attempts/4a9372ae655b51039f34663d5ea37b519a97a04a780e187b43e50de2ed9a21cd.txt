@@ -1,0 +1,35 @@
+E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction\TokenShareData\outputs\experiments\minif2f-integration-20260907\algebra\v\8c53beb8\a3\isolated_nodes_and_original_root.lean:75:2: error: linarith failed to find a contradiction
+case h
+N : ℕ
+hN : N > 0
+f : ℕ → ℝ
+h₀ : ∀ (n : ℕ), 0 < n → f n = ↑n.divisors.card / ↑n ^ (1 / 3)
+h₁ : ∀ (n : ℕ), n ≠ N → 0 < n → f n < f N
+node_two_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 8 * 2 ^ e
+node_three_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 3 * 3 ^ e
+n : ℕ
+hn : 0 < n
+hnfac : (n.factorization.prod fun x1 x2 => x1 ^ x2) = n
+hp2 : (n.factorization 2 + 1) ^ 3 ≤ 8 * 2 ^ n.factorization 2
+hp3 : (n.factorization 3 + 1) ^ 3 ≤ 3 * 3 ^ n.factorization 3
+a✝ : 1536 * n < 35 * (∏ x ∈ n.primeFactors, (n.factorization x + 1)) ^ 3
+⊢ False
+failed
+E:\TokenEcnomic\TokenShareWorktrees\experiments-clean-extraction\TokenShareData\outputs\experiments\minif2f-integration-20260907\algebra\v\8c53beb8\a3\isolated_nodes_and_original_root.lean:164:4: error: linarith failed to find a contradiction
+case h
+N : ℕ
+hN : N > 0
+f : ℕ → ℝ
+h₀ : ∀ (n : ℕ), 0 < n → f n = ↑n.divisors.card / ↑n ^ (1 / 3)
+h₁ : ∀ (n : ℕ), n ≠ N → 0 < n → f n < f N
+node_two_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 8 * 2 ^ e
+node_three_power_divisor_bound : ∀ (e : ℕ), (e + 1) ^ 3 ≤ 3 * 3 ^ e
+n : ℕ
+hn : 0 < n
+hnfac : (n.factorization.prod fun x1 x2 => x1 ^ x2) = n
+hp2 : (n.factorization 2 + 1) ^ 3 ≤ 8 * 2 ^ n.factorization 2
+hp3 : (n.factorization 3 + 1) ^ 3 ≤ 3 * 3 ^ n.factorization 3
+a✝ : 1536 * n < 35 * (∏ x ∈ n.primeFactors, (n.factorization x + 1)) ^ 3
+⊢ False
+failed
+'amc12a_2021_p25' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]

@@ -1,0 +1,107 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12a_2003_p23",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T16:10:30.646399+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "independent_review_evidence": {
+    "case_review": {
+      "all_current_proofs_and_segments_match_formal_evidence": true,
+      "author": "author_algebra",
+      "author_disposition": {
+        "authoring_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2003_p23\\authoring.json",
+        "batch": "batch10",
+        "case_id": "test/amc12a_2003_p23",
+        "formal_preflight_result": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\9c69afc3\\a3\\result.json",
+        "reason": "Official offline checker accepted isolated nodes and the unchanged root, with printed axioms and no sorryAx.",
+        "source_sha256": "2b76311e701df4687f0be6a7218f2e77c93df8a7ffeca4415f8f7c777f4ce671",
+        "status": "lean_passed_pending_independent_review",
+        "validation_file": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\test__amc12a_2003_p23\\validation-3.json"
+      },
+      "authoring_sha256": "sha256:1941d5567c02da5222523d4aa26c93b64636c83268e860dc523fbf71eb21c2bc",
+      "case_id": "test/amc12a_2003_p23",
+      "checked_segments": [
+        {
+          "end_line": 32,
+          "node_id": "square_divisor_reduction",
+          "payload_digest": "sha256:55ecb266d0e7e3158a74787b104c43d1abbdab3f3dec8b33808fcc026d1ef527",
+          "proof_sha256": "sha256:4e3df14f27da1d3eeaaa2f52aacef77daa3b9eb6ba0d828404c0d970674e4a31",
+          "segment_sha256": "sha256:ec68fa2be79881b98da60c72b633e85e629f3b08c69101a5880a157f424a7e40",
+          "standalone_source_sha256": "sha256:2a46fb6d9a512a0209352033c7bf7b94e1dfe8e28aa57a8f232270ca0406ab08",
+          "start_line": 4
+        },
+        {
+          "end_line": 65,
+          "node_id": "root",
+          "payload_digest": "sha256:33f22047c8f7054ce0babf1bcc1cb1fa1ce85ff523d8986485c5770bf1d55e0a",
+          "proof_sha256": "sha256:11b7c2c5070b7f2a5351981694192d06591752482ca5c657a30c48c225c00cf4",
+          "segment_sha256": "sha256:49dd282d44de7755b7036f6b1fc93b19148c1ac2c722ea45f85ff3ebd3e2e301",
+          "standalone_source_sha256": "sha256:9342d402a0175bc1f64b4c54e6bd3917685c6d9b4b3e96d5e30491245a99feec",
+          "start_line": 34
+        },
+        {
+          "end_line": 120,
+          "node_id": "original_root_recheck",
+          "payload_digest": "sha256:58cb3450d3c36dd0e7bd8f5079950d106523d87005927b925183eb1470985f71",
+          "proof_sha256": "sha256:86b992ecd9f12e259297fad36bb49d74f2c3ca607c4dbdc82c93c5b780ec1a3d",
+          "segment_sha256": "sha256:eaf2741f157eede363faad2f734dd1ecb8cf3140ec41ec148f6fb4e3e061600b",
+          "standalone_source_sha256": "sha256:b02079d23a9be85ff7361fcc5152d07d5308c1ae85e84ef5f6af30682d97873c",
+          "start_line": 67
+        }
+      ],
+      "current_plan_digest": "sha256:3a8358b2f5a6d4e20bf68fc352f7ec8e394ad92a4d5e3ec8dfac73dc04c39637",
+      "dependency_review": "square_divisor_reduction supplies both directions of the set equality; the root separately handles positivity and the divisor-count product. The final two-node graph retains the substantive valuation reduction without counting constant factorization or cardinality evaluation as separate nodes.",
+      "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+      "formal_result_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra\\v\\9c69afc3\\a3\\result.json",
+      "formal_result_sha256": "sha256:9bb1c5333358842ca6d4b4cbd8472687f58ac99b2d1811c1d0e64065e03b0a41",
+      "formal_result_status": "passed",
+      "graph_digest": "sha256:eecdc5f5814256c77215905db10965ec7123a3c9eedffee0da55006dfa8dd8eb",
+      "lean_source_sha256": "sha256:e9566b178b9ac8b3605802c744b53f03c15297726e5390471347e9c35b670818",
+      "mathematical_review": "The retained intermediate proves, uniformly for positive k, that the square-divisor condition is equivalent to dividing the integer with halved prime exponents. It computes the factorial product locally and proves the factorization inequalities in both directions. The root identifies the original finset with that divisor set and counts it using coprime products and prime-power divisor counts. Closed constant computations are folded into their consumers.",
+      "node_count": 2,
+      "original_declaration_context_imports_match": true,
+      "plan_metadata_rebinding_needed": false,
+      "proof_digest": "sha256:86582f739af980fe2859a728fa2f55f7e2628bcb33edeeef83d3dee6c9da2a11",
+      "provider_call_count": 0,
+      "recorded_plan_digest": "sha256:3a8358b2f5a6d4e20bf68fc352f7ec8e394ad92a4d5e3ec8dfac73dc04c39637",
+      "reviewer": "lean_environment",
+      "source_sha256": "sha256:2b76311e701df4687f0be6a7218f2e77c93df8a7ffeca4415f8f7c777f4ce671",
+      "status": "approved",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "sha256:0fa61fbac82b2183f67a8ab6a1ac84c8517fbd3b224e571f50fb221c8c59213b",
+      "strict_warning_as_error_command_verified": true
+    },
+    "source_report_path": "benchmarks/experiments/minif2f/independent_reports/dc5871ab1e47b0f2e1e432f8b208ee88ccd862b6818be3ab0e0964d7ca23a5c0.json",
+    "source_report_sha256": "sha256:dc5871ab1e47b0f2e1e432f8b208ee88ccd862b6818be3ab0e0964d7ca23a5c0"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/9c69afc30b4f4590/result.json",
+    "result_sha256": "sha256:9bb1c5333358842ca6d4b4cbd8472687f58ac99b2d1811c1d0e64065e03b0a41"
+  },
+  "mathematical_review": "The retained intermediate proves, uniformly for positive k, that the square-divisor condition is equivalent to dividing the integer with halved prime exponents. It computes the factorial product locally and proves the factorization inequalities in both directions. The root identifies the original finset with that divisor set and counts it using coprime products and prime-power divisor counts. Closed constant computations are folded into their consumers.",
+  "node_proofs_digest": "sha256:86582f739af980fe2859a728fa2f55f7e2628bcb33edeeef83d3dee6c9da2a11",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Translate divisibility into pointwise prime-exponent inequalities and halve the available exponents.",
+      "node_id": "square_divisor_reduction"
+    },
+    {
+      "dependencies": [
+        "square_divisor_reduction"
+      ],
+      "mathematical_role": "Identify the original finset with the reduced divisor set and count its four prime exponents.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:3a8358b2f5a6d4e20bf68fc352f7ec8e394ad92a4d5e3ec8dfac73dc04c39637",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T16:10:30.646399+00:00",
+  "reviewer": "lean_environment",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

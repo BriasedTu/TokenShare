@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_test_mathd_numbertheory_618",
+  "node_proof_sources": {
+    "euclidean_reduction": "by\n  have hn2 : n ≤ n ^ 2 := by nlinarith\n  have hn12 : n + 1 ≤ (n + 1) ^ 2 := by nlinarith\n  have e0 := Nat.sub_add_cancel hn2\n  have e1 := Nat.sub_add_cancel hn12\n  have hd : p (n + 1) = p n + 2 * n := by\n    rw [h₀, h₀]\n    nlinarith\n  rw [hd, Nat.add_comm (p n) (2 * n), Nat.gcd_add_self_right]",
+    "root": "by\n  by_contra hnlarge\n  have hnsmall : n ≤ 40 := by omega\n  have h := h₁\n  rw [node_euclidean_reduction] at h\n  interval_cases n <;> norm_num [h₀] at h"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

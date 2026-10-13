@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_imo_1966_p4",
+  "node_proof_sources": {
+    "cotangent_doubling_difference": "by\n  intro t\n  by_cases hs : Real.sin t = 0\n  · simp [Real.tan_eq_sin_div_cos, Real.sin_two_mul, hs]\n  by_cases hc : Real.cos t = 0\n  · simp [Real.tan_eq_sin_div_cos, Real.sin_two_mul, hc]\n  rw [Real.tan_eq_sin_div_cos, Real.tan_eq_sin_div_cos]\n  simp only [one_div_div, Real.sin_two_mul, Real.cos_two_mul]\n  field_simp\n  nlinarith [Real.sin_sq_add_cos_sq t]",
+    "root": "by\n  have telescope : ∀ j : ℕ, (∑ k ∈ Finset.Icc 1 j, 1 / Real.sin (2 ^ k * x)) = 1 / Real.tan x - 1 / Real.tan (2 ^ j * x) := by\n    intro j\n    induction j with\n    | zero => simp\n    | succ j ih =>\n      rw [Finset.sum_Icc_succ_top (by omega), ih]\n      have he : (2 : ℝ) ^ (j + 1) * x = 2 * (2 ^ j * x) := by ring\n      rw [he, node_cotangent_doubling_difference]\n      ring\n  exact telescope n"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

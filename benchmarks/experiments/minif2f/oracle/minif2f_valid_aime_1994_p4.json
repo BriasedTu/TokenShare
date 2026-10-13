@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_aime_1994_p4",
+  "node_proof_sources": {
+    "discrete_threshold": "by\n  intro m hm\n  have h311 : (∑ k ∈ Finset.Icc 1 311, Nat.log 2 k) = 1986 := by\n    set_option maxRecDepth 10000 in norm_num [Finset.sum_Icc_succ_top]\n  have h313 : (∑ k ∈ Finset.Icc 1 313, Nat.log 2 k) = 2002 := by\n    set_option maxRecDepth 10000 in norm_num [Finset.sum_Icc_succ_top]\n  by_contra he\n  rcases lt_or_gt_of_ne he with hl | hg\n  · have hsub : Finset.Icc 1 m ⊆ Finset.Icc 1 311 := Finset.Icc_subset_Icc le_rfl (by omega)\n    have hb := Finset.sum_le_sum_of_subset_of_nonneg hsub (fun i hi hni => Nat.zero_le (Nat.log 2 i))\n    omega\n  · have hsub : Finset.Icc 1 313 ⊆ Finset.Icc 1 m := Finset.Icc_subset_Icc le_rfl (by omega)\n    have hb := Finset.sum_le_sum_of_subset_of_nonneg hsub (fun i hi hni => Nat.zero_le (Nat.log 2 i))\n    omega",
+    "root": "by\n  have ht : (∑ k ∈ Finset.Icc 1 n, Int.floor (Real.logb 2 k)) = ((∑ k ∈ Finset.Icc 1 n, Nat.log 2 k : ℕ) : ℤ) := by\n    push_cast\n    apply Finset.sum_congr rfl\n    intro k hk\n    simpa only [Int.log_natCast] using (Real.floor_logb_natCast (b := 2) (r := (k : ℝ)) (Nat.cast_nonneg k))\n  rw [h₀] at ht\n  have hn : (∑ k ∈ Finset.Icc 1 n, Nat.log 2 k) = 1994 := by exact_mod_cast ht.symm\n  exact node_discrete_threshold n hn"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

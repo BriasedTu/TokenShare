@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_aime_1997_p9",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.162922+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/67741dc3729ca3f1/result.json",
+    "result_sha256": "sha256:2ee705e76bc013dd819b58a89cd2a20d639f7275aee8241bb7f0c9a26b10f87d"
+  },
+  "mathematical_review": "Determine the two floor values, eliminate the reciprocal to obtain the positive quadratic relation, then reduce the twelfth power by that relation.",
+  "node_proofs_digest": "sha256:be888bdec51518de307780de6a17383451bd096608e247fadc320a100357c362",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Locate the reciprocal and the square in their integer intervals, using positivity to control the reciprocal.",
+      "node_id": "integer_parts"
+    },
+    {
+      "dependencies": [
+        "integer_parts"
+      ],
+      "mathematical_role": "Remove the integer parts and the nonzero denominator, then discard the impossible negative linear factor of the resulting cubic.",
+      "node_id": "quadratic_relation"
+    },
+    {
+      "dependencies": [
+        "quadratic_relation"
+      ],
+      "mathematical_role": "Reduce the twelfth power modulo the quadratic relation and simplify the reciprocal to obtain the requested constant.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:daa2fce261dc0657a62390126464d8624acef603cc6a257405dfea6d05c92267",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.162922+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

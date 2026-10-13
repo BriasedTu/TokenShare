@@ -1,0 +1,44 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12a_2009_p15",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:28.255537+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/98a6ac797614b95f/result.json",
+    "result_sha256": "sha256:b60c1a2651a5995a2009bd31c1cb20b1bb1fd1ec7ee6c82cb40c2b2cc98f0e6c"
+  },
+  "mathematical_review": "Inductively derive a weighted complex geometric sum, take its squared norm to eliminate the unit phase, and select the nonnegative root of the resulting quadratic.",
+  "node_proofs_digest": "sha256:c1ce8ff4eca0417c850ecd0b75f3d1dcf6541d4982586560a9f2cdce0d0dabb7",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Inductively derive the finite weighted geometric-sum identity before using the prescribed sum.",
+      "node_id": "weighted_geometric_identity"
+    },
+    {
+      "dependencies": [
+        "weighted_geometric_identity"
+      ],
+      "mathematical_role": "Take squared norms; the phase I^n disappears, leaving a real quadratic in n.",
+      "node_id": "norm_square_equation"
+    },
+    {
+      "dependencies": [
+        "norm_square_equation"
+      ],
+      "mathematical_role": "The nonnegative root of the derived quadratic is the original integer index 97.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:cbe761b567c16f950cb9e325d9a31226515b498331778e0a86d397828a51cbde",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:28.255537+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

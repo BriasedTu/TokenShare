@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_aime_1987_p5",
+  "node_proof_sources": {
+    "bounded_first_square": "by\n  have hm := mul_nonneg (sq_nonneg x) (sub_nonneg.mpr node_integer_square_lower_bound)\n  nlinarith",
+    "integer_square_lower_bound": "by\n  have hp : 10 < y ^ 2 := by\n    by_contra hh\n    have hm := mul_nonneg (show 0 ≤ 3 * x ^ 2 + 1 by positivity) (show 0 ≤ 10 - y ^ 2 by omega)\n    nlinarith\n  by_contra hh\n  have hl : -3 ≤ y := by nlinarith [sq_nonneg (y + 4)]\n  have hu : y ≤ 3 := by nlinarith [sq_nonneg (y - 4)]\n  interval_cases y <;> norm_num at hp",
+    "root": "by\n  have hl : -5 ≤ x := by nlinarith [sq_nonneg (x + 6)]\n  have hu : x ≤ 5 := by nlinarith [sq_nonneg (x - 6)]\n  interval_cases x <;> norm_num at * <;> (try ring_nf at h₀) <;> try omega\n  all_goals\n    have hylo : -22 ≤ y := by nlinarith [sq_nonneg (y + 23)]\n    have hyhi : y ≤ 22 := by nlinarith [sq_nonneg (y - 23)]\n    interval_cases y <;> norm_num at *"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

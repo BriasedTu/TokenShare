@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12a_2021_p8",
+  "node_proof_sources": {
+    "residue_reduction": "by\n  intro n\n  induction n using Nat.strong_induction_on with\n  | h n ih =>\n    by_cases hn : n < 7\n    · rw [Nat.mod_eq_of_lt hn]\n    · have hn7 : 7 ≤ n := by omega\n      have hp := node_seven_step_parity (n - 7)\n      have hi := ih (n - 7) (by omega)\n      rw [Nat.sub_add_cancel hn7] at hp\n      rw [hp, hi, ← Nat.mod_eq_sub_mod hn7]",
+    "root": "by\n  have hd3 := h₃ 3 (by omega)\n  norm_num [h₀, h₂] at hd3\n  have hd4 := h₃ 4 (by omega)\n  norm_num [h₁, hd3] at hd4\n  have hd5 := h₃ 5 (by omega)\n  norm_num [h₂, hd4] at hd5\n  have hd6 := h₃ 6 (by omega)\n  norm_num [hd3, hd5] at hd6\n  have ha := node_residue_reduction 2021\n  have hb := node_residue_reduction 2022\n  have hc := node_residue_reduction 2023\n  norm_num [hd5, hd6, h₀] at ha hb hc\n  exact ⟨Nat.even_iff.mpr ha, Nat.odd_iff.mpr hb, Nat.even_iff.mpr hc⟩",
+    "seven_step_parity": "by\n  intro n\n  have ha : d (n + 3) = d (n + 2) + d n := by\n    simpa only [show n + 3 - 1 = n + 2 by omega, show n + 3 - 3 = n by omega] using h₃ (n + 3) (by omega)\n  have hb : d (n + 4) = d (n + 3) + d (n + 1) := by\n    simpa only [show n + 4 - 1 = n + 3 by omega, show n + 4 - 3 = n + 1 by omega] using h₃ (n + 4) (by omega)\n  have hc : d (n + 5) = d (n + 4) + d (n + 2) := by\n    simpa only [show n + 5 - 1 = n + 4 by omega, show n + 5 - 3 = n + 2 by omega] using h₃ (n + 5) (by omega)\n  have hd : d (n + 6) = d (n + 5) + d (n + 3) := by\n    simpa only [show n + 6 - 1 = n + 5 by omega, show n + 6 - 3 = n + 3 by omega] using h₃ (n + 6) (by omega)\n  have he : d (n + 7) = d (n + 6) + d (n + 4) := by\n    simpa only [show n + 7 - 1 = n + 6 by omega, show n + 7 - 3 = n + 4 by omega] using h₃ (n + 7) (by omega)\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

@@ -1,0 +1,40 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_valid_mathd_algebra_77",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/faa1765545473d70/result.json",
+    "result_sha256": "sha256:d2b514bfa199419adfe835c25aee19b605910b084aa940b486fadcc789fb2af3"
+  },
+  "mathematical_review": "Distinct-root subtraction and the product equation supply separate coefficient restrictions; nonzero hypotheses permit cancellation at the root.",
+  "node_proofs_digest": "sha256:dd822b8c91dadb6618f155b4c8a1ee212dc1894e68418f98a7c4b350646b3c03",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Subtract distinct root equations and cancel to establish their sum.",
+      "node_id": "root_sum"
+    },
+    {
+      "dependencies": [
+        "root_sum"
+      ],
+      "mathematical_role": "Combine the sum relation with a root equation to establish the product relation.",
+      "node_id": "root_product"
+    },
+    {
+      "dependencies": [
+        "root_sum",
+        "root_product"
+      ],
+      "mathematical_role": "Cancel the nonzero second root in the product relation, then determine the second root from their sum.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:7d047651bc16c17b9867757f9a0ff04735bf966082010cc2aec03c0ec80fdb1a",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:03:38.556318+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

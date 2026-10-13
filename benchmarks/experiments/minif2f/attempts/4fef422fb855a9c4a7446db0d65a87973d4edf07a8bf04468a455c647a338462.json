@@ -1,0 +1,31 @@
+{
+  "case_id": "test/mathd_numbertheory_451",
+  "original_declaration": "theorem mathd_numbertheory_451\n  (S : Finset ℕ)\n  (h₀ : ∀ (n : ℕ), n ∈ S ↔ 2010 ≤ n ∧ n ≤ 2019 ∧ ∃ m, ((Nat.divisors m).card = 4 ∧ ∑ p ∈ (Nat.divisors m), p = n)) :\n  ∑ k ∈ S, k = 2016",
+  "source_file": "upstream/MiniF2F/Test/mathd_numbertheory_451.lean",
+  "source_sha256": "b79c1fe026a04fadb7301bdac90aa6d4e1a071949ebfbe697097fdc201a6d04d",
+  "partial_statement": "∀ p : ℕ, Nat.Prime p → (∑ d ∈ Nat.divisors (p ^ 3), d) = (p + 1) * (p ^ 2 + 1)",
+  "partial_proof": "by\n  intro p hp\n  rw [Nat.sum_divisors_prime_pow hp]\n  norm_num [Finset.sum_range_succ]\n  ring",
+  "mathematical_route": "Four divisors force either a prime cube or a product of two distinct primes. The checked prime-cube divisor-sum factorization and the product formula reduce the interval 2010–2019 to factor pairs.",
+  "unresolved_full_proof_obligation": "Need a generic four-divisor classification, the distinct-prime product divisor-sum formula, and the full interval exclusion. The prime-cube branch alone cannot identify S.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(S : Finset ℕ)\n  (h₀ : ∀ (n : ℕ), n ∈ S ↔ 2010 ≤ n ∧ n ≤ 2019 ∧ ∃ m, ((Nat.divisors m).card = 4 ∧ ∑ p ∈ (Nat.divisors m), p = n))",
+  "partial_start_line": 8,
+  "partial_block_sha256": "d59d836f187b4d43edf94c15a711383b92138ae41aabd86c7f93cbb5af97dcd3",
+  "partial_end_line": 15,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json",
+  "compiler_log_sha256": "bb271c242bd0fbae752b6ff237db8d1a676a93c828c5311bf52713f68cc3c3fd",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: bounded enumeration of m after proving m≤σ(m)≤2019. This would require its own verified divisor-sum computation and a substantive contribution of the retained intermediate, rather than an answer lookup.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ p : ℕ, Nat.Prime p → (∑ d ∈ Nat.divisors (p ^ 3), d) = (p + 1) * (p ^ 2 + 1)",
+      "source_sha256": "d59d836f187b4d43edf94c15a711383b92138ae41aabd86c7f93cbb5af97dcd3",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch12\\8699549000\\compiler.json"
+    }
+  ]
+}

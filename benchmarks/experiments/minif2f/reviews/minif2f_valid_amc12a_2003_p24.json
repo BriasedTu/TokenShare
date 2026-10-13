@@ -1,0 +1,37 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12a_2003_p24",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:29.474781+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/e0ae66eac0dfc3a3/result.json",
+    "result_sha256": "sha256:044da132032e5a861fee78f8c8f925add94739d99ae8b17bdc2e1cfa71204d08"
+  },
+  "mathematical_review": "Express the objective as a negative square over positive logarithms; the root supplies the equal-base witness and the greatest-element assertion. The mechanical constant witness is not a separate AI unit.",
+  "node_proofs_digest": "sha256:72aea48be6bbda19d709bf9dfba3faa24bd660cc1cbc28f4c6c53520193a4f61",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Rewrite the objective as the negative of a square divided by a positive product of logarithms.",
+      "node_id": "logarithmic_upper_bound"
+    },
+    {
+      "dependencies": [
+        "logarithmic_upper_bound"
+      ],
+      "mathematical_role": "Assemble attainment and the uniform bound into the original greatest-element assertion.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:c4cd1f5098968878857fb8e2dacf77c0fcdc94283fe18275156a06d377473974",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:29.473778+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

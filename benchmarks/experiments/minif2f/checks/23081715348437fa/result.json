@@ -1,0 +1,65 @@
+{
+  "case_id": "minif2f_valid_numbertheory_xsqpysqintdenomeq",
+  "status": "passed",
+  "exit_code": 0,
+  "command": [
+    "L:\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\2308171534\\2467160600\\isolated_nodes_and_original_root.lean"
+  ],
+  "cwd": "L:\\project",
+  "duration_seconds": 32.844,
+  "timeout_seconds": 480,
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\2308171534\\2467160600\\isolated_nodes_and_original_root.lean",
+  "source_sha256": "sha256:b7cd7a756e7dd72e3739530f8908562cfff074af1d50f3b4087028af53c1aa6d",
+  "stdout_sha256": "sha256:b480124f1c9eb0cb7f63cdb8c67d5ea5287b22252f4ba48e9ec042fe0abd555c",
+  "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+  "plan_digest": "sha256:79e52ac0c5f706cb180e6aaf867fe0aa7dedb781b44122ee30a4c4c308cb4dff",
+  "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db",
+  "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+  "isolation_method": "Lean 4.24 anonymous example: withoutModifyingEnv",
+  "checks": [
+    {
+      "node_id": "first_denominator_divides",
+      "payload_digest": "sha256:7e0c48692ec498e89e462dff13a467d738677a3f9af2353abf78f05a5902d0a5",
+      "proof_sha256": "sha256:ec4791c37a3068bcaccac21c9f3b1094fd955facbe54d3b39968553f342759d2",
+      "standalone_source_sha256": "sha256:531b564a488b9865001766508f61c5041c0e67f1dbc6bdb5a6b5d82a16ba45f0",
+      "segment_sha256": "sha256:c13a75caaed1c0a8d7e75536009b2f0ac29d05146e9262e6e51cdb8271f6bb67",
+      "start_line": 4,
+      "end_line": 15,
+      "status": "accepted"
+    },
+    {
+      "node_id": "second_denominator_divides",
+      "payload_digest": "sha256:b6af762960020041f03192f36c335f8281dcf0cf513aeb93b9703eef3391ddb2",
+      "proof_sha256": "sha256:64abf8831f37ccb1fb9672120758c3e517da77ad7c4c88373ca373507e10af8a",
+      "standalone_source_sha256": "sha256:b512b14e3fa76ec7ff7b37519d51da73a7aba7c98b89a4a055dafafd90c927d7",
+      "segment_sha256": "sha256:1dcf1088f9aa48a58b9a5f0e7904a5b2b69579239b043231f10fb3dc2f1303fa",
+      "start_line": 17,
+      "end_line": 28,
+      "status": "accepted"
+    },
+    {
+      "node_id": "root",
+      "payload_digest": "sha256:746f0cbc686a0441bff66e586a69606ac5b9ef98c1f9296a01c1b62b6dba1e6a",
+      "proof_sha256": "sha256:aea98bf9ab709b8cf548216662c5d7aeec1c3d63bc0517a406ef82bc654dcc91",
+      "standalone_source_sha256": "sha256:20f325baf87fadb1cca717c3ad7df39c7ea95f7f5f1a9f8c2a2a3f1d21892c23",
+      "segment_sha256": "sha256:ad3ae75b61d398721efbd54a8bfdaeced63c5869f069d07a1e964b82de62e319",
+      "start_line": 30,
+      "end_line": 39,
+      "status": "accepted"
+    },
+    {
+      "node_id": "original_root_recheck",
+      "payload_digest": "sha256:5a69c5c33be4403f6845d639561725b03aba2490d29ec585f6aa6835281da9f7",
+      "proof_sha256": "sha256:f778b76fa5edd3882e7aad20044ed7db9ffe9b4d78f02f324c48811d4f4f737f",
+      "standalone_source_sha256": "sha256:9c8d176b2d4541c8f59c4430fe52b95fa2c0ac0025f6c5fcce8ab4be9a2b6ad6",
+      "segment_sha256": "sha256:45f8887978b9a1aca2764181fe3a5d04076cd5e93842c11ee2c1aef2452b19d9",
+      "start_line": 41,
+      "end_line": 62,
+      "status": "accepted"
+    }
+  ],
+  "real_provider_call_count": 0
+}

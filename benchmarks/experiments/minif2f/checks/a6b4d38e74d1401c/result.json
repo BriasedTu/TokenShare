@@ -1,0 +1,70 @@
+{
+  "case_id": "minif2f_valid_numbertheory_aneqprodakp4_anmsqrtanp1eq2",
+  "checks": [
+    {
+      "end_line": 21,
+      "node_id": "quadratic_recurrence",
+      "payload_digest": "sha256:6f583dc5db576c528d3daee45e3db3ff6a30951463e1969c93bc9a0a6fc088f7",
+      "proof_sha256": "sha256:d81c41206ce76eeff3491ac168ecae000f7948bdf64bdd0895005bb7c462a4c0",
+      "segment_sha256": "sha256:92383cdcbd86db00086d3765d11a0886640acbef98833b5f7660610e10376f42",
+      "standalone_source_sha256": "sha256:768fe567ce997abe3a8f66866b9e180b37e9bf2e7385fb5fc84154bf5b993077",
+      "start_line": 4,
+      "status": "accepted"
+    },
+    {
+      "end_line": 40,
+      "node_id": "uniform_lower_bound",
+      "payload_digest": "sha256:bdc8adc134fc0c061e1649f20ed86e0f783c74acb11e6a81e1c80ec4441daf89",
+      "proof_sha256": "sha256:aeba874a1a72acade7e6d493c0a35f91272ac4eea653b32c65ab88dedbef0f47",
+      "segment_sha256": "sha256:af93ed928ead9ea507674e26bd2aaee8d9db7500b52843134b098d6882299acd",
+      "standalone_source_sha256": "sha256:9e727b210bdf375066e0af85f535aebc57a592e7d29f78ecd302c23bb8f98d8f",
+      "start_line": 23,
+      "status": "accepted"
+    },
+    {
+      "end_line": 53,
+      "node_id": "root",
+      "payload_digest": "sha256:f110f3f072654e15198e2d014ad369364ad53e63498b9e22e1ffbdddeb31bc33",
+      "proof_sha256": "sha256:10baaf0fcf374422ab3b6b4e01388258ab14e58ca0c813ba41bdbf8b56c3b6eb",
+      "segment_sha256": "sha256:dc911ed2ff7f6434de7e2456a72a5bf392136de1592dc0d0ed82127af970ab53",
+      "standalone_source_sha256": "sha256:eccd7a01e335764551a2c5c15a0d9c2b652a5af438fd98b5d749636f13e331f5",
+      "start_line": 42,
+      "status": "accepted"
+    },
+    {
+      "end_line": 88,
+      "node_id": "original_root_recheck",
+      "payload_digest": "sha256:80680d431b0ad9c530306b38cc5539500cac1b9c6289254203ec188d5b7547ac",
+      "proof_sha256": "sha256:b084f34ff6678db1134df01dda1376e16f4094cbd6dd0df7b71e202fe7925b57",
+      "segment_sha256": "sha256:d7a86e49866453f5ef1ab606993f6d2af3d61e14cd52be2ae7432b07d70b3e28",
+      "standalone_source_sha256": "sha256:52a4310d7853a789fde30d40f2f3747b3e2b05bb743d118e8cd962d6d96b3323",
+      "start_line": 55,
+      "status": "accepted"
+    }
+  ],
+  "command": [
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\m24\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra_extra\\v\\a6b4d38e\\a2\\isolated_nodes_and_original_root.lean"
+  ],
+  "cwd": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\m24\\project",
+  "duration_seconds": 40.391,
+  "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+  "exit_code": 0,
+  "isolation_method": "Lean 4.24 anonymous example: withoutModifyingEnv",
+  "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+  "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db",
+  "metadata_rebinding": {
+    "original_plan_digest": "sha256:159195b9d57a20f4704ced1fb40c38ecc85980aa8d08179d2bd81eb59a211337",
+    "original_result_sha256": "sha256:a02a7072303727563f5e089bb4ac349467e2c0c88ef651edaa94a45d06796142",
+    "reason": "Only non-Lean plan metadata changed; regenerated source and every payload/proof/segment identity match the original successful compiler invocation exactly."
+  },
+  "plan_digest": "sha256:80c866f4123ab848a5b62143c9474094e78373eff7ebbfa8366389c5c8a82262",
+  "real_provider_call_count": 0,
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\algebra_extra\\v\\a6b4d38e\\a2\\isolated_nodes_and_original_root.lean",
+  "source_sha256": "sha256:0e137e84a14d9d28d60df1e17ebafff889e40b228d3db923013aedb230124a07",
+  "status": "passed",
+  "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "sha256:5b3b4e900648c8ce289b68ef2ab654d7390b8bba1e065a9466922ea0069cf15c",
+  "timeout_seconds": 480
+}

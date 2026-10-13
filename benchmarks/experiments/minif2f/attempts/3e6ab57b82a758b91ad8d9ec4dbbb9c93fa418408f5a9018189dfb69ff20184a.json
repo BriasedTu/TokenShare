@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/mathd_numbertheory_221",
+  "original_declaration": "theorem mathd_numbertheory_221 (S : Finset ℕ)\n  (h₀ : ∀ x : ℕ, x ∈ S ↔ 0 < x ∧ x < 1000 ∧ x.divisors.card = 3) : S.card = 11",
+  "source_file": "upstream/MiniF2F/Valid/mathd_numbertheory_221.lean",
+  "source_sha256": "34d12246cc4527e972da94f82273ce128469bd1a36a0d3b116d67202b7811600",
+  "partial_statement": "∀ p : ℕ, (Nat.Prime p ∧ p ^ 2 < 1000) ↔ p ∈ ({2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31} : Finset ℕ)",
+  "partial_proof": "by\n  intro p\n  constructor\n  · intro hp\n    have hb : p ≤ 31 := by nlinarith\n    interval_cases p <;> norm_num at *\n  · intro hp\n    simp only [Finset.mem_insert, Finset.mem_singleton] at hp\n    rcases hp with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> norm_num",
+  "mathematical_route": "The checked prime-root range classification lists exactly the primes whose squares are below 1000. A generic three-divisor characterization should then identify S with their square image.",
+  "unresolved_full_proof_obligation": "Need prove x.divisors.card=3 iff x is a prime square for positive x, and establish the square-image cardinality. Enumerating all x<1000 could decide the bounded root but would bypass the intended substantive divisor-structure node; the retained partial does not claim S.card.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(S : Finset ℕ)\n  (h₀ : ∀ x : ℕ, x ∈ S ↔ 0 < x ∧ x < 1000 ∧ x.divisors.card = 3)",
+  "partial_start_line": 12,
+  "partial_block_sha256": "19adfa6d2b62cd44de9d470bb01ceb624f1f842500b2af8d775ef44a614a7f87",
+  "partial_end_line": 23,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json",
+  "compiler_log_sha256": "8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: bounded computation of all x<1000. The selected mathematical route instead needs the missing generic three-divisor/prime-square equivalence so the prime-range node genuinely contributes.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "∀ p : ℕ, (Nat.Prime p ∧ p ^ 2 < 1000) ↔ p ∈ ({2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31} : Finset ℕ)",
+      "source_sha256": "19adfa6d2b62cd44de9d470bb01ceb624f1f842500b2af8d775ef44a614a7f87",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json"
+    }
+  ]
+}

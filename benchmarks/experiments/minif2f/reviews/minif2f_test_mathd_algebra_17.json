@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_mathd_algebra_17",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:08:05.118057+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/47eef98e176b6804/result.json",
+    "result_sha256": "sha256:311e7f1e6408159aa0b994003880556ce780fb16856a968985dac63c7ed9edec"
+  },
+  "mathematical_review": "Normalize nested radicals with nonnegativity obligations, determine the inner radical, then square to recover the original unknown.",
+  "node_proofs_digest": "sha256:ce54283ff9ef1d140b98815c14c15588cb32d824f10ee017407c16da6dd798b6",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Factor positive square constants through both nested radicals to put the two summands on the same scale.",
+      "node_id": "normalize_nested_radicals"
+    },
+    {
+      "dependencies": [
+        "normalize_nested_radicals"
+      ],
+      "mathematical_role": "Solve the normalized equation and square the nonnegative outer radical to determine the inner radical.",
+      "node_id": "inner_radical_value"
+    },
+    {
+      "dependencies": [
+        "inner_radical_value"
+      ],
+      "mathematical_role": "The positive inner radical justifies squaring and recovering the original variable.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:f999e2d4bd4ac8095a430a44a816223ca3e3f90b95b5b876b769483342f3c80c",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:08:05.117056+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

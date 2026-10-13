@@ -1,0 +1,45 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_amc12b_2002_p11",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:29.663233+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/7dd296c19ff5c2f9/result.json",
+    "result_sha256": "sha256:b4038e43c263cf16d509f0669c529633abe13f0a7e6442aacdf6209dd69479e8"
+  },
+  "mathematical_review": "Parity determines the even prime; divisibility by three among the three adjacent odd candidates fixes the other prime; evaluate the unchanged original expression.",
+  "node_proofs_digest": "sha256:77014be77489bae1cd71ace20d547ea8d0301dbbc80cca2cbbdad1416d3d879b",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Parity forces the smaller prime to be the unique even prime.",
+      "node_id": "even_prime"
+    },
+    {
+      "dependencies": [
+        "even_prime"
+      ],
+      "mathematical_role": "Among a−2, a, a+2 one is divisible by three, and primality forces a=5.",
+      "node_id": "modulo_three_restriction"
+    },
+    {
+      "dependencies": [
+        "even_prime",
+        "modulo_three_restriction"
+      ],
+      "mathematical_role": "Evaluate the original natural-subtraction expression as the prime 17.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:4532f3a7d52d87b7822f935175471a7e862da05e53b35f43eb7c39ab599dda28",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:29.663233+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

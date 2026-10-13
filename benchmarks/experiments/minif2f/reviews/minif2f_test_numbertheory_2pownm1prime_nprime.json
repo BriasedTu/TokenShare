@@ -1,0 +1,38 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_test_numbertheory_2pownm1prime_nprime",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/e41072d4d74ec0de/result.json",
+    "result_sha256": "sha256:c7c73fcd7555dfcb8506d221e61081556afda32ac5926d339aabade264cf8a54"
+  },
+  "mathematical_review": "Exponent divisibility and proper-factor bounds are independent prerequisites for the prime-factor contradiction.",
+  "node_proofs_digest": "sha256:38b98f4f453b63136a2af7761d530a4a152a72a8fdcc7783d478a29a4be63513",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Transport divisibility of exponents through the geometric-series factorization.",
+      "node_id": "exponent_divisibility"
+    },
+    {
+      "dependencies": [],
+      "mathematical_role": "Show that a nontrivial proper exponent divisor produces a nontrivial proper Mersenne factor.",
+      "node_id": "proper_divisor_bounds"
+    },
+    {
+      "dependencies": [
+        "exponent_divisibility",
+        "proper_divisor_bounds"
+      ],
+      "mathematical_role": "Assemble the mathematical prerequisites into the unchanged upstream conclusion.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:3ea1e17bc134c80b3744c727a3838a609ed46be16debe535df29f216b90b4084",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:08:42.587543+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

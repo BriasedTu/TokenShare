@@ -1,0 +1,8 @@
+{
+  "case_id": "minif2f_valid_amc12a_2003_p24",
+  "node_proof_sources": {
+    "logarithmic_upper_bound": "by\n  intro a b hb hba\n  have hbp : 0 < b := by linarith\n  have hap : 0 < a := by linarith\n  have hlb : 0 < Real.log b := Real.log_pos hb\n  have hla : 0 < Real.log a := Real.log_pos (by linarith)\n  simp only [Real.logb, Real.log_div hap.ne' hbp.ne', Real.log_div hbp.ne' hap.ne']\n  calc\n    (Real.log a - Real.log b) / Real.log a + (Real.log b - Real.log a) / Real.log b =\n        -((Real.log a - Real.log b) ^ 2) / (Real.log a * Real.log b) := by\n          field_simp\n          ; ring\n    _ ≤ 0 := div_nonpos_of_nonpos_of_nonneg (neg_nonpos.mpr (sq_nonneg _)) (le_of_lt (mul_pos hla hlb))",
+    "root": "by\n  constructor\n  · refine ⟨2, 2, by norm_num, le_rfl, ?_⟩\n    norm_num [Real.logb]\n  · rintro y ⟨a, b, hb, hba, rfl⟩\n    exact node_logarithmic_upper_bound a b hb hba"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

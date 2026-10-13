@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12a_2021_p19",
+  "node_proof_sources": {
+    "angle_classification": "by\n  intro x hx0 hxpi\n  constructor\n  · intro he\n    have hs := Real.sin_sq_add_cos_sq x\n    have hz : Real.sin x*Real.cos x=0 := by nlinarith\n    rcases mul_eq_zero.mp hz with hs0 | hc0\n    · left\n      apply Real.injOn_cos ⟨hx0,hxpi⟩ ⟨le_rfl, Real.pi_pos.le⟩\n      simp only [Real.cos_zero]\n      linarith\n    · right\n      apply Real.injOn_cos ⟨hx0,hxpi⟩ ⟨by positivity, by linarith [Real.pi_pos]⟩\n      simpa only [Real.cos_pi_div_two] using hc0\n  · rintro (rfl | rfl) <;> norm_num",
+    "angle_equivalence": "by\n  intro x hx0 hxpi\n  have hp := Real.pi_pos\n  have hs0 := Real.sin_nonneg_of_nonneg_of_le_pi hx0 hxpi\n  have hs1 := Real.sin_le_one x\n  have hc0 := Real.neg_one_le_cos x\n  have hc1 := Real.cos_le_one x\n  constructor\n  · intro he\n    rw [← Real.sin_pi_div_two_sub (Real.pi/2*Real.sin x)] at he\n    have hi := Real.injOn_sin (show Real.pi/2*Real.cos x ∈ Set.Icc (-(Real.pi/2)) (Real.pi/2) by constructor <;> nlinarith) (show Real.pi/2-Real.pi/2*Real.sin x ∈ Set.Icc (-(Real.pi/2)) (Real.pi/2) by constructor <;> nlinarith) he\n    nlinarith\n  · intro he\n    have hi : Real.pi/2*Real.cos x = Real.pi/2-Real.pi/2*Real.sin x := by nlinarith\n    rw [hi, Real.sin_pi_div_two_sub]",
+    "root": "by\n  classical\n  have he : S={0,Real.pi/2} := by\n    ext x\n    rw [h₀]\n    simp only [Finset.mem_insert, Finset.mem_singleton]\n    constructor\n    · rintro ⟨hx0,hxpi,hx⟩\n      exact (node_angle_classification x hx0 hxpi).1 ((node_angle_equivalence x hx0 hxpi).1 hx)\n    · rintro (rfl | rfl)\n      · norm_num [Real.pi_pos.le]\n      · refine ⟨by positivity, by linarith [Real.pi_pos], ?_⟩\n        norm_num\n  rw [he]\n  have hp : (0:ℝ) ≠ Real.pi/2 := by linarith [Real.pi_pos]\n  simp [hp]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

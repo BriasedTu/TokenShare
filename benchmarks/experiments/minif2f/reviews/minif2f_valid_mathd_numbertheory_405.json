@@ -1,0 +1,44 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_mathd_numbertheory_405",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:28.915011+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/ab24dbca52db37a9/result.json",
+    "result_sha256": "sha256:e8020520c40bd0400e10364378081493ac834f7d48519e7d17cdb1c7bc64d2de"
+  },
+  "mathematical_review": "An exact sixteen-step recurrence transfer yields a modular period; strong descent and the given residue classes determine the original modular expression.",
+  "node_proofs_digest": "sha256:b660fbc1b2e1157c447f6350b157ba30cc830d765df1c320b754fa9ae7957731",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Derive the exact uniform sixteen-step transfer relation from the second-order recurrence.",
+      "node_id": "sixteen_step_formula"
+    },
+    {
+      "dependencies": [
+        "sixteen_step_formula"
+      ],
+      "mathematical_role": "Identify sixteen as a period modulo seven from the transfer coefficients.",
+      "node_id": "modular_period"
+    },
+    {
+      "dependencies": [
+        "modular_period"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:fa70eae4506ffe457931ef33ec33bc818825c720c898b869bc04f05fb1040dd3",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:28.915011+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

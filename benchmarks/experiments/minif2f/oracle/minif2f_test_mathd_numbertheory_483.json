@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_mathd_numbertheory_483",
+  "node_proof_sources": {
+    "modular_period": "by\n  intro n\n  rw [node_six_step_formula]\n  omega",
+    "root": "by\n  have h3 := h₂ 1\n  have h4 := h₂ 2\n  norm_num at h3 h4\n  have base : a 4 = 3 := by omega\n  have reduce : ∀ k, a (4 + 6 * k) % 4 = a 4 % 4 := by\n    intro k\n    induction k with\n    | zero => simp\n    | succ k ih =>\n      have hp := node_modular_period (4 + 6 * k)\n      convert hp.trans ih using 1\n  have h := reduce 16\n  norm_num [base] at h\n  exact h",
+    "six_step_formula": "by\n  intro n\n  have h2 := h₂ n\n  have h3 := h₂ (n + 1)\n  have h4 := h₂ (n + 2)\n  have h5 := h₂ (n + 3)\n  have h6 := h₂ (n + 4)\n  norm_num [Nat.add_assoc] at h3 h4 h5 h6\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

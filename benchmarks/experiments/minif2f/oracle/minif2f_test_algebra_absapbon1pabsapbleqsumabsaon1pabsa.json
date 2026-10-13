@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_algebra_absapbon1pabsapbleqsumabsaon1pabsa",
+  "node_proof_sources": {
+    "root": "by\n  exact le_trans node_triangle_majorant node_separate_denominators",
+    "separate_denominators": "by\n  have ha : abs a / (1 + (abs a + abs b)) ≤ abs a / (1 + abs a) :=\n    div_le_div_of_nonneg_left (abs_nonneg a) (by positivity) (by linarith [abs_nonneg b])\n  have hb : abs b / (1 + (abs a + abs b)) ≤ abs b / (1 + abs b) :=\n    div_le_div_of_nonneg_left (abs_nonneg b) (by positivity) (by linarith [abs_nonneg a])\n  rw [add_div]\n  exact add_le_add ha hb",
+    "triangle_majorant": "by\n  apply (div_le_div_iff₀ (by positivity) (by positivity)).2\n  nlinarith [abs_add_le a b]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

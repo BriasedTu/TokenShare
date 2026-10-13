@@ -1,0 +1,1 @@
+'amc12a_2003_p23' depends on axioms: [propext, Classical.choice, Quot.sound]

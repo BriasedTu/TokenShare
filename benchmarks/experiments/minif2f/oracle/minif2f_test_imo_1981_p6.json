@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_imo_1981_p6",
+  "node_proof_sources": {
+    "exponential_level": "by\n  intro y\n  induction y with\n  | zero =>\n    have h := h₁ 2\n    norm_num [node_linear_levels.2] at h\n    omega\n  | succ y ih =>\n    have h := h₂ 2 y\n    norm_num [node_linear_levels.2] at h\n    have he : y + 1 + 3 = (y + 3) + 1 := by omega\n    rw [he, pow_succ]\n    omega",
+    "linear_levels": "by\n  have first : ∀ y : ℕ, f 1 y = y + 2 := by\n    intro y\n    induction y with\n    | zero => simpa [h₀] using h₁ 0\n    | succ y ih =>\n      have h := h₂ 0 y\n      norm_num [h₀] at h\n      omega\n  refine ⟨first, ?_⟩\n  intro y\n  induction y with\n  | zero => simpa [first] using h₁ 1\n  | succ y ih =>\n    have h := h₂ 1 y\n    norm_num [first] at h\n    omega",
+    "root": "by\n  have align : ∀ y : ℕ, f 4 y + 3 = g (y + 2) := by\n    intro y\n    induction y with\n    | zero =>\n      have h := h₁ 3\n      have e := node_exponential_level 1\n      have g1 := h₄ 0\n      have g2 := h₄ 1\n      norm_num [h₃] at g1\n      norm_num [g1] at g2\n      norm_num at h e ⊢\n      omega\n    | succ y ih =>\n      have h := h₂ 3 y\n      have e := node_exponential_level (f 4 y)\n      norm_num at h\n      have he : y + 1 + 2 = (y + 2) + 1 := by omega\n      rw [he, h₄, ← ih]\n      omega\n  have h := align 1981\n  norm_num at h\n  omega"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

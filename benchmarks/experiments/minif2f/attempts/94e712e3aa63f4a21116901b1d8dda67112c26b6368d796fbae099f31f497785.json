@@ -1,0 +1,31 @@
+{
+  "case_id": "test/imo_1997_p5",
+  "original_declaration": "theorem imo_1997_p5\n  (x y : ℕ)\n  (h₀ : 0 < x ∧ 0 < y)\n  (h₁ : x^(y^2) = y^x) :\n  (x, y) = (1, 1) ∨ (x, y) = (16, 2) ∨ (x, y) = (27, 3)",
+  "source_file": "upstream/MiniF2F/Test/imo_1997_p5.lean",
+  "source_sha256": "128b2f6c0661e7d5908d32e59b4123481b9f89634b98e1449d871bcfc1593895",
+  "partial_statement": "Real.log (x : ℝ) * (y : ℝ) ^ 2 = Real.log (y : ℝ) * (x : ℝ)",
+  "partial_proof": "by\n  have hc : (x : ℝ) ^ (y ^ 2) = (y : ℝ) ^ x := by exact_mod_cast h₁\n  have hl := congrArg Real.log hc\n  simpa [Real.log_pow, mul_comm] using hl",
+  "mathematical_route": "Taking logarithms gives the checked growth constraint; prime valuations should force x and y to be powers of a common integer before a discrete exponent comparison.",
+  "unresolved_full_proof_obligation": "The unresolved step is extracting and solving the common-base integer exponent system from equality of powers. The real logarithmic relation by itself admits a continuum and cannot justify the three integer solutions.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(x y : ℕ)\n  (h₀ : 0 < x ∧ 0 < y)\n  (h₁ : x^(y^2) = y^x)",
+  "partial_start_line": 65,
+  "partial_block_sha256": "9632c0d39954baeda76762133d72209b486bc74535ee5febe58a31a1d4304ee1",
+  "partial_end_line": 72,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json",
+  "compiler_log_sha256": "d92cdc3b97a9bc9ca52e9863ace114db02e6dbb68d319ed0038823fe4ba01b7b",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: purely real logarithmic monotonicity before valuations. The checked logarithmic equation demonstrates why real growth analysis alone cannot establish integer classification.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "Real.log (x : ℝ) * (y : ℝ) ^ 2 = Real.log (y : ℝ) * (x : ℝ)",
+      "source_sha256": "9632c0d39954baeda76762133d72209b486bc74535ee5febe58a31a1d4304ee1",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch10\\2698251000\\compiler.json"
+    }
+  ]
+}

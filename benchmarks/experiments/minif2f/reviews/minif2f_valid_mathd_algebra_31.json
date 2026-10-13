@@ -1,0 +1,37 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_mathd_algebra_31",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:29.757919+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/b25f474ecf5bf3bb/result.json",
+    "result_sha256": "sha256:5d78a5ec49e0407e20f7ed41607938b8aa92b3aa1b55f813294c9030b4ff0334"
+  },
+  "mathematical_review": "Continuity transports the nonlinear recurrence limit; the root combines it with the locally shifted original sequence and uniqueness. The index-shift restatement was removed as a separate unit.",
+  "node_proofs_digest": "sha256:c211b37f86d4adab3ad50af7a987eb82ea5d1a5bd32f5b8999ee181eb3943cf6",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Continuity transports the limit through the nonlinear recurrence map.",
+      "node_id": "continuous_recurrence_limit"
+    },
+    {
+      "dependencies": [
+        "continuous_recurrence_limit"
+      ],
+      "mathematical_role": "Uniqueness identifies the two independently obtained limits.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:fa8c356ee4a4c6646cb8c443722db20402d54c7d8547ee0aed249b644bc3c98b",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:29.756916+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

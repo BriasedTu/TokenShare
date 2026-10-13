@@ -1,0 +1,72 @@
+import Mathlib
+set_option linter.unusedVariables false
+set_option autoImplicit false
+set_option maxHeartbeats 0
+set_option maxRecDepth 2048
+open BigOperators Real Nat Topology Rat
+
+example (m n : ℝ)
+  (k : ℕ)
+  (a : ℕ → ℝ)
+  (y : ℝ → ℝ)
+  (h₀ : 0 < k)
+  (h₁ : ∀ x, y x = ∑ i ∈ Finset.range k, ((Real.cos (a i + x)) / (2^i)))
+  (h₂ : y m = 0)
+  (h₃ : y n = 0) :
+∀ A B : ℝ, (A ≠ 0 ∨ B ≠ 0) → A * Real.cos m + B * Real.sin m = 0 → A * Real.cos n + B * Real.sin n = 0 → Real.sin (m - n) = 0 := by
+  intro A B hab hm hn
+  have hA : A * Real.sin (m - n) = 0 := by
+    rw [Real.sin_sub]
+    nlinarith [congrArg (fun z : ℝ => z * Real.sin m) hn, congrArg (fun z : ℝ => z * Real.sin n) hm]
+  have hB : B * Real.sin (m - n) = 0 := by
+    rw [Real.sin_sub]
+    nlinarith [congrArg (fun z : ℝ => z * Real.cos m) hn, congrArg (fun z : ℝ => z * Real.cos n) hm]
+  rcases hab with ha | hb
+  · exact (mul_eq_zero.mp hA).resolve_left ha
+  · exact (mul_eq_zero.mp hB).resolve_left hb
+
+example (a b c d k m : ℕ)
+  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d)
+  (h₁ : Odd a ∧ Odd b ∧ Odd c ∧ Odd d)
+  (h₂ : a < b ∧ b < c ∧ c < d)
+  (h₃ : a * d = b * c)
+  (h₄ : a + d = 2^k)
+  (h₅ : b + c = 2^m) :
+a + d > b + c := by
+  have hp : 0 < ((d : ℤ) - c) * ((d : ℤ) - b) := mul_pos (by omega) (by omega)
+  zify at h₃ ⊢
+  nlinarith
+
+example (f : ℕ → NNReal → ℝ)
+  (h₀ : ∀ x, f 1 x = x)
+  (h₁ : ∀ x n, f (n + 1) x = f n x * (f n x + 1 / n)) :
+∀ j : ℕ, 1 ≤ j → (∀ z : NNReal, 0 ≤ f j z) ∧ Monotone (f j) := by
+  intro j
+  induction j with
+  | zero => omega
+  | succ j ih =>
+    cases j with
+    | zero =>
+      intro hj
+      constructor
+      · intro z; rw [h₀]; exact z.coe_nonneg
+      · intro z w hzw; simpa [h₀] using hzw
+    | succ j =>
+      intro hj
+      obtain ⟨hn, hm⟩ := ih (by omega)
+      constructor
+      · intro z
+        rw [h₁]
+        exact mul_nonneg (hn z) (add_nonneg (hn z) (by positivity))
+      · intro z w hzw
+        rw [h₁ z (j + 1), h₁ w (j + 1)]
+        exact mul_le_mul (hm hzw) (add_le_add_right (hm hzw) _) (add_nonneg (hn z) (by positivity)) (hn w)
+
+example (x y : ℕ)
+  (h₀ : 0 < x ∧ 0 < y)
+  (h₁ : x^(y^2) = y^x) :
+Real.log (x : ℝ) * (y : ℝ) ^ 2 = Real.log (y : ℝ) * (x : ℝ) := by
+  have hc : (x : ℝ) ^ (y ^ 2) = (y : ℝ) ^ x := by exact_mod_cast h₁
+  have hl := congrArg Real.log hc
+  simpa [Real.log_pow, mul_comm] using hl
+

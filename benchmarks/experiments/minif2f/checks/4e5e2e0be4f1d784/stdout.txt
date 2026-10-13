@@ -1,0 +1,1 @@
+'amc12_2001_p21' depends on axioms: [propext, Classical.choice, Quot.sound]

@@ -1,0 +1,45 @@
+{
+  "author": "lean_environment",
+  "case_id": "minif2f_valid_aimeII_2020_p6",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:40:27.786337+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/8eb3d98d76c850a6/result.json",
+    "result_sha256": "sha256:4cae676971396edf174a022eed25ab851ad48fe96fe9632b455e137ddf820c1d"
+  },
+  "mathematical_review": "Compute a complete five-step rational cycle and verify the repeated consecutive pair; propagate it through the recurrence and reduce the requested large index.",
+  "node_proofs_digest": "sha256:0769826ddf9fb4a34d7a932f59ec1d4af627df3dc17367c2b2732ef1194e8ab8",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Compute the first full recurrence cycle and verify that its consecutive endpoint values match the initial pair.",
+      "node_id": "initial_five_cycle"
+    },
+    {
+      "dependencies": [
+        "initial_five_cycle"
+      ],
+      "mathematical_role": "Propagate the repeated pair through the second-order recurrence to prove global period five.",
+      "node_id": "period_five"
+    },
+    {
+      "dependencies": [
+        "initial_five_cycle",
+        "period_five"
+      ],
+      "mathematical_role": "Reduce index 2020 to the fifth term, then check the normalized rational numerator plus denominator.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:824d5a6b0b4276135ea0a9f7d2fc1cbd7948e46a7b7477abdd026a6d4e2996c6",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:40:27.786337+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

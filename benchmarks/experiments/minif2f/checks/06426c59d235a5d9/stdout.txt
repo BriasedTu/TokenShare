@@ -1,0 +1,1 @@
+'imo_1977_p5' depends on axioms: [propext, Classical.choice, Quot.sound]

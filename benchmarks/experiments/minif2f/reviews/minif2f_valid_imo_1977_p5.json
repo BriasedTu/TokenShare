@@ -1,0 +1,37 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_imo_1977_p5",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:28.640996+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/06426c59d235a5d9/result.json",
+    "result_sha256": "sha256:5a80e84495098615e1b1dd3f8c5c78fd8768deddc33c1865090ca73afd48b309"
+  },
+  "mathematical_review": "A Cauchy sum bound together with quotient-remainder constraints determines q; the root bounds and classifies the remaining finite integer pairs.",
+  "node_proofs_digest": "sha256:2141b7579d1c9d0e2b46f7813dca24b8810e4fbbb154d7a5f5009a10278aea82",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Use the Cauchy bound on the sum of squares and the quotient-remainder inequalities to determine the quotient before classifying the pair.",
+      "node_id": "quotient_identification"
+    },
+    {
+      "dependencies": [
+        "quotient_identification"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:ab13a7b20a1a4f3375325c72856a14a0f572676fe035fc144e67db2a4f33d127",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:28.640996+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

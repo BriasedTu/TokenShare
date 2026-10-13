@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_numbertheory_x5neqy2p4",
+  "node_proof_sources": {
+    "fifth_power_residues": "by\n  have hlo : 0 ≤ x % 11 := Int.emod_nonneg _ (by norm_num)\n  have hhi : x % 11 < 11 := Int.emod_lt_of_pos _ (by norm_num)\n  interval_cases hx : x % 11 <;> norm_num [pow_succ, Int.mul_emod, hx]",
+    "root": "by\n  intro he\n  rw [he] at node_fifth_power_residues\n  omega",
+    "shifted_square_residues": "by\n  have hlo : 0 ≤ y % 11 := Int.emod_nonneg _ (by norm_num)\n  have hhi : y % 11 < 11 := Int.emod_lt_of_pos _ (by norm_num)\n  interval_cases hy : y % 11 <;> norm_num [Int.add_emod, pow_succ, Int.mul_emod, hy]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

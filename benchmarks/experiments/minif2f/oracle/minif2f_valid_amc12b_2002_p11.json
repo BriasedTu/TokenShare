@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_amc12b_2002_p11",
+  "node_proof_sources": {
+    "even_prime": "by\n  have ha := h₀.two_le\n  have hb := h₁.two_le\n  have hd := h₃.two_le\n  rcases h₀.eq_two_or_odd with h | h\n  · omega\n  rcases h₁.eq_two_or_odd with hb2 | hbo\n  · exact hb2\n  rcases h₂.eq_two_or_odd with hs2 | hso <;> omega",
+    "modulo_three_restriction": "by\n  have ha := h₀.two_le\n  have hd := h₃.two_le\n  have hs : Nat.Prime (a + 2) := by simpa [node_even_prime] using h₂\n  have hm : Nat.Prime (a - 2) := by simpa [node_even_prime] using h₃\n  have hm2 := hm.two_le\n  have residues : a % 3 = 0 ∨ a % 3 = 1 ∨ a % 3 = 2 := by omega\n  rcases residues with h | h | h\n  · have d : 3 ∣ a := Nat.dvd_of_mod_eq_zero h\n    have hp := h₀.eq_one_or_self_of_dvd 3 d\n    omega\n  · have d : 3 ∣ a + 2 := by omega\n    have hp := hs.eq_one_or_self_of_dvd 3 d\n    omega\n  · have d : 3 ∣ a - 2 := by omega\n    have hp := hm.eq_one_or_self_of_dvd 3 d\n    omega",
+    "root": "by\n  norm_num [node_even_prime, node_modulo_three_restriction]"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

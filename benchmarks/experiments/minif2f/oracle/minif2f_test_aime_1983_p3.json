@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_aime_1983_p3",
+  "node_proof_sources": {
+    "root": "by\n  classical\n  have hf : (f⁻¹' {0}).toFinset = {-9-Real.sqrt 61, -9+Real.sqrt 61} := by\n    ext x\n    simp [node_zero_set]\n  have hp : 0 < Real.sqrt (61:ℝ) := Real.sqrt_pos.2 (by norm_num)\n  have hn : -9-Real.sqrt (61:ℝ) ≠ -9+Real.sqrt 61 := by linarith\n  rw [hf]\n  simp [hn]\n  nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 61)]",
+    "zero_equivalence": "by\n  intro x\n  constructor\n  · intro hx\n    have he := h₀ x\n    have hs := Real.sqrt_nonneg (x^2 + (18*x+45))\n    have ht : 0 ≤ x^2 + (18*x+45) := by nlinarith\n    have hsq := Real.sq_sqrt ht\n    have hz : (Real.sqrt (x^2+(18*x+45))-5)*(Real.sqrt (x^2+(18*x+45))+3)=0 := by nlinarith\n    have hv := (mul_eq_zero.mp hz).resolve_right (by linarith : Real.sqrt (x^2+(18*x+45))+3 ≠ 0)\n    nlinarith\n  · intro hx\n    rw [h₀ x]\n    have ht : x^2+(18*x+45)=25 := by nlinarith\n    rw [ht]\n    norm_num\n    nlinarith",
+    "zero_set": "by\n  ext x\n  simp only [Set.mem_preimage, Set.mem_singleton_iff, Set.mem_insert_iff]\n  rw [node_zero_equivalence x]\n  have hs := Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 61)\n  constructor\n  · intro hx\n    have hz : (x+9-Real.sqrt 61)*(x+9+Real.sqrt 61)=0 := by nlinarith\n    rcases mul_eq_zero.mp hz with hp | hm\n    · exact Or.inr (by linarith)\n    · exact Or.inl (by linarith)\n  · rintro (rfl | rfl) <;> nlinarith"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

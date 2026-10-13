@@ -1,0 +1,44 @@
+{
+  "author": "author_algebra",
+  "case_id": "minif2f_test_amc12_2001_p21",
+  "environment_binary_digests": {
+    "attested_at": "2026-09-07T15:31:27.332262+00:00",
+    "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+    "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db"
+  },
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/4e5e2e0be4f1d784/result.json",
+    "result_sha256": "sha256:03fb527768d9b1ed508163cdcb33bbff97643e6091655c4a6cf68d56bf94bd6e"
+  },
+  "mathematical_review": "The shifted common factor divides a fixed gcd, which bounds the candidate middle values; the factorial constraint selects the valid branch.",
+  "node_proofs_digest": "sha256:21c374c376b32e1a6861370a8d2a2e23095a9900ec24330d61bedac4abaa4277",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "The shifted middle variable divides the gcd of the first two shifted products.",
+      "node_id": "common_divisor"
+    },
+    {
+      "dependencies": [
+        "common_divisor"
+      ],
+      "mathematical_role": "Enumerate only divisors of 21 and exclude the incompatible small cases.",
+      "node_id": "candidate_middle_values"
+    },
+    {
+      "dependencies": [
+        "candidate_middle_values"
+      ],
+      "mathematical_role": "Use the factorial product to choose the unique branch and compute the requested difference.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:91a70580b5e68349559594b9d22eb3848e7f68ae04c953d939de367bb6336c45",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:31:27.331275+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

@@ -1,0 +1,72 @@
+import Mathlib
+set_option linter.unusedVariables false
+
+set_option autoImplicit false
+set_option maxHeartbeats 0
+open BigOperators
+open Real
+open Nat
+open Topology
+open Rat
+example : 3 ^ 233 ∣ Nat.factorial 942 := by
+  decide
+
+set_option autoImplicit false
+set_option maxHeartbeats 0
+open BigOperators
+open Real
+open Nat
+open Topology
+open Rat
+example : 5 ^ 233 ∣ Nat.factorial 942 ∧ ¬ 5 ^ 234 ∣ Nat.factorial 942 := by
+  decide
+
+set_option autoImplicit false
+set_option maxHeartbeats 0
+open BigOperators
+open Real
+open Nat
+open Topology
+open Rat
+example (node_three_factor_capacity : 3 ^ 233 ∣ Nat.factorial 942) (node_five_factor_cutoff : 5 ^ 233 ∣ Nat.factorial 942 ∧ ¬ 5 ^ 234 ∣ Nat.factorial 942) : IsGreatest { n : ℕ | 15 ^ n ∣ 942! } 233 := by
+  constructor
+  · change 15 ^ 233 ∣ Nat.factorial 942
+    have hc : Nat.Coprime (3 ^ 233) (5 ^ 233) := Nat.Coprime.pow 233 233 (by decide)
+    have hd := hc.mul_dvd_of_dvd_of_dvd node_three_factor_capacity node_five_factor_cutoff.1
+    simpa [← mul_pow] using hd
+  · intro n hn
+    change 15 ^ n ∣ Nat.factorial 942 at hn
+    by_contra hgt
+    have hnlarge : 234 ≤ n := by omega
+    have hsmall : 5 ^ 234 ∣ 5 ^ n := Nat.pow_dvd_pow 5 hnlarge
+    have hmid : 5 ^ n ∣ 15 ^ n := pow_dvd_pow_of_dvd (by decide) n
+    exact node_five_factor_cutoff.2 (hsmall.trans (hmid.trans hn))
+
+set_option autoImplicit false
+set_option maxHeartbeats 0
+open BigOperators
+open Real
+open Nat
+open Topology
+open Rat
+theorem mathd_numbertheory_43 : IsGreatest { n : ℕ | 15 ^ n ∣ 942! } 233 := by
+  have node_three_factor_capacity : 3 ^ 233 ∣ Nat.factorial 942 := by
+    decide
+  have node_five_factor_cutoff : 5 ^ 233 ∣ Nat.factorial 942 ∧ ¬ 5 ^ 234 ∣ Nat.factorial 942 := by
+    decide
+  have node_root : IsGreatest { n : ℕ | 15 ^ n ∣ 942! } 233 := by
+    constructor
+    · change 15 ^ 233 ∣ Nat.factorial 942
+      have hc : Nat.Coprime (3 ^ 233) (5 ^ 233) := Nat.Coprime.pow 233 233 (by decide)
+      have hd := hc.mul_dvd_of_dvd_of_dvd node_three_factor_capacity node_five_factor_cutoff.1
+      simpa [← mul_pow] using hd
+    · intro n hn
+      change 15 ^ n ∣ Nat.factorial 942 at hn
+      by_contra hgt
+      have hnlarge : 234 ≤ n := by omega
+      have hsmall : 5 ^ 234 ∣ 5 ^ n := Nat.pow_dvd_pow 5 hnlarge
+      have hmid : 5 ^ n ∣ 15 ^ n := pow_dvd_pow_of_dvd (by decide) n
+      exact node_five_factor_cutoff.2 (hsmall.trans (hmid.trans hn))
+  exact node_root
+
+#print axioms mathd_numbertheory_43

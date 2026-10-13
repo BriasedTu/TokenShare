@@ -1,0 +1,32 @@
+{
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "command": [
+    "L:\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\d90491ff\\7599902700\\bridges.lean"
+  ],
+  "cwd": "L:\\project",
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\assistance\\d90491ff\\7599902700\\bridges.lean",
+  "source_sha256": "2ae3a8b58d3e81c18f3389ab26eae2e2a3a7ff7fec4b16d7824d6994631e14d2",
+  "duration_seconds": 28.60026741027832,
+  "segments": [
+    {
+      "node_id": "complex_roots_are_positive_naturals",
+      "start_line": 8,
+      "end_line": 28,
+      "proof_sha256": "48dd2709fb741d6947b695830273608b28b7ef5a862d9143297014da9d9cfe1c",
+      "segment_sha256": "6eec499c4be7adc668890c4d71f8f94920b4bcf7d30d69676951b42ab6d0c034"
+    },
+    {
+      "node_id": "ordered_six_root_classification",
+      "start_line": 29,
+      "end_line": 58,
+      "proof_sha256": "61c64f7aeb77a7f1d2dc259d6c59a2eae27f863c93d77ac64875d1ec6aca2456",
+      "segment_sha256": "d62f41f1a1eef36e7f51158f51f2e73d8b162e320dfa3a40930c256f918da7cb"
+    }
+  ],
+  "root_proved": false,
+  "provider_calls": 0
+}

@@ -1,0 +1,1 @@
+'mathd_numbertheory_13' depends on axioms: [propext, Classical.choice, Quot.sound]

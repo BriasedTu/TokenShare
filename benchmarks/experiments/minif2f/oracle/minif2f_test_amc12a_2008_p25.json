@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_test_amc12a_2008_p25",
+  "node_proof_sources": {
+    "iterated_six_step_scaling": "by\n  have hstep : ∀ n : ℕ, a (n + 6) = -64 * a n ∧ b (n + 6) = -64 * b n := by\n    intro n\n    have ha := node_three_step_rotation (n + 3)\n    have hb := node_three_step_rotation n\n    have hn : n + 3 + 3 = n + 6 := by omega\n    rw [hn] at ha\n    constructor <;> nlinarith [ha.1, ha.2, hb.1, hb.2]\n  intro k\n  induction k with\n  | zero => intro n; simp\n  | succ k ih =>\n    intro n\n    have hs := hstep (n + 6 * k)\n    have hi := ih n\n    rw [show n + 6 * (k + 1) = (n + 6 * k) + 6 by omega]\n    constructor\n    · rw [hs.1, hi.1, pow_succ]; ring\n    · rw [hs.2, hi.2, pow_succ]; ring",
+    "root": "by\n  have hs := node_iterated_six_step_scaling 16 4\n  have hr := node_three_step_rotation 1\n  norm_num at hs hr ⊢\n  nlinarith [hs.1, hs.2, hr.1, hr.2]",
+    "three_step_rotation": "by\n  intro n\n  have hs : Real.sqrt 3 ^ 2 = 3 := Real.sq_sqrt (by norm_num)\n  constructor\n  · rw [show n + 3 = (n + 2) + 1 by omega, h₀, h₀ (n + 1), h₁ (n + 1), h₀ n, h₁ n]\n    linear_combination (Real.sqrt 3 * a n - 3 * b n) * hs\n  · rw [show n + 3 = (n + 2) + 1 by omega, h₁, h₁ (n + 1), h₀ (n + 1), h₁ n, h₀ n]\n    linear_combination (Real.sqrt 3 * b n + 3 * a n) * hs"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}

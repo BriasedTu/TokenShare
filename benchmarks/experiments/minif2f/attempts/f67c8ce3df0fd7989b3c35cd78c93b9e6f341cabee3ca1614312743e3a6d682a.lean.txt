@@ -1,0 +1,31 @@
+import Mathlib
+set_option autoImplicit false
+set_option maxHeartbeats 0
+set_option maxRecDepth 2048
+set_option linter.unusedVariables false
+open BigOperators Real Nat Topology Rat
+
+example (S : Finset ℝ)
+  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 ≤ x ∧ x ≤ 2 * Real.pi ∧ Real.tan (2 * x) = Real.cos (x / 2))
+ :
+∀ x : ℝ, Real.tan (2 * x) = Real.cos (x / 2) → Real.cos (2 * x) ≠ 0 := by
+  intro x hx hc
+  have hh : Real.cos (x / 2) = 0 := by
+    rw [Real.tan_eq_sin_div_cos, hc, div_zero] at hx
+    exact hx.symm
+  have hd := Real.cos_two_mul (x / 2)
+  have he : 2 * (x / 2) = x := by ring
+  rw [he, hh] at hd
+  have hd2 := Real.cos_two_mul x
+  rw [hc] at hd2
+  nlinarith
+
+example (S : Finset ℝ)
+  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 ≤ x ∧ x ≤ 2 * Real.pi ∧ Real.tan (2 * x) = Real.cos (x / 2))
+ :
+∀ u v : ℝ, 0 ≤ u → u < v → v ≤ 2 * Real.pi → Real.tan (2 * u) = Real.cos (u / 2) → Real.tan (2 * v) = Real.cos (v / 2) → ¬ Real.tan (2 * u) ≤ Real.tan (2 * v) := by
+  intro u v hu huv hv heu hev
+  have hc := Real.strictAntiOn_cos (show u / 2 ∈ Set.Icc 0 Real.pi from ⟨by linarith, by linarith⟩) (show v / 2 ∈ Set.Icc 0 Real.pi from ⟨by linarith, by linarith⟩) (by linarith : u / 2 < v / 2)
+  rw [← heu, ← hev] at hc
+  exact not_le_of_gt hc
+

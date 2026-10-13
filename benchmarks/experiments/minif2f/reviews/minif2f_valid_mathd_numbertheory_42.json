@@ -1,0 +1,32 @@
+{
+  "author": "author_numbertheory",
+  "case_id": "minif2f_valid_mathd_numbertheory_42",
+  "lean_validation": {
+    "result_path": "benchmarks/experiments/minif2f/checks/a6a9ea48d47564b8/result.json",
+    "result_sha256": "sha256:f724100cf97dbe1c6dc87a327f6cfdd9996dcacb05cf132c7218ed7be232a7a7"
+  },
+  "mathematical_review": "Solve the linear congruence into its canonical residue progression; original minimality hypotheses then identify the first two admissible elements.",
+  "node_proofs_digest": "sha256:9018bd0c415253922fa7ae1109f6cfbb4a05d4746e8097d989fef0a27bf06c8e",
+  "node_reviews": [
+    {
+      "dependencies": [],
+      "mathematical_role": "Solve the full linear congruence into a canonical arithmetic progression, before applying the order-statistic assumptions.",
+      "node_id": "solution_residue"
+    },
+    {
+      "dependencies": [
+        "solution_residue"
+      ],
+      "mathematical_role": "Consume the substantive prerequisites to prove the unchanged upstream root.",
+      "node_id": "root"
+    }
+  ],
+  "plan_digest": "sha256:88363245d2a9d50f613c2f306743b7eb6d2ba4dff358829512d0e1dedcd4e32c",
+  "proof_isolation": "Anonymous examples elaborate withoutModifyingEnv; exact generated blocks checked with original context and declared direct prerequisites only. Original theorem assembly checked after the examples.",
+  "real_provider_call_count": 0,
+  "reviewed_at": "2026-09-07T15:11:12.095830+00:00",
+  "reviewer": "root_independent_review",
+  "schema_version": "tokenshare.minif2f.independent_review.v1",
+  "semantic_preservation": "Original theorem name, complete parameter context, imports, open namespaces and conclusion compared against the SHA-bound upstream declaration.",
+  "status": "approved"
+}

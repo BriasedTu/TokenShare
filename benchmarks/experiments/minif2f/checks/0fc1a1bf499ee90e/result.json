@@ -1,0 +1,55 @@
+{
+  "case_id": "minif2f_valid_imo_1966_p5",
+  "status": "passed",
+  "exit_code": 0,
+  "command": [
+    "L:\\lean-4.24.0-windows\\bin\\lean.exe",
+    "-DwarningAsError=true",
+    "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\0fc1a1bf49\\2963451900\\isolated_nodes_and_original_root.lean"
+  ],
+  "cwd": "L:\\project",
+  "duration_seconds": 38.437,
+  "timeout_seconds": 360,
+  "source_path": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\official\\0fc1a1bf49\\2963451900\\isolated_nodes_and_original_root.lean",
+  "source_sha256": "sha256:2b885d53c3216ff9e76cc39252c0142ac1339196ffdf56754c6eb3ee64c20db9",
+  "stdout_sha256": "sha256:07cf4048d9f94239fced349a6df0dc0920802673783e6b1e117f9007a4f92160",
+  "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "environment_digest": "sha256:3b974b8949301d66903f0e9a6cb1d39e3339305e6433ae27e437286ec296ec43",
+  "plan_digest": "sha256:b8b0dc90de89f9ca419598ce4ebcf92ec15b0bc83a789ecf9445da6edb309b19",
+  "lean_executable_sha256": "sha256:20bc808248e38cf072f84f4eb389f8f98e5925d703bcbfa400d9dd44f310c4db",
+  "lake_executable_sha256": "sha256:82375bd6d578a680032606c38a313899a99d47ea5fd33fdc9872e1b2e0d9f7b1",
+  "isolation_method": "Lean 4.24 anonymous example: withoutModifyingEnv",
+  "checks": [
+    {
+      "node_id": "successive_row_differences",
+      "payload_digest": "sha256:59657987811c84f31651a838c40ac20f05ab56ec1700f81e5470f12bed34d67b",
+      "proof_sha256": "sha256:d9fd553190ae7b5c16135bd1eb4c9d2dfec785c3067517d9eaaa46d16eab6eff",
+      "standalone_source_sha256": "sha256:9b897c886ed5ea08dff2cddcce58372cedf5ec02dd64416226c2254a575deb97",
+      "segment_sha256": "sha256:89a1fb4dfa4a114114bd39ede52ba9727e814bbe992f342f689cd8d181ac93e5",
+      "start_line": 4,
+      "end_line": 25,
+      "status": "accepted"
+    },
+    {
+      "node_id": "root",
+      "payload_digest": "sha256:d1c767d281070363925183b21dab0a68dbb3c5ddc04e48c2188e7ef99e293b2b",
+      "proof_sha256": "sha256:e7365fa1da51a929672650489f81bbda1ace4ce3fa074de6664261180a345429",
+      "standalone_source_sha256": "sha256:521e181c1e45facaf61f1008d3c943d8bb67d0a4126fedb5e32f75e999512cd7",
+      "segment_sha256": "sha256:0a7726e284e585b87e4425d2ef60b93e9a18d8de9f936b1001769fac25287a94",
+      "start_line": 27,
+      "end_line": 50,
+      "status": "accepted"
+    },
+    {
+      "node_id": "original_root_recheck",
+      "payload_digest": "sha256:7d4388e44fa8a2863e6e6bc0f955641028ab37fa47a8128c341e35f5448741ae",
+      "proof_sha256": "sha256:6accc7ca4a21d0e1391ce529020dcce91de0a89167c1883fd85a60eec65735ad",
+      "standalone_source_sha256": "sha256:4408ab4ea7f2fc0f4b8d9723e506673175f37de58764ba31243edd7e7c23e109",
+      "segment_sha256": "sha256:5e4f6cce4308e851ddd0e162e6af13b0b871f9469010368d78d9c313c8237b6f",
+      "start_line": 52,
+      "end_line": 86,
+      "status": "accepted"
+    }
+  ],
+  "real_provider_call_count": 0
+}

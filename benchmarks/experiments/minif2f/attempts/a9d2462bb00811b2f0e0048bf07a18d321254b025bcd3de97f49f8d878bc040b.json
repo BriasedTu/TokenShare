@@ -1,0 +1,31 @@
+{
+  "case_id": "valid/imo_2006_p3",
+  "original_declaration": "theorem imo_2006_p3 (a b c : ℝ) :\n  a * b * (a ^ 2 - b ^ 2) + b * c * (b ^ 2 - c ^ 2) + c * a * (c ^ 2 - a ^ 2) ≤\n  9 * Real.sqrt 2 / 32 * (a ^ 2 + b ^ 2 + c ^ 2) ^ 2",
+  "source_file": "upstream/MiniF2F/Valid/imo_2006_p3.lean",
+  "source_sha256": "187df0eab2e1c06cd487473a9e42729d382b31f31c84be1983d46c56e60fcea5",
+  "partial_statement": "(a * b * (a ^ 2 - b ^ 2) + b * c * (b ^ 2 - c ^ 2) + c * a * (c ^ 2 - a ^ 2) = (a + b + c) * (a - b) * ((a + b - 2 * c) ^ 2 - (a - b) ^ 2) / 4) ∧ (a ^ 2 + b ^ 2 + c ^ 2 = (a + b + c) ^ 2 / 3 + (a - b) ^ 2 / 2 + (a + b - 2 * c) ^ 2 / 6)",
+  "partial_proof": "by\n  constructor <;> ring",
+  "mathematical_route": "Use s=a+b+c, u=a-b, v=a+b-2c. The checked identities transform the cyclic quartic to s*u*(v²-u²)/4 and diagonalize the quadratic norm.",
+  "unresolved_full_proof_obligation": "Need the sharp homogeneous inequality relating this transformed quartic to (s²/3+u²/2+v²/6)² with coefficient 9√2/32. Considered polar optimization in the (u,v) plane and a sum-of-squares certificate; neither certificate is formalized here.",
+  "root_checked": false,
+  "admitted": false,
+  "provider_calls": 0,
+  "parameters_source": "(a b c : ℝ)",
+  "partial_start_line": 8,
+  "partial_block_sha256": "f99a97da0db0b328c817ce4376b10356d315c71224e3cc551d1a714a56f57b8e",
+  "partial_end_line": 11,
+  "partial_batch_exit_code": 0,
+  "partial_checked": true,
+  "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json",
+  "compiler_log_sha256": "8b16aa35f808f2506deda9a66219fd7b51ac74ccab03aefb52d683cad56ca12a",
+  "final_disposition": "excluded_incomplete_root",
+  "meaning": "Excluded from this admission round because the original theorem proof is incomplete; this is not a claim that the original theorem is false.",
+  "alternative_route_analysis": "Alternative considered: polar optimization of the transformed plane cubic and a polynomial sum-of-squares certificate. The checked orthogonal-coordinate identities support both but do not supply the sharp constant.",
+  "proved_partial_nodes": [
+    {
+      "statement_source": "(a * b * (a ^ 2 - b ^ 2) + b * c * (b ^ 2 - c ^ 2) + c * a * (c ^ 2 - a ^ 2) = (a + b + c) * (a - b) * ((a + b - 2 * c) ^ 2 - (a - b) ^ 2) / 4) ∧ (a ^ 2 + b ^ 2 + c ^ 2 = (a + b + c) ^ 2 / 3 + (a - b) ^ 2 / 2 + (a + b - 2 * c) ^ 2 / 6)",
+      "source_sha256": "f99a97da0db0b328c817ce4376b10356d315c71224e3cc551d1a714a56f57b8e",
+      "compiler_log": "E:\\TokenEcnomic\\TokenShareWorktrees\\experiments-clean-extraction\\TokenShareData\\outputs\\experiments\\minif2f-integration-20260907\\numbertheory\\investigations\\batch14\\5701941800\\compiler.json"
+    }
+  ]
+}

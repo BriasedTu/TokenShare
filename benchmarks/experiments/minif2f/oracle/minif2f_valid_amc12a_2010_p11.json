@@ -1,0 +1,9 @@
+{
+  "case_id": "minif2f_valid_amc12a_2010_p11",
+  "node_proof_sources": {
+    "base_log_identity": "by\n  have hp : 0 < Real.log 7 := Real.log_pos (by norm_num)\n  have hx : x ≠ 0 := by intro he; rw [he] at node_exponential_log_identity; norm_num at node_exponential_log_identity\n  have hb : b ≠ 1 := by\n    intro he\n    have hz : x = 0 := by simpa [he, Real.logb] using h₂\n    exact hx hz\n  have hlb : Real.log b ≠ 0 := Real.log_ne_zero_of_pos_of_ne_one h₀ hb\n  have he : x = (7 * Real.log 7) / Real.log b := by simpa [Real.logb, Real.log_pow] using h₂\n  exact (eq_div_iff hlb).mp he",
+    "exponential_log_identity": "by\n  have hl := congrArg Real.log h₁\n  rw [Real.log_rpow (by norm_num), Real.log_rpow (by norm_num)] at hl\n  nlinarith",
+    "root": "by\n  have hp : 0 < Real.log 7 := Real.log_pos (by norm_num)\n  have hx : x ≠ 0 := by intro he; rw [he] at node_exponential_log_identity; norm_num at node_exponential_log_identity\n  have hl : Real.log b = Real.log 8 - Real.log 7 :=\n    mul_left_cancel₀ hx (node_base_log_identity.trans node_exponential_log_identity.symm)\n  apply Real.log_injOn_pos h₀ (by norm_num : (0 : ℝ) < 8 / 7)\n  rw [Real.log_div (by norm_num) (by norm_num)]\n  exact hl"
+  },
+  "schema_version": "tokenshare.minif2f.oracle_package.v1"
+}
